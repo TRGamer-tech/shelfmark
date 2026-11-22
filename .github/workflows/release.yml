@@ -1,63 +1,86 @@
-# Builds the app and publishes the APKs as a GitHub release whenever a version tag
-# (v1.2.0, v1.2.0-beta1, ...) is pushed. Both APKs are signed with the project's own key,
-# which lives in two repository secrets and nowhere in the repository:
+# Builds the app and publishes both APKs as a GitHub release.
+#
+# Two ways to start it:
+#   - Actions > Release > Run workflow (on main). The version is read from
+#     app/build.gradle.kts, the tag v<versionName> is created with the release.
+#   - Pushing a tag like v1.2.0. It has to match versionName.
+#
+# Both APKs are signed with the project's own key, which lives in two repository
+# secrets (Settings > Secrets and variables > Actions) and nowhere in the repository:
 #
 #   SHELFMARK_KEYSTORE_BASE64    the keystore file, base64 encoded
 #   SHELFMARK_KEYSTORE_PASSWORD  its password
 #
-# Without the secrets nothing is published, because an APK signed with any other key
-# could not be installed over the app people already have.
+# Without the secrets the workflow fails before building, because an APK signed with
+# any other key could not be installed over the app people already have.
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to build and publish, e.g. v1.2.0 (must exist already)"
-        required: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NAME="$(sed -n 's/^ *versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          if [ -z "$NAME" ]; then
+            echo "::error::No versionName found in app/build.gradle.kts."
+            exit 1
+          fi
+          TAG="v$NAME"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME does not match versionName $NAME in app/build.gradle.kts."
+            exit 1
+          fi
+          # A version is published once. Building other code under the same number would
+          # leave people with two different apps that both call themselves the same.
+          EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2> /dev/null || true)"
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG exists already and points to another commit. Raise versionName and versionCode in app/build.gradle.kts first."
+            exit 1
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG from $GITHUB_SHA"
+
+      - uses: actions/setup-java@v5
         with:
-          ref: ${{ env.TAG }}
+          distribution: temurin
+          java-version: 21
 
       - name: Signing key
-        id: key
         env:
           KEYSTORE_BASE64: ${{ secrets.SHELFMARK_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo "::warning::The secrets SHELFMARK_KEYSTORE_BASE64 and SHELFMARK_KEYSTORE_PASSWORD are not set. Nothing was built or published."
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::The secrets SHELFMARK_KEYSTORE_BASE64 and SHELFMARK_KEYSTORE_PASSWORD are missing. Add them under Settings > Secrets and variables > Actions, then run this workflow again."
+            exit 1
           fi
           printf '%s' "$KEYSTORE_BASE64" | tr -d ' \n\r' | base64 --decode > "$RUNNER_TEMP/shelfmark.jks"
-          echo "present=true" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/setup-java@v5
-        if: steps.key.outputs.present == 'true'
-        with:
-          distribution: temurin
-          java-version: 21
+          if ! keytool -list -keystore "$RUNNER_TEMP/shelfmark.jks" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+            echo "::error::The keystore in SHELFMARK_KEYSTORE_BASE64 cannot be opened with SHELFMARK_KEYSTORE_PASSWORD. Check both secrets."
+            exit 1
+          fi
 
       - name: Android SDK
-        if: steps.key.outputs.present == 'true'
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
@@ -66,34 +89,38 @@ jobs:
           "$SDKMANAGER" "platforms;android-37.2" "build-tools;37.0.0" || echo "::notice::sdkmanager could not preinstall the SDK packages, the build will fetch them."
 
       - name: Build
-        if: steps.key.outputs.present == 'true'
         env:
           SHELFMARK_KEYSTORE_FILE: ${{ runner.temp }}/shelfmark.jks
           SHELFMARK_KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
         run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
 
       - name: Publish
-        if: steps.key.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.name }}
         run: |
-          VERSION="${TAG#v}"
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk "dist/Shelfmark-$VERSION-debug.apk"
           cp app/build/outputs/apk/release/app-release.apk "dist/Shelfmark-$VERSION.apk"
           # Refuse to publish anything that does not carry the project's signature.
-          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
           for apk in dist/*.apk; do
-            "$APKSIGNER" verify --print-certs "$apk" | grep -q "CN=Shelfmark" || { echo "::error::$apk is not signed with the Shelfmark key"; exit 1; }
+            if ! "$APKSIGNER" verify --print-certs "$apk" | grep -q "CN=Shelfmark"; then
+              echo "::error::$apk is not signed with the Shelfmark key."
+              exit 1
+            fi
           done
-          # Notes written by hand live in docs/releases/<tag>.md, otherwise GitHub lists the changes.
-          if [ -f "docs/releases/$TAG.md" ]; then NOTES="--notes-file docs/releases/$TAG.md"; else NOTES="--generate-notes"; fi
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/*.apk --clobber
-          else
+          elif [ -f "docs/releases/$TAG.md" ]; then
+            # Notes written by hand live in docs/releases/<tag>.md.
             # Published as a pre-release for now. Drop --prerelease once the app leaves that stage.
-            gh release create "$TAG" dist/*.apk --title "Shelfmark $VERSION" $NOTES --prerelease --verify-tag
+            gh release create "$TAG" dist/*.apk --target "$GITHUB_SHA" --title "Shelfmark $VERSION" --notes-file "docs/releases/$TAG.md" --prerelease
+          else
+            gh release create "$TAG" dist/*.apk --target "$GITHUB_SHA" --title "Shelfmark $VERSION" --generate-notes --prerelease
           fi
+          echo "Published: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the key from the runner
         if: always()

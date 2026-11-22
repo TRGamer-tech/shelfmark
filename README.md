@@ -128,13 +128,13 @@ or set `SHELFMARK_KEYSTORE_FILE` and `SHELFMARK_KEYSTORE_PASSWORD` in the enviro
 either, both builds are signed with the debug key of your machine: they work, but only update
 each other. Keep the keystore and the properties file private. They are listed in `.gitignore`.
 
-**Releases.** Pushing a tag like `v1.2.0` runs `.github/workflows/release.yml`, which builds
-both APKs and attaches them to a GitHub release. The key comes from two repository secrets,
-`SHELFMARK_KEYSTORE_BASE64` (the keystore file, base64 encoded) and
-`SHELFMARK_KEYSTORE_PASSWORD`. Without them the workflow publishes nothing. Raise `versionCode`
-in `app/build.gradle.kts` for every release. Notes for a release go into
-`docs/releases/<tag>.md`. A release can be built again from the Actions tab (Release > Run
-workflow, with the tag).
+**Releases.** Raise `versionName` and `versionCode` in `app/build.gradle.kts`, then start the
+release workflow: **Actions > Release > Run workflow** on `main`. It builds both APKs, creates
+the tag `v<versionName>` and publishes a GitHub release with the APKs attached. Pushing such a
+tag yourself starts it too. The signing key comes from two repository secrets (Settings >
+Secrets and variables > Actions): `SHELFMARK_KEYSTORE_BASE64` (the keystore file, base64
+encoded) and `SHELFMARK_KEYSTORE_PASSWORD`. Without them the workflow stops before building.
+Notes for a release go into `docs/releases/<tag>.md`.
 
 **Changing the database.** Raise the version in `AppDatabase` and add a migration (an
 `AutoMigration` is enough for new tables and columns). `MigrationTest` opens a database of the
