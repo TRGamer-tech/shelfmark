@@ -2,10 +2,15 @@ package ch.schmidtbit.shelfmark.data.repo
 
 import androidx.room.withTransaction
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
+import ch.schmidtbit.shelfmark.data.importer.CsvImporter
+import ch.schmidtbit.shelfmark.data.importer.ImportPlan
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.Note
+import ch.schmidtbit.shelfmark.data.model.Ornament
+import ch.schmidtbit.shelfmark.data.model.OrnamentKind
+import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.QuoteWithBook
@@ -23,12 +28,15 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
     val quotes: Flow<List<QuoteWithBook>> = db.quotes().observeAll()
     val sessions: Flow<List<ReadingSession>> = db.sessions().observeAll()
     val goals: Flow<List<Goal>> = db.goals().observeAll()
+    val purchases: Flow<List<Purchase>> = db.purchases().observeAll()
+    val ornaments: Flow<List<Ornament>> = db.ornaments().observeAll()
 
     fun book(id: Long): Flow<Book?> = db.books().observe(id)
     fun shelfIdsOf(bookId: Long): Flow<List<Long>> = db.shelves().observeShelfIds(bookId)
     fun quotesOf(bookId: Long): Flow<List<Quote>> = db.quotes().observeForBook(bookId)
     fun sessionsOf(bookId: Long): Flow<List<ReadingSession>> = db.sessions().observeForBook(bookId)
     fun notesOf(bookId: Long): Flow<List<Note>> = db.notes().observeForBook(bookId)
+    fun purchasesOf(bookId: Long): Flow<List<Purchase>> = db.purchases().observeForBook(bookId)
 
     suspend fun getBook(id: Long): Book? = db.books().get(id)
     suspend fun allBooks(): List<Book> = db.books().all()
@@ -119,4 +127,56 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
         if (goal.id == 0L) db.goals().insert(goal) else goal.id.also { db.goals().update(goal) }
 
     suspend fun deleteGoal(id: Long) = db.goals().delete(id)
+
+    suspend fun savePurchase(purchase: Purchase): Long =
+        if (purchase.id == 0L) db.purchases().insert(purchase) else purchase.id.also { db.purchases().update(purchase) }
+
+    suspend fun deletePurchase(id: Long) = db.purchases().delete(id)
+
+    suspend fun addOrnament(shelfKey: String, kind: OrnamentKind, position: Int): Long =
+        db.ornaments().insert(Ornament(shelfKey = shelfKey, kind = kind, position = position.coerceAtLeast(0)))
+
+    suspend fun moveOrnament(ornament: Ornament, position: Int) = db.ornaments().update(ornament.copy(position = position.coerceAtLeast(0)))
+
+    suspend fun deleteOrnament(id: Long) = db.ornaments().delete(id)
+
+    /** Counts how many books of [plan] are new and how many are in the library already. */
+    suspend fun previewImport(plan: ImportPlan): Pair<Int, Int> {
+        val existing = db.books().all()
+        val known = plan.books.count { planned -> existing.any { CsvImporter.sameBook(it, planned.book) } }
+        return (plan.books.size - known) to known
+    }
+
+    /**
+     * Adds the books of [plan]. A book that is already in the library is not duplicated,
+     * it only gains what the file knows and the library does not. Returns (added, completed).
+     */
+    suspend fun importBooks(plan: ImportPlan): Pair<Int, Int> = db.withTransaction {
+        val library = db.books().all().toMutableList()
+        val lists = db.shelves().all().associate { it.name.lowercase() to it.id }.toMutableMap()
+        var added = 0
+        var completed = 0
+        plan.books.forEach { planned ->
+            val match = library.firstOrNull { CsvImporter.sameBook(it, planned.book) }
+            val bookId = if (match == null) {
+                added++
+                db.books().insert(planned.book.copy(id = 0, updatedAt = System.currentTimeMillis())).also { library += planned.book.copy(id = it) }
+            } else {
+                val filled = CsvImporter.fillGaps(match, planned.book)
+                if (filled != match) {
+                    completed++
+                    db.books().update(filled.copy(updatedAt = System.currentTimeMillis()))
+                }
+                match.id
+            }
+            planned.lists.forEach { name ->
+                val listId = lists.getOrPut(name.lowercase()) { createShelf(name) }
+                db.shelves().link(BookShelf(bookId, listId))
+            }
+        }
+        added to completed
+    }
+
+    /** Books that have neither an online cover nor one of their own. */
+    suspend fun booksWithoutCover(): List<Book> = db.books().all().filter { it.coverUrl.isBlank() && it.coverPath.isBlank() }
 }

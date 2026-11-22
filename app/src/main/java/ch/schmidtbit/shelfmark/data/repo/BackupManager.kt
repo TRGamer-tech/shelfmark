@@ -2,6 +2,8 @@ package ch.schmidtbit.shelfmark.data.repo
 
 import androidx.room.withTransaction
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
+import ch.schmidtbit.shelfmark.data.importer.CsvImporter
+import ch.schmidtbit.shelfmark.data.importer.ImportPlan
 import ch.schmidtbit.shelfmark.data.importer.LegacyImporter
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
@@ -31,6 +33,8 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
             sessions = db.sessions().all(),
             notes = db.notes().all(),
             goals = db.goals().all(),
+            purchases = db.purchases().all(),
+            ornaments = db.ornaments().all(),
         )
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry(JSON_NAME))
@@ -81,6 +85,7 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
             db.books().clear()
             db.shelves().clear()
             db.goals().clear()
+            db.ornaments().clear()
             backup.shelves.forEach { db.shelves().insert(it) }
             backup.books.forEach { db.books().insert(it) }
             val bookIds = backup.books.map { it.id }.toSet()
@@ -90,7 +95,37 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
             backup.sessions.filter { it.bookId in bookIds }.forEach { db.sessions().insert(it) }
             backup.notes.filter { it.bookId in bookIds }.forEach { db.notes().insert(it) }
             backup.goals.forEach { db.goals().insert(it) }
+            backup.purchases.filter { it.bookId in bookIds }.forEach { db.purchases().insert(it) }
+            // Ornaments on a custom list only make sense if that list came along.
+            backup.ornaments.filter { o -> !o.shelfKey.startsWith("list_") || o.shelfKey.removePrefix("list_").toLongOrNull() in shelfIds }
+                .forEach { db.ornaments().insert(it) }
         }
+    }
+
+    /**
+     * Looks into a zip without changing anything. Returns the backup it holds, or failing
+     * that the first table of books found among its CSV files, or null for neither.
+     */
+    suspend fun inspect(input: InputStream): Pair<BackupPayload?, ImportPlan?> = withContext(Dispatchers.IO) {
+        var backup: BackupPayload? = null
+        val plans = ArrayList<Pair<String, ImportPlan>>()
+        runCatching {
+            ZipInputStream(input).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val name = entry.name.substringAfterLast('/')
+                    when {
+                        name == JSON_NAME -> backup = parseBackup(zip.readBytes().decodeToString())
+                        name.endsWith(".csv", ignoreCase = true) -> CsvImporter.parse(zip.readBytes().decodeToString())?.let { plans += name.lowercase() to it }
+                    }
+                }
+            }
+        }
+        // An export often holds several tables (books, sessions, quotes). The one with the
+        // books is the file named after them, or else simply the longest list.
+        val plan = plans.firstOrNull { (name, _) -> name.startsWith("book") || name.startsWith("librar") || name.startsWith("buch") || name.startsWith("bücher") }?.second
+            ?: plans.maxByOrNull { it.second.books.size }?.second
+        backup to plan
     }
 
     /** Accepts this app's backup and the desktop Shelfmark's library file. */

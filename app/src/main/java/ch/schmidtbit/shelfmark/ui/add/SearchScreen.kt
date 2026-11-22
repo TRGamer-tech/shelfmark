@@ -155,6 +155,7 @@ class SearchViewModel(private val container: AppContainer, initialQuery: String)
     fun add(book: RemoteBook, status: ReadingStatus, onAdded: (Long) -> Unit) {
         container.launch {
             val id = container.library.addBook(book.toBook().withDefaultsFor(status, Dates.today()))
+            container.findCoverLater(id)
             onAdded(id)
         }
     }

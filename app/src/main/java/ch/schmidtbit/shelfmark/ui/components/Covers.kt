@@ -59,6 +59,8 @@ fun BookCover(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 4.dp,
     elevation: Dp = 3.dp,
+    /** For covers the size of a thumbnail: a drawn cover then shows one letter instead of small print. */
+    tiny: Boolean = false,
 ) {
     val shape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = cornerRadius, bottomEnd = cornerRadius)
     Box(
@@ -67,7 +69,7 @@ fun BookCover(
             .shadow(elevation, shape)
             .clip(shape),
     ) {
-        GeneratedCover(title, authors, Modifier.fillMaxSize())
+        GeneratedCover(title, authors, Modifier.fillMaxSize(), tiny)
         if (model != null) {
             AsyncImage(
                 model = model,
@@ -87,9 +89,15 @@ fun BookCover(
 }
 
 @Composable
-fun GeneratedCover(title: String, authors: String, modifier: Modifier = Modifier) {
+fun GeneratedCover(title: String, authors: String, modifier: Modifier = Modifier, tiny: Boolean = false) {
     val base = remember(title) { bookColor(title) }
     val ink = remember(base) { contentColorOn(base) }
+    if (tiny) {
+        Box(modifier.background(Brush.verticalGradient(listOf(base, lerpDark(base, 0.22f)))), contentAlignment = Alignment.Center) {
+            Text(title.trim().take(1).uppercase(), color = ink.copy(alpha = 0.9f), fontFamily = Serif, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+        return
+    }
     Box(
         modifier.background(Brush.verticalGradient(listOf(base, lerpDark(base, 0.22f)))),
     ) {

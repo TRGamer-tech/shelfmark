@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +51,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.schmidtbit.shelfmark.BuildConfig
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.Settings
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.LocalImporter
@@ -57,6 +59,7 @@ import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.theme.ThemePreset
 import ch.schmidtbit.shelfmark.ui.theme.ThemePresets
+import ch.schmidtbit.shelfmark.ui.theme.toPreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -73,6 +76,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = Settings())
     var exported by remember { mutableStateOf(false) }
+    var themeEditorOpen by remember { mutableStateOf(false) }
+    var editingTheme by remember { mutableStateOf<CustomTheme?>(null) }
+    val coverJob by container.coverJob.collectAsStateWithLifecycle()
 
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) container.launch {
@@ -100,7 +106,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             SectionCard(stringResource(R.string.settings_theme)) {
-                ThemePicker(settings.theme) { key -> container.launch { container.settings.setTheme(key) } }
+                ThemePicker(settings.theme, settings.customThemes, onEdit = { editingTheme = it; themeEditorOpen = true }) { key -> container.launch { container.settings.setTheme(key) } }
+                TextButton(onClick = { editingTheme = null; themeEditorOpen = true }, modifier = Modifier.testTag("newTheme")) { Text(stringResource(R.string.theme_new)) }
             }
             SectionCard(stringResource(R.string.settings_speed)) {
                 Text(stringResource(R.string.settings_speed_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -132,12 +139,43 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
                 Text(stringResource(R.string.settings_backup_import_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
             }
+            SectionCard(stringResource(R.string.settings_import)) {
+                Text(stringResource(R.string.settings_import_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = { openBackup.launch("*/*") }, modifier = Modifier.fillMaxWidth().testTag("importCsv")) {
+                    Text(stringResource(R.string.settings_import_button))
+                }
+                Spacer(Modifier.height(8.dp))
+                val progress = coverJob
+                OutlinedButton(onClick = { container.findMissingCovers() }, enabled = progress == null, modifier = Modifier.fillMaxWidth().testTag("findCovers")) {
+                    Text(if (progress == null) stringResource(R.string.cover_find_missing) else stringResource(R.string.cover_finding, progress.first, progress.second))
+                }
+            }
+            ThemeEditorHost(themeEditorOpen, editingTheme) { themeEditorOpen = false }
             SectionCard(stringResource(R.string.settings_about)) {
                 Text("Shelfmark ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(R.string.settings_about_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
+}
+
+@Composable
+private fun ThemeEditorHost(open: Boolean, theme: CustomTheme?, onClose: () -> Unit) {
+    if (!open) return
+    val container = LocalContainer.current
+    ThemeEditorDialog(
+        existing = theme,
+        onDismiss = onClose,
+        onSave = { saved ->
+            onClose()
+            container.launch {
+                container.settings.saveCustomTheme(saved)
+                container.settings.setTheme(saved.key)
+            }
+        },
+        onDelete = theme?.let { existing -> { onClose(); container.launch { container.settings.deleteCustomTheme(existing.id) } } },
+    )
 }
 
 @Composable
@@ -156,10 +194,14 @@ fun SpeedChips(minutesPerPage: Float, onPick: (Float) -> Unit) {
 
 /** A swatch per theme: its background with a dot in its accent colour. */
 @Composable
-fun ThemePicker(selected: String, onPick: (String) -> Unit) {
+fun ThemePicker(selected: String, custom: List<CustomTheme> = emptyList(), onEdit: ((CustomTheme) -> Unit)? = null, onPick: (String) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Swatch(null, stringResource(R.string.settings_theme_system), selected == Settings.THEME_SYSTEM) { onPick(Settings.THEME_SYSTEM) }
         ThemePresets.forEach { preset -> Swatch(preset, preset.name, selected == preset.key) { onPick(preset.key) } }
+        // Tapping a theme of one's own selects it, tapping it again opens it for changes.
+        custom.forEach { theme ->
+            Swatch(theme.toPreset(), theme.name, selected == theme.key) { if (selected == theme.key && onEdit != null) onEdit(theme) else onPick(theme.key) }
+        }
     }
 }
 

@@ -264,17 +264,30 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
     // With no filter the bookcase has a shelf per list, like sorting books by where they stand in life.
     val grouped = state.filter == LibraryFilter.All && state.query.isBlank()
     val labels = StatusOrder.associateWith { stringResource(it.labelRes()) }
-    val sections = remember(state.visible, coverDir, grouped, labels) {
-        if (grouped) {
-            StatusOrder.mapNotNull { status ->
+    var decorating by remember { mutableStateOf<Triple<String, String, Int>?>(null) }
+    val sections = remember(state.visible, state.ornaments, state.filter, state.shelves, coverDir, grouped, labels) {
+        fun section(key: String, title: String, books: List<Book>, onOpen: (() -> Unit)?) = ShelfSection(
+            key = key,
+            items = books.map(::item),
+            title = title,
+            onOpen = onOpen,
+            ornaments = state.ornaments.filter { it.shelfKey == key }.map { it.position to it.kind },
+            onDecorate = { decorating = Triple(key, title, books.size) },
+        )
+        when {
+            grouped -> StatusOrder.mapNotNull { status ->
                 val books = state.visible.filter { it.status == status }
-                if (books.isEmpty()) null
-                else ShelfSection(status.name, books.map(::item), labels.getValue(status)) { onFilter(LibraryFilter.Status(status)) }
+                if (books.isEmpty()) null else section(status.name, labels.getValue(status), books) { onFilter(LibraryFilter.Status(status)) }
             }
-        } else {
-            listOf(ShelfSection("all", state.visible.map(::item)))
+            // A single list keeps its heading, so it can be decorated too.
+            state.filter is LibraryFilter.Status && state.query.isBlank() ->
+                listOf(section(state.filter.status.name, labels.getValue(state.filter.status), state.visible, null))
+            state.filter is LibraryFilter.OnShelf && state.query.isBlank() ->
+                listOf(section("list_${state.filter.shelfId}", state.shelves.firstOrNull { it.id == state.filter.shelfId }?.name.orEmpty(), state.visible, null))
+            else -> listOf(ShelfSection("all", state.visible.map(::item)))
         }
     }
+    decorating?.let { (key, title, count) -> OrnamentDialog(key, title, count) { decorating = null } }
     val bottomSpace = PaddingValues(top = 4.dp, bottom = 96.dp)
     val header: @Composable () -> Unit = {
         Text(

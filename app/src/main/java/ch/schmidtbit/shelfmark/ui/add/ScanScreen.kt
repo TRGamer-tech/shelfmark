@@ -118,6 +118,7 @@ class ScanViewModel(private val container: AppContainer) : ViewModel() {
     fun add(book: RemoteBook, status: ReadingStatus) {
         container.launch {
             val id = container.library.addBook(book.toBook().withDefaultsFor(status, Dates.today()))
+            container.findCoverLater(id)
             lastAdded = id to book.title
             state = ScanState.Scanning
         }

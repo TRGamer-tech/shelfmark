@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -82,6 +83,7 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
     var status by rememberSaveable { mutableStateOf(ReadingStatus.NONE) }
     var seriesPosition by rememberSaveable { mutableStateOf("") }
     var takingPhoto by remember { mutableStateOf(false) }
+    var searchingCover by remember { mutableStateOf(false) }
     val isNew = bookId == 0L
 
     LaunchedEffect(bookId) {
@@ -126,12 +128,19 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
         )
         container.launch {
             val id = if (isNew) {
-                container.library.addBook(toSave.withDefaultsFor(status, Dates.today()))
+                container.library.addBook(toSave.withDefaultsFor(status, Dates.today())).also { container.findCoverLater(it) }
             } else {
                 container.library.updateBook(toSave)
                 toSave.id
             }
             onSaved(id)
+        }
+    }
+
+    if (searchingCover) {
+        CoverPickerDialog(current.title, current.authors, Isbn.to13(current.isbn).orEmpty(), onDismiss = { searchingCover = false }) { url ->
+            searchingCover = false
+            book = current.copy(coverUrl = url, coverPath = "")
         }
     }
 
@@ -170,6 +179,11 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
                         Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.edit_cover_gallery))
+                    }
+                    OutlinedButton(onClick = { searchingCover = true }, enabled = current.title.isNotBlank() || current.isbn.isNotBlank(), modifier = Modifier.testTag("searchCover")) {
+                        Icon(Icons.Rounded.ImageSearch, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.cover_search))
                     }
                     if (current.coverPath.isNotBlank() || current.coverUrl.isNotBlank()) {
                         TextButton(onClick = { book = current.copy(coverPath = "", coverUrl = "") }) {

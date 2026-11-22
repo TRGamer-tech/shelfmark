@@ -19,6 +19,9 @@ enum class LendStatus { PENDING, ACCEPTED, DECLINED }
 
 enum class GoalKind { BOOKS, PAGES, MINUTES }
 
+/** Little things that stand between the books on a shelf. */
+enum class OrnamentKind { PLANT, CACTUS, CANDLE, MUG, VASE, LAMP, GLOBE, CLOCK, TROPHY, FRAME, PUMPKIN, BOOKEND }
+
 /** ONCE runs between two dates, the others start over every day, week, month or year. */
 enum class GoalRepeat { ONCE, DAILY, WEEKLY, MONTHLY, YEARLY }
 
@@ -169,6 +172,40 @@ data class Goal(
     val repeat: GoalRepeat = GoalRepeat.ONCE,
     val archived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** What a copy cost and where it came from. A book can be bought more than once. */
+@Serializable
+@Entity(
+    tableName = "purchases",
+    foreignKeys = [
+        ForeignKey(entity = Book::class, parentColumns = ["id"], childColumns = ["bookId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("bookId")],
+)
+data class Purchase(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: Long,
+    /** Epoch day of the purchase. */
+    val day: Long,
+    val price: Double = 0.0,
+    val currency: String = "",
+    val store: String = "",
+    val note: String = "",
+)
+
+/**
+ * An ornament on one of the shelves. [shelfKey] names the shelf: the name of a built-in
+ * list (for example "READING") or "list_" followed by the id of a custom list.
+ */
+@Serializable
+@Entity(tableName = "ornaments", indices = [Index("shelfKey")])
+data class Ornament(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val shelfKey: String,
+    val kind: OrnamentKind,
+    /** The ornament stands after this many books, 0 puts it at the start. */
+    val position: Int = 0,
 )
 
 data class QuoteWithBook(

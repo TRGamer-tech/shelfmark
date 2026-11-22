@@ -26,7 +26,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -84,6 +86,37 @@ class AppContainer(
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
+
+    /** How far the search for missing covers has come: (books checked, books to check), or null when idle. */
+    val coverJob = MutableStateFlow<Pair<Int, Int>?>(null)
+
+    /** Looks for a cover for a freshly added book that came without one. Runs in the background. */
+    fun findCoverLater(bookId: Long) {
+        launch {
+            val book = library.getBook(bookId) ?: return@launch
+            if (book.coverUrl.isNotBlank() || book.coverPath.isNotBlank()) return@launch
+            val url = runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull() ?: return@launch
+            library.modify(bookId) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it }
+        }
+    }
+
+    /** Goes through every book without a cover, e.g. after importing a list from another app. */
+    fun findMissingCovers() {
+        if (coverJob.value != null) return
+        launch {
+            val books = library.booksWithoutCover()
+            coverJob.value = 0 to books.size
+            try {
+                books.forEachIndexed { index, book ->
+                    val url = runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull()
+                    if (url != null) library.modify(book.id) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it }
+                    coverJob.value = (index + 1) to books.size
+                }
+            } finally {
+                coverJob.value = null
+            }
+        }
+    }
 
     /** Hands a book from the scanner or the search to the edit form without squeezing it through a route. */
     var draft: Book? = null

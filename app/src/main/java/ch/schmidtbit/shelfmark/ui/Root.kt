@@ -85,6 +85,9 @@ import ch.schmidtbit.shelfmark.ui.library.LibraryScreen
 import ch.schmidtbit.shelfmark.ui.library.LibraryViewModel
 import ch.schmidtbit.shelfmark.ui.lists.ListsScreen
 import ch.schmidtbit.shelfmark.ui.nav.BookRoute
+import ch.schmidtbit.shelfmark.ui.nav.CalendarRoute
+import ch.schmidtbit.shelfmark.ui.nav.MilestonesRoute
+import ch.schmidtbit.shelfmark.ui.nav.RecapRoute
 import ch.schmidtbit.shelfmark.ui.nav.EditRoute
 import ch.schmidtbit.shelfmark.ui.nav.FriendRoute
 import ch.schmidtbit.shelfmark.ui.nav.FriendsRoute
@@ -102,7 +105,10 @@ import ch.schmidtbit.shelfmark.ui.nav.TimerRoute
 import ch.schmidtbit.shelfmark.ui.quotes.QuoteEditScreen
 import ch.schmidtbit.shelfmark.ui.quotes.QuotesScreen
 import ch.schmidtbit.shelfmark.ui.settings.SettingsScreen
+import ch.schmidtbit.shelfmark.ui.stats.CalendarScreen
 import ch.schmidtbit.shelfmark.ui.stats.GoalsScreen
+import ch.schmidtbit.shelfmark.ui.stats.MilestonesScreen
+import ch.schmidtbit.shelfmark.ui.stats.RecapScreen
 import ch.schmidtbit.shelfmark.ui.stats.StatsScreen
 import ch.schmidtbit.shelfmark.ui.theme.ShelfmarkTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -128,7 +134,7 @@ fun ShelfmarkRoot(container: AppContainer, incoming: MutableStateFlow<Intent?>) 
     val context = LocalContext.current
     val importer = remember(container) { ImportController(container, context) }
     CompositionLocalProvider(LocalContainer provides container, LocalImporter provides importer) {
-        ShelfmarkTheme(current.theme) {
+        ShelfmarkTheme(current.theme, current.customThemes) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 if (current.onboarded) MainNav(incoming) else Onboarding(current)
             }
@@ -204,7 +210,17 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                     openTab(LibraryRoute)
                 }
             }
-            composable<StatsRoute> { StatsScreen(onGoals = { nav.navigate(GoalsRoute) }) }
+            composable<StatsRoute> {
+                StatsScreen(
+                    onGoals = { nav.navigate(GoalsRoute) },
+                    onCalendar = { nav.navigate(CalendarRoute) },
+                    onRecap = { nav.navigate(RecapRoute) },
+                    onMilestones = { nav.navigate(MilestonesRoute) },
+                )
+            }
+            composable<CalendarRoute> { CalendarScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            composable<RecapRoute> { RecapScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            composable<MilestonesRoute> { MilestonesScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
             composable<QuotesRoute> { QuotesScreen(onAdd = { nav.navigate(QuoteRoute()) }, onEdit = { nav.navigate(QuoteRoute(quoteId = it)) }) }
             composable<FriendsRoute> { FriendsScreen(onOpenFriend = { nav.navigate(FriendRoute(it)) }, onRequests = { nav.navigate(RequestsRoute) }) }
             composable<BookRoute> { stackEntry ->
@@ -396,6 +412,25 @@ private fun ImportDialogs(nav: NavHostController) {
             confirmButton = { TextButton(onClick = { importer.confirmRestore(outcome) }, modifier = Modifier.testTag("restoreConfirm")) { Text(stringResource(R.string.restore_confirm)) } },
             dismissButton = { TextButton(onClick = close) { Text(stringResource(R.string.action_cancel)) } },
         )
+        is ImportOutcome.ConfirmImport -> AlertDialog(
+            onDismissRequest = close,
+            title = { Text(stringResource(R.string.import_books_title, outcome.plan.source)) },
+            text = {
+                Text(
+                    pluralStringResource(R.plurals.import_new_books, outcome.newBooks, outcome.newBooks) + "\n" +
+                        pluralStringResource(R.plurals.import_known_books, outcome.known, outcome.known),
+                )
+            },
+            confirmButton = { TextButton(onClick = { importer.confirmImport(outcome) }, modifier = Modifier.testTag("importConfirm")) { Text(stringResource(R.string.import_books_confirm)) } },
+            dismissButton = { TextButton(onClick = close) { Text(stringResource(R.string.action_cancel)) } },
+            modifier = Modifier.testTag("importBooksDialog"),
+        )
+        is ImportOutcome.Imported -> info(
+            stringResource(R.string.import_books_done),
+            pluralStringResource(R.plurals.import_added, outcome.added, outcome.added) + "\n" +
+                pluralStringResource(R.plurals.import_completed, outcome.completed, outcome.completed) + "\n\n" + stringResource(R.string.import_books_covers),
+            stringResource(R.string.cover_find_missing),
+        ) { container.findMissingCovers() }
         is ImportOutcome.Restored -> info(
             stringResource(R.string.restore_done_title),
             pluralStringResource(R.plurals.book_count, outcome.books, outcome.books),

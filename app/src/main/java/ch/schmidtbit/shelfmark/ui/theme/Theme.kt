@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.Settings
 
 /** A theme is four colours. Everything else is mixed from them. */
@@ -60,8 +61,11 @@ val ThemePresets: List<ThemePreset> = listOf(
     ThemePreset("mint", "Mint", rgb(232, 246, 242), rgb(252, 255, 254), rgb(38, 160, 140), rgb(26, 46, 42)),
 )
 
-fun presetFor(key: String, systemDark: Boolean): ThemePreset =
+fun CustomTheme.toPreset() = ThemePreset(key, name, Color(background), Color(card), Color(accent), Color(text))
+
+fun presetFor(key: String, systemDark: Boolean, custom: List<CustomTheme> = emptyList()): ThemePreset =
     ThemePresets.firstOrNull { it.key == key }
+        ?: custom.firstOrNull { it.key == key }?.toPreset()
         ?: ThemePresets.first { it.key == if (systemDark) "ember" else "paper" }
 
 private fun textOn(color: Color): Color = if (color.luminance() > 0.45f) Color(0xFF1B1714) else Color.White
@@ -186,8 +190,8 @@ private val AppTypography = Typography().let { base ->
 val QuoteStyle = TextStyle(fontFamily = Serif, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 17.sp, lineHeight = 26.sp)
 
 @Composable
-fun ShelfmarkTheme(themeKey: String = Settings.THEME_SYSTEM, content: @Composable () -> Unit) {
-    val preset = presetFor(themeKey, isSystemInDarkTheme())
+fun ShelfmarkTheme(themeKey: String = Settings.THEME_SYSTEM, custom: List<CustomTheme> = emptyList(), content: @Composable () -> Unit) {
+    val preset = presetFor(themeKey, isSystemInDarkTheme(), custom)
     val scheme = remember(preset) { schemeOf(preset) }
     val shelf = remember(preset) { shelfColorsOf(preset) }
     CompositionLocalProvider(LocalShelfColors provides shelf) {

@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.importer.CsvImporter
+import ch.schmidtbit.shelfmark.data.importer.ImportPlan
 import ch.schmidtbit.shelfmark.data.importer.LegacyImporter
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
@@ -24,6 +26,9 @@ sealed interface ImportOutcome {
     /** A backup was opened. Restoring replaces the library, so the user is asked first. */
     class ConfirmRestore(val backup: BackupPayload?, val zip: ByteArray?, val bookCount: Int?) : ImportOutcome
     data class Restored(val books: Int) : ImportOutcome
+    /** A list of books from another app was opened. Importing adds to the library. */
+    class ConfirmImport(val plan: ImportPlan, val newBooks: Int, val known: Int) : ImportOutcome
+    data class Imported(val added: Int, val completed: Int) : ImportOutcome
     data object Unreadable : ImportOutcome
 }
 
@@ -39,7 +44,14 @@ class ImportController(private val container: AppContainer, private val context:
             val bytes = withContext(Dispatchers.IO) { ShareFiles.readBytes(context, uri) }
             when {
                 bytes == null -> outcome = ImportOutcome.Unreadable
-                ShareFiles.isZip(bytes) -> outcome = ImportOutcome.ConfirmRestore(null, bytes, null)
+                ShareFiles.isZip(bytes) -> {
+                    val (backup, plan) = container.backup.inspect(ByteArrayInputStream(bytes))
+                    outcome = when {
+                        backup != null -> ImportOutcome.ConfirmRestore(null, bytes, backup.books.size)
+                        plan != null -> confirmImport(plan)
+                        else -> ImportOutcome.Unreadable
+                    }
+                }
                 else -> openText(bytes.decodeToString())
             }
         }
@@ -53,8 +65,11 @@ class ImportController(private val container: AppContainer, private val context:
             envelope != null -> outcome = ImportOutcome.Done(container.social.import(envelope))
             else -> {
                 val legacy = withContext(Dispatchers.Default) { LegacyImporter.parse(text) }
+                // A file that is neither JSON nor a zip may be a list of books from another app.
+                val plan = if (legacy == null && reportUnknown) withContext(Dispatchers.Default) { CsvImporter.parse(text) } else null
                 when {
                     legacy != null -> outcome = ImportOutcome.ConfirmRestore(legacy, null, legacy.books.size)
+                    plan != null -> outcome = confirmImport(plan)
                     reportUnknown -> outcome = ImportOutcome.Done(ImportResult.Rejected(RejectReason.NOT_SHELFMARK))
                     else -> return false
                 }
@@ -72,6 +87,19 @@ class ImportController(private val container: AppContainer, private val context:
                 else -> null
             }
             outcome = if (count == null) ImportOutcome.Unreadable else ImportOutcome.Restored(count)
+        }
+    }
+
+    private suspend fun confirmImport(plan: ImportPlan): ImportOutcome {
+        val (new, known) = container.library.previewImport(plan)
+        return ImportOutcome.ConfirmImport(plan, new, known)
+    }
+
+    fun confirmImport(pending: ImportOutcome.ConfirmImport) {
+        outcome = null
+        container.launch {
+            val (added, completed) = container.library.importBooks(pending.plan)
+            outcome = ImportOutcome.Imported(added, completed)
         }
     }
 

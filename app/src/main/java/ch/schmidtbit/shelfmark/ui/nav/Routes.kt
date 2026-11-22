@@ -19,6 +19,9 @@ import kotlinx.serialization.Serializable
 @Serializable data class QuoteRoute(val quoteId: Long = 0, val bookId: Long = 0)
 @Serializable data class TimerRoute(val bookId: Long)
 @Serializable data object GoalsRoute
+@Serializable data object CalendarRoute
+@Serializable data object RecapRoute
+@Serializable data object MilestonesRoute
 @Serializable data class FriendRoute(val id: String)
 @Serializable data object RequestsRoute
 @Serializable data object SettingsRoute

@@ -14,7 +14,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -56,7 +62,7 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 @Composable
-fun StatsScreen(onGoals: () -> Unit) {
+fun StatsScreen(onGoals: () -> Unit, onCalendar: () -> Unit, onRecap: () -> Unit, onMilestones: () -> Unit) {
     val container = LocalContainer.current
     val books by container.library.books.collectAsStateWithLifecycle(initialValue = emptyList())
     val sessions by container.library.sessions.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -70,6 +76,13 @@ fun StatsScreen(onGoals: () -> Unit) {
         topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_stats), style = MaterialTheme.typography.headlineSmall) }) },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("stats"), contentPadding = PaddingValues(bottom = 32.dp)) {
+            item(key = "explore") {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Explore(Icons.Rounded.CalendarMonth, stringResource(R.string.calendar_title), "openCalendar", Modifier.weight(1f), onCalendar)
+                    Explore(Icons.Rounded.AutoAwesome, stringResource(R.string.recap_title), "openRecap", Modifier.weight(1f), onRecap)
+                    Explore(Icons.Rounded.EmojiEvents, stringResource(R.string.milestones_title), "openMilestones", Modifier.weight(1f), onMilestones)
+                }
+            }
             item(key = "goals") {
                 SectionCard(stringResource(R.string.goals_title)) {
                     if (goalProgress.isEmpty()) {
@@ -158,6 +171,17 @@ fun StatsScreen(onGoals: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** A doorway from the statistics to one of the views that look at the same data differently. */
+@Composable
+private fun Explore(icon: ImageVector, label: String, tag: String, modifier: Modifier, onClick: () -> Unit) {
+    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer), modifier = modifier.testTag(tag)) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }

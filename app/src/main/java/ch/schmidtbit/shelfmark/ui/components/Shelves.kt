@@ -20,7 +20,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.LocalFlorist
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.res.stringResource
+import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,10 +123,42 @@ data class ShelfSection(
     val title: String? = null,
     /** Opens just this list when the heading is tapped. */
     val onOpen: (() -> Unit)? = null,
+    /** Ornaments on this shelf, each standing after the given number of books. Only the spine view shows them. */
+    val ornaments: List<Pair<Int, OrnamentKind>> = emptyList(),
+    /** Opens the dialog for choosing ornaments. */
+    val onDecorate: (() -> Unit)? = null,
 )
 
+/** A spine or an ornament: the two kinds of thing that stand on a shelf in the spine view. */
+private sealed interface ShelfThing {
+    val width: Float
+
+    data class Spine(val item: ShelfItem) : ShelfThing {
+        override val width get() = spineWidth(item.pageCount)
+    }
+
+    data class Deco(val kind: OrnamentKind) : ShelfThing {
+        override val width get() = ornamentSize(kind).first
+    }
+}
+
+/** Puts every ornament behind the book it follows. Ornaments beyond the last book end up at the end. */
+internal fun arrange(itemCount: Int, ornaments: List<Pair<Int, OrnamentKind>>): List<Pair<Boolean, Int>> {
+    val out = ArrayList<Pair<Boolean, Int>>()
+    val sorted = ornaments.withIndex().sortedBy { it.value.first }
+    var next = 0
+    for (i in 0..itemCount) {
+        while (next < sorted.size && (sorted[next].value.first <= i || i == itemCount)) {
+            out += false to sorted[next].index
+            next++
+        }
+        if (i < itemCount) out += true to i
+    }
+    return out
+}
+
 @Composable
-private fun ShelfHeading(section: ShelfSection) {
+private fun ShelfHeading(section: ShelfSection, decorate: Boolean = false) {
     val title = section.title ?: return
     Row(
         Modifier
@@ -144,6 +181,12 @@ private fun ShelfHeading(section: ShelfSection) {
         )
         if (section.onOpen != null) {
             Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (decorate && section.onDecorate != null) {
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = section.onDecorate, modifier = Modifier.testTag("decorate_${section.key}")) {
+                Icon(Icons.Rounded.LocalFlorist, contentDescription = stringResource(R.string.ornament_title), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -239,17 +282,24 @@ fun SpineShelf(
     BoxWithConstraints(modifier.fillMaxSize()) {
         val available = maxWidth.value - 32f
         val prepared = remember(sections, available) {
-            sections.map { it to packRows(it.items.map { item -> spineWidth(item.pageCount) }, available, gap = 2f) }
+            sections.map { section ->
+                val things = arrange(section.items.size, section.ornaments).map { (isBook, index) ->
+                    if (isBook) ShelfThing.Spine(section.items[index]) else ShelfThing.Deco(section.ornaments[index].second)
+                }
+                Triple(section, things, packRows(things.map { it.width }, available, gap = 2f))
+            }
         }
         LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize().testTag("spineShelf")) {
             if (header != null) item(key = "header") { header() }
-            prepared.forEach { (section, rows) ->
-                if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section) }
-                items(rows.size, key = { "${section.key}_${section.items[rows[it].first].key}" }) { index ->
+            prepared.forEach { (section, things, rows) ->
+                if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section, decorate = true) }
+                items(rows.size, key = { "${section.key}_row$it" }) { index ->
                     ShelfRow(spacing = 2.dp) {
                         for (i in rows[index]) {
-                            val item = section.items[i]
-                            Spine(item, Modifier.clickable { onClick(item) })
+                            when (val thing = things[i]) {
+                                is ShelfThing.Spine -> Spine(thing.item, Modifier.clickable { onClick(thing.item) })
+                                is ShelfThing.Deco -> OrnamentView(thing.kind, Modifier.semantics { contentDescription = "ornament_${thing.kind.name}" })
+                            }
                         }
                     }
                 }

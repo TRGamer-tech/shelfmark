@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -23,12 +24,15 @@ import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.GoalKind
 import ch.schmidtbit.shelfmark.data.model.GoalRepeat
 import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.data.model.Ownership
+import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
 import ch.schmidtbit.shelfmark.data.remote.BookSource
+import ch.schmidtbit.shelfmark.data.remote.ImageProbe
 import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
@@ -107,6 +111,8 @@ class AppFlowTest {
             database = AppDatabase.inMemory(app),
             lookupOverride = BookLookup(listOf(FakeCatalogue)),
             settingsStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "ui.preferences_pb") },
+            // No picture is ever "found" online, so adding a book does not start to download anything.
+            coverProbeOverride = ImageProbe { false },
         )
         app.container = container
         // The clock is advanced by hand in waitFor, so an endless animation (a blinking
@@ -150,6 +156,8 @@ class AppFlowTest {
     private fun tap(tag: String) { waitForTag(tag); pause(); compose.onAllNodesWithTag(tag).onFirst().performClick() }
     private fun tapText(text: String) { waitForText(text); pause(); compose.onAllNodesWithText(text, substring = true).onFirst().performClick() }
     private fun type(tag: String, text: String) { waitForTag(tag); compose.onNodeWithTag(tag).performTextInput(text) }
+    private fun retype(tag: String, text: String) { waitForTag(tag); compose.onNodeWithTag(tag).performTextReplacement(text) }
+    private fun back() { pause(); scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }; settle() }
     private fun scrollTo(tag: String) {
         waitForTag(tag)
         compose.mainClock.autoAdvance = true
@@ -388,6 +396,13 @@ class AppFlowTest {
         waitForTag("bookOverview")
         waitForTag("logSession")
         shot("50_book_reading")
+        // The timer is one small button on the reading tab, not a headline of the book page.
+        assertTrue(compose.onAllNodesWithTag("openTimer").fetchSemanticsNodes().isEmpty())
+        tapText("Lesen")
+        waitForTag("openTimer")
+        shot("51_book_reading_tab")
+        tap("openTimer")
+        waitForText("Lese-Timer")
     }
 
     @Config(sdk = [35], qualifiers = "de")
@@ -572,5 +587,122 @@ class AppFlowTest {
         assertEquals(GoalRepeat.WEEKLY, goal.repeat)
         assertEquals(12, goal.target)
         waitForTag("goalCard")
+    }
+
+    @Test fun calendarRecapAndMilestones() {
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            val prozess = book("Der Prozess")
+            val now = System.currentTimeMillis()
+            container.database.sessions().insert(ReadingSession(bookId = prozess.id, startedAt = now - 86_400_000L, startPage = 0, endPage = 60, minutes = 75f))
+            container.database.sessions().insert(ReadingSession(bookId = prozess.id, startedAt = now, startPage = 60, endPage = 120, minutes = 80f))
+            container.library.savePurchase(Purchase(bookId = prozess.id, day = Dates.today(), price = 14.9, currency = "CHF", store = "Buchhandlung"))
+        }
+        start()
+        tap("tabStats")
+        waitForTag("stats")
+        tap("openCalendar")
+        waitForTag("calendar")
+        shot("96_calendar")
+        tap("day_${java.time.LocalDate.now().dayOfMonth}")
+        waitForTag("dayCard")
+        waitForText("60 Seiten")
+        waitForText("Der Prozess")
+        shot("97_calendar_day")
+        back()
+
+        tap("openRecap")
+        waitForTag("recap")
+        // What was spent on books this month shows up too.
+        waitForText("14,90 CHF")
+        shot("98_recap_month")
+        tap("recapYear")
+        waitForText(java.time.LocalDate.now().year.toString())
+        shot("99_recap_year")
+        back()
+
+        tap("openMilestones")
+        waitForTag("milestones")
+        waitForTag("milestone_BOOKS")
+        waitForText("Nächster Meilenstein: 10")
+        shot("100_milestones")
+    }
+
+    @Test fun aShelfGetsDecorated() {
+        start(samples = true)
+        runBlocking { container.settings.setViewMode(ViewMode.SPINES) }
+        waitForTag("spineShelf")
+        tap("decorate_READING")
+        tap("addOrnament_PLANT")
+        tap("addOrnament_MUG")
+        waitFor { runBlocking { container.library.ornaments.first() }.size == 2 }
+        waitForTag("ornamentRow")
+        shot("44_ornament_dialog")
+        tap("ornamentDone")
+        val ornaments = runBlocking { container.library.ornaments.first() }
+        assertEquals(setOf(OrnamentKind.PLANT, OrnamentKind.MUG), ornaments.map { it.kind }.toSet())
+        assertTrue(ornaments.all { it.shelfKey == "READING" })
+        shot("45_shelf_decorated")
+    }
+
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun aPurchaseIsWrittenDown() {
+        runBlocking { container.library.addBook(SampleBooks.create(Dates.today()).first { it.title == "Der Prozess" }) }
+        start()
+        openBook("Der Prozess")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "addPurchase")
+        tap("addPurchase")
+        type("purchasePrice", "24,90")
+        type("purchaseStore", "Orell Füssli")
+        tap("purchaseSave")
+        waitFor { runBlocking { container.library.purchases.first() }.isNotEmpty() }
+        val purchase = runBlocking { container.library.purchases.first() }.single()
+        assertEquals(24.9, purchase.price, 0.001)
+        assertEquals("Orell Füssli", purchase.store)
+        assertEquals(Dates.today(), purchase.day)
+        assertEquals(book("Der Prozess").id, purchase.bookId)
+        waitForText("Orell Füssli")
+    }
+
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun aThemeOfMyOwn() {
+        start(samples = true)
+        tap("openSettings")
+        scrollTo("newTheme")
+        tap("newTheme")
+        type("themeName", "Moor")
+        tap("colourAccent")
+        retype("colourHex", "#7BC47F")
+        tap("colourOk")
+        tap("themeSave")
+        waitFor { runBlocking { container.settings.current() }.customThemes.isNotEmpty() }
+        val settings = runBlocking { container.settings.current() }
+        val theme = settings.customThemes.single()
+        assertEquals("Moor", theme.name)
+        assertEquals(0xFF7BC47F.toInt(), theme.accent)
+        // A new theme is put on right away.
+        waitFor { runBlocking { container.settings.current() }.theme == theme.key }
+        waitForText("Moor")
+    }
+
+    @Test fun aGoodreadsListIsImported() {
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", review = "Meine Worte")) }
+        val file = File(folder.root, "goodreads_library_export.csv")
+        file.writeText(AppFlowTest::class.java.getResource("/fixtures/goodreads_export.csv")!!.readText())
+        start(Intent(app, MainActivity::class.java).setAction(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.fromFile(file), "text/csv"))
+        waitForTag("importBooksDialog")
+        waitForText("Import aus Goodreads")
+        waitForText("2 neue Bücher")
+        waitForText("1 Buch ist schon da")
+        shot("101_import_goodreads")
+        tap("importConfirm")
+        waitFor { books().size == 3 }
+        waitForText("Import abgeschlossen")
+        waitForText("2 Bücher hinzugefügt")
+        assertEquals("Meine Worte", book("Dune").review)
+        assertEquals("9780441172719", book("Dune").isbn)
+        assertEquals(ReadingStatus.WISHLIST, book("Der Vorleser").status)
+        assertEquals(setOf("favorites", "sci-fi"), runBlocking { container.library.shelves.first() }.map { it.name }.toSet())
     }
 }

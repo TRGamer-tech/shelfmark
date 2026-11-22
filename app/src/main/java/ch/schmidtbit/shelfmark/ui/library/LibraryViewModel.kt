@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookShelf
+import ch.schmidtbit.shelfmark.data.model.Ornament
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
@@ -24,6 +25,7 @@ data class LibraryState(
     val visible: List<Book> = emptyList(),
     val shelves: List<Shelf> = emptyList(),
     val links: List<BookShelf> = emptyList(),
+    val ornaments: List<Ornament> = emptyList(),
     val settings: Settings = Settings(),
     val filter: LibraryFilter = LibraryFilter.All,
     val query: String = "",
@@ -34,16 +36,18 @@ data class LibraryState(
     val borrowed: Int get() = all.count { it.ownership == Ownership.BORROWED }
 }
 
+private data class LibraryData(val books: List<Book>, val shelves: List<Shelf>, val links: List<BookShelf>, val ornaments: List<Ornament>)
+
 /** Shared by the library tab and the lists tab, so picking a list there filters the shelf here. */
 class LibraryViewModel(private val container: AppContainer) : ViewModel() {
     private val filter = MutableStateFlow<LibraryFilter>(LibraryFilter.All)
     private val query = MutableStateFlow("")
 
-    private val data = combine(container.library.books, container.library.shelves, container.library.links) { books, shelves, links ->
-        Triple(books, shelves, links)
+    private val data = combine(container.library.books, container.library.shelves, container.library.links, container.library.ornaments) { books, shelves, links, ornaments ->
+        LibraryData(books, shelves, links, ornaments)
     }
 
-    val state: StateFlow<LibraryState> = combine(data, container.settings.settings, filter, query) { (books, shelves, links), settings, filter, query ->
+    val state: StateFlow<LibraryState> = combine(data, container.settings.settings, filter, query) { (books, shelves, links, ornaments), settings, filter, query ->
         // A list that was deleted while selected falls back to everything.
         val safeFilter = if (filter is LibraryFilter.OnShelf && shelves.none { it.id == filter.shelfId }) LibraryFilter.All else filter
         LibraryState(
@@ -52,6 +56,7 @@ class LibraryViewModel(private val container: AppContainer) : ViewModel() {
             visible = LibraryLogic.apply(books, links, safeFilter, query, settings.sort),
             shelves = shelves,
             links = links,
+            ornaments = ornaments,
             settings = settings,
             filter = safeFilter,
             query = query,

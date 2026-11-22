@@ -89,7 +89,7 @@ fun Onboarding(settings: Settings) {
             1 -> {
                 Text(stringResource(R.string.onboarding_look), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(20.dp))
-                ThemePicker(settings.theme) { key -> container.launch { container.settings.setTheme(key) } }
+                ThemePicker(settings.theme, settings.customThemes) { key -> container.launch { container.settings.setTheme(key) } }
                 Spacer(Modifier.height(28.dp))
                 Text(stringResource(R.string.settings_speed), style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(R.string.settings_speed_hint), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)

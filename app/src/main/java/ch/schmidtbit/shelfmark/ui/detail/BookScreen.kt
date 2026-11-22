@@ -39,7 +39,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
@@ -72,6 +71,7 @@ import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ownership
+import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingMath
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
@@ -115,6 +115,7 @@ fun BookScreen(
     val quotes by remember(bookId) { library.quotesOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val sessions by remember(bookId) { library.sessionsOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val notes by remember(bookId) { library.notesOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val purchases by remember(bookId) { library.purchasesOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
 
     val book = bookState
@@ -179,10 +180,10 @@ fun BookScreen(
                     shelves = shelves,
                     shelfIds = shelfIds,
                     sessions = sessions,
+                    purchases = purchases,
                     minutesPerPage = settings?.minutesPerPage ?: 1.5f,
                     onChange = ::change,
                     onLogSession = { logging = true },
-                    onTimer = onTimer,
                 )
                 1 -> ReadingTab(book, sessions, settings?.minutesPerPage ?: 1.5f, onLog = { logging = true }, onTimer = onTimer)
                 2 -> QuotesTab(quotes, onAddQuote, onEditQuote)
@@ -249,10 +250,10 @@ private fun OverviewTab(
     shelves: List<Shelf>,
     shelfIds: List<Long>,
     sessions: List<ReadingSession>,
+    purchases: List<Purchase>,
     minutesPerPage: Float,
     onChange: ((Book) -> Book) -> Unit,
     onLogSession: () -> Unit,
-    onTimer: () -> Unit,
 ) {
     val container = LocalContainer.current
     var pickStart by remember { mutableStateOf(false) }
@@ -284,7 +285,7 @@ private fun OverviewTab(
             }
         }
         if (book.status == ReadingStatus.READING) {
-            item(key = "progress") { ProgressCard(book, sessions, minutesPerPage, onLogSession, onTimer) }
+            item(key = "progress") { ProgressCard(book, sessions, minutesPerPage, onLogSession) }
         }
         item(key = "rating") {
             SectionCard(stringResource(R.string.book_section_rating)) {
@@ -366,6 +367,7 @@ private fun OverviewTab(
                 }
             }
         }
+        item(key = "purchases") { PurchaseSection(book.id, purchases) }
         item(key = "lists") {
             SectionCard(stringResource(R.string.book_section_lists)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -437,7 +439,7 @@ private fun OverviewTab(
 }
 
 @Composable
-private fun ProgressCard(book: Book, sessions: List<ReadingSession>, minutesPerPage: Float, onLog: () -> Unit, onTimer: () -> Unit) {
+private fun ProgressCard(book: Book, sessions: List<ReadingSession>, minutesPerPage: Float, onLog: () -> Unit) {
     SectionCard(stringResource(R.string.book_section_progress)) {
         val unit = stringResource(if (book.isAudio) R.string.unit_minutes else R.string.unit_pages)
         Row(verticalAlignment = Alignment.Bottom) {
@@ -459,14 +461,7 @@ private fun ProgressCard(book: Book, sessions: List<ReadingSession>, minutesPerP
             Text(stringResource(R.string.book_time_left, formatDuration(left)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onLog, modifier = Modifier.weight(1f).testTag("logSession")) { Text(stringResource(R.string.session_log), maxLines = 1) }
-            OutlinedButton(onClick = onTimer, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Rounded.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.timer_title), maxLines = 1)
-            }
-        }
+        Button(onClick = onLog, modifier = Modifier.fillMaxWidth().testTag("logSession")) { Text(stringResource(R.string.session_log), maxLines = 1) }
     }
 }
 
@@ -539,12 +534,11 @@ private fun ReadingTab(book: Book, sessions: List<ReadingSession>, minutesPerPag
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = onLog, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.session_log), maxLines = 1) }
-                    OutlinedButton(onClick = onTimer, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Rounded.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.timer_title), maxLines = 1)
+                    // The stopwatch is an extra for those who want it, not the main way to log reading.
+                    IconButton(onClick = onTimer, modifier = Modifier.testTag("openTimer")) {
+                        Icon(Icons.Rounded.Timer, contentDescription = stringResource(R.string.timer_title), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

@@ -11,6 +11,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import java.util.UUID
 
 /** How the library is drawn: covers on shelf boards, spines side by side, or a plain list. */
@@ -34,10 +37,29 @@ data class Settings(
     /** The first-run introduction has been seen. */
     val onboarded: Boolean = false,
     val timer: TimerState? = null,
+    /** Themes the user built from four colours. Selected with the key "custom:" plus the id. */
+    val customThemes: List<CustomTheme> = emptyList(),
 ) {
     companion object {
         const val THEME_SYSTEM = "system"
         const val DEFAULT_SPEED = 1.5f
+    }
+}
+
+/** A theme made by the user. Colours are ARGB integers. */
+@Serializable
+data class CustomTheme(
+    val id: String,
+    val name: String,
+    val background: Int,
+    val card: Int,
+    val accent: Int,
+    val text: Int,
+) {
+    val key: String get() = PREFIX + id
+
+    companion object {
+        const val PREFIX = "custom:"
     }
 }
 
@@ -79,6 +101,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
                     startPage = p[TIMER_PAGE] ?: 0,
                 )
             },
+            customThemes = decodeThemes(p[CUSTOM_THEMES]),
         )
     }
 
@@ -108,6 +131,22 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setMinutesPerPage(value: Float) { store.edit { it[SPEED] = value.coerceIn(0.3f, 10f) } }
     suspend fun setOnboarded() { store.edit { it[ONBOARDED] = true } }
 
+    /** Adds the theme, or replaces the one with the same id. */
+    suspend fun saveCustomTheme(theme: CustomTheme) {
+        store.edit { p ->
+            val themes = decodeThemes(p[CUSTOM_THEMES]).filter { it.id != theme.id } + theme
+            p[CUSTOM_THEMES] = themeJson.encodeToString(ListSerializer(CustomTheme.serializer()), themes)
+        }
+    }
+
+    suspend fun deleteCustomTheme(id: String) {
+        store.edit { p ->
+            val themes = decodeThemes(p[CUSTOM_THEMES]).filter { it.id != id }
+            p[CUSTOM_THEMES] = themeJson.encodeToString(ListSerializer(CustomTheme.serializer()), themes)
+            if (p[THEME] == CustomTheme.PREFIX + id) p[THEME] = Settings.THEME_SYSTEM
+        }
+    }
+
     suspend fun setTimer(timer: TimerState?) {
         store.edit { p ->
             if (timer == null) {
@@ -122,6 +161,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             }
         }
     }
+
+    private fun decodeThemes(text: String?): List<CustomTheme> =
+        text?.let { runCatching { themeJson.decodeFromString(ListSerializer(CustomTheme.serializer()), it) }.getOrNull() }.orEmpty()
 
     private inline fun <reified T : Enum<T>> String?.toEnum(default: T): T =
         this?.let { name -> enumValues<T>().firstOrNull { it.name == name } } ?: default
@@ -142,5 +184,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val TIMER_ACC = longPreferencesKey("timer_accumulated")
         val TIMER_STARTED = longPreferencesKey("timer_started")
         val TIMER_PAGE = intPreferencesKey("timer_page")
+        val CUSTOM_THEMES = stringPreferencesKey("custom_themes")
+        val themeJson = Json { ignoreUnknownKeys = true }
     }
 }

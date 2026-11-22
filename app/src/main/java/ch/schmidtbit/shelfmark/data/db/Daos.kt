@@ -13,6 +13,8 @@ import ch.schmidtbit.shelfmark.data.model.FriendWithCount
 import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.LendRequest
 import ch.schmidtbit.shelfmark.data.model.Note
+import ch.schmidtbit.shelfmark.data.model.Ornament
+import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.QuoteWithBook
@@ -166,6 +168,48 @@ interface GoalDao {
     suspend fun delete(id: Long)
 
     @Query("DELETE FROM goals")
+    suspend fun clear()
+}
+
+@Dao
+interface PurchaseDao {
+    @Query("SELECT * FROM purchases ORDER BY day DESC, id DESC")
+    fun observeAll(): Flow<List<Purchase>>
+
+    @Query("SELECT * FROM purchases WHERE bookId = :bookId ORDER BY day DESC, id DESC")
+    fun observeForBook(bookId: Long): Flow<List<Purchase>>
+
+    @Query("SELECT * FROM purchases ORDER BY id")
+    suspend fun all(): List<Purchase>
+
+    @Insert
+    suspend fun insert(purchase: Purchase): Long
+
+    @Update
+    suspend fun update(purchase: Purchase)
+
+    @Query("DELETE FROM purchases WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Dao
+interface OrnamentDao {
+    @Query("SELECT * FROM ornaments ORDER BY shelfKey, position, id")
+    fun observeAll(): Flow<List<Ornament>>
+
+    @Query("SELECT * FROM ornaments ORDER BY id")
+    suspend fun all(): List<Ornament>
+
+    @Insert
+    suspend fun insert(ornament: Ornament): Long
+
+    @Update
+    suspend fun update(ornament: Ornament)
+
+    @Query("DELETE FROM ornaments WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM ornaments")
     suspend fun clear()
 }
 
