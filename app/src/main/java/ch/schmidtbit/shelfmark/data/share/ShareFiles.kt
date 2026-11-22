@@ -34,7 +34,10 @@ object ShareFiles {
             clipData = ClipData.newRawUri(subject, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        // Shelfmark can open these files, but offering it as a place to send its own file is pointless.
+        val self = context.packageManager.getLaunchIntentForPackage(context.packageName)?.component
         val chooser = Intent.createChooser(send, chooserTitle)
+        if (self != null) chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(self))
         if (context !is Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(chooser)
     }

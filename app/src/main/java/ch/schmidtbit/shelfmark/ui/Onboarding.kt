@@ -62,11 +62,13 @@ fun Onboarding(settings: Settings) {
         container.settings.setOnboarded()
     }
 
-    Column(
-        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(28.dp).testTag("onboarding"),
+    Column(Modifier.fillMaxSize().safeDrawingPadding().testTag("onboarding")) {
+      // The page scrolls, the Back and Next buttons below stay in reach on small screens.
+      Column(
+        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 28.dp, end = 28.dp, top = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-    ) {
+      ) {
         when (page) {
             0 -> {
                 Icon(Icons.AutoMirrored.Rounded.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(84.dp))
@@ -105,8 +107,8 @@ fun Onboarding(settings: Settings) {
                 Text(stringResource(R.string.settings_backup_import_hint), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        Spacer(Modifier.height(32.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = { page-- }, enabled = page > 0) { Text(stringResource(R.string.action_back)) }
             if (page < 2) Button(onClick = { page++ }, modifier = Modifier.testTag("onboardingNext")) { Text(stringResource(R.string.action_next)) }
         }
