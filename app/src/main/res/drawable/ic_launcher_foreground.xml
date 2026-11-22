@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- shelf board -->
+    <path android:fillColor="#B0843A" android:pathData="M27,74h54v5h-54z" />
+    <path android:fillColor="#8A6529" android:pathData="M27,79h54v2h-54z" />
+    <!-- left book -->
+    <path android:fillColor="#E8DCC2" android:pathData="M33,38a2,2 0,0 1,2 -2h9a2,2 0,0 1,2 2v36h-13z" />
+    <path android:fillColor="#B0843A" android:pathData="M33,43h13v2.5h-13z" />
+    <path android:fillColor="#B0843A" android:pathData="M33,65h13v2.5h-13z" />
+    <!-- middle book, taller, with the shelfmark label -->
+    <path android:fillColor="#C8553D" android:pathData="M48,31a2,2 0,0 1,2 -2h11a2,2 0,0 1,2 2v43h-15z" />
+    <path android:fillColor="#FFF8EA" android:pathData="M50.5,56h10a1,1 0,0 1,1 1v9a1,1 0,0 1,-1 1h-10a1,1 0,0 1,-1 -1v-9a1,1 0,0 1,1 -1z" />
+    <path android:fillColor="#1F4D46" android:pathData="M52,59h7v1.6h-7z" />
+    <path android:fillColor="#1F4D46" android:pathData="M52,62.4h5v1.6h-5z" />
+    <path android:fillColor="#8E3526" android:pathData="M48,35h15v2h-15z" />
+    <!-- right book, leaning -->
+    <path android:fillColor="#7FB8AB" android:pathData="M66.2,42.3l8.7,-2.3a2,2 0,0 1,2.4 1.4l8.4,31.4l-12.6,3.4l-8.3,-31.5a2,2 0,0 1,1.4 -2.4z" />
+    <path android:fillColor="#4E8C7E" android:pathData="M66.1,48.6l12.6,-3.4l0.6,2.4l-12.6,3.4z" />
+</vector>
