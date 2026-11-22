@@ -1,0 +1,95 @@
+# Builds the app and publishes the APKs as a GitHub release whenever a version tag
+# (v1.2.0, v1.2.0-beta1, ...) is pushed. Both APKs are signed with the project's own key,
+# which lives in two repository secrets and nowhere in the repository:
+#
+#   SHELFMARK_KEYSTORE_BASE64    the keystore file, base64 encoded
+#   SHELFMARK_KEYSTORE_PASSWORD  its password
+#
+# Without the secrets nothing is published, because an APK signed with any other key
+# could not be installed over the app people already have.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish, e.g. v1.2.0 (must exist already)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Signing key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SHELFMARK_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::warning::The secrets SHELFMARK_KEYSTORE_BASE64 and SHELFMARK_KEYSTORE_PASSWORD are not set. Nothing was built or published."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \n\r' | base64 --decode > "$RUNNER_TEMP/shelfmark.jks"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        if: steps.key.outputs.present == 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Android SDK
+        if: steps.key.outputs.present == 'true'
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-37.2" "build-tools;37.0.0" "platform-tools"
+
+      - name: Build
+        if: steps.key.outputs.present == 'true'
+        env:
+          SHELFMARK_KEYSTORE_FILE: ${{ runner.temp }}/shelfmark.jks
+          SHELFMARK_KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
+
+      - name: Publish
+        if: steps.key.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${TAG#v}"
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/Shelfmark-$VERSION-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/Shelfmark-$VERSION.apk"
+          # Refuse to publish anything that does not carry the project's signature.
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/37.0.0)/apksigner"
+          for apk in dist/*.apk; do
+            "$APKSIGNER" verify --print-certs "$apk" | grep -q "CN=Shelfmark" || { echo "::error::$apk is not signed with the Shelfmark key"; exit 1; }
+          done
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.apk --clobber
+          else
+            gh release create "$TAG" dist/*.apk --title "Shelfmark $VERSION" --generate-notes --prerelease --verify-tag
+          fi
+
+      - name: Remove the key from the runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/shelfmark.jks"

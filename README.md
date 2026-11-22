@@ -7,10 +7,16 @@ This is the native Android version (Kotlin, Jetpack Compose) of the desktop Shel
 import the desktop app's library file.
 
 <p>
-  <img src="docs/screenshots/41_shelf_spines.png" width="23%" alt="Shelf with book spines">
+  <img src="docs/screenshots/45_shelf_decorated.png" width="23%" alt="Shelf with book spines and ornaments">
   <img src="docs/screenshots/12_book_rated.png" width="23%" alt="Book page with rating and spice level">
   <img src="docs/screenshots/81_borrow_request.png" width="23%" alt="A friend asks to borrow a book">
   <img src="docs/screenshots/95_shelf_ember_theme.png" width="23%" alt="Dark theme">
+</p>
+<p>
+  <img src="docs/screenshots/97_calendar_day.png" width="23%" alt="Reading calendar">
+  <img src="docs/screenshots/98_recap_month.png" width="23%" alt="Monthly recap">
+  <img src="docs/screenshots/100_milestones.png" width="23%" alt="Milestones">
+  <img src="docs/screenshots/41_shelf_spines.png" width="23%" alt="Shelf with book spines">
 </p>
 
 ## What it does
@@ -20,9 +26,16 @@ import the desktop app's library file.
 - Scan the ISBN barcode on the back of a book with the camera, several books in a row if you like.
 - Search by title, author or ISBN. Suggestions appear while you type, which is what you want
   for old editions that have no barcode.
+- Seven catalogues are asked at once (see [Book data](#book-data)), so a book missing from one
+  is usually found in another.
 - Enter a book completely by hand when no catalogue knows it.
 - Per book: title, author, pages, format (hardcover, paperback, e-book, audiobook), blurb,
-  publisher, year, language, series, genres, tags and a cover you can photograph yourself.
+  publisher, year, language, series, genres, tags and a cover.
+- Covers: a book that arrives without one gets a search in the background. **Search cover
+  online** on the edit page shows every cover the catalogues have for you to pick from, or
+  photograph it yourself.
+- Import your list from Goodreads, StoryGraph or any CSV file (Settings > Import from other
+  apps). Books you already have are not duplicated, they only gain what was missing.
 
 **Organising**
 
@@ -31,15 +44,26 @@ import the desktop app's library file.
 - As many lists of your own as you like.
 - The shelf as book spines on wooden boards, as covers, or as a plain list. Books without a
   cover picture get a drawn cloth cover, so every book looks like a book.
+- Ornaments: put a plant, a mug, a globe or nine other things between the books of any shelf.
+- A purchase log per book: price, shop and date. The recaps add it up.
 
 **Reading**
 
 - Star rating in half steps, a spice level from one to five chillies, a review with the dates
   you started and finished.
-- Reading sessions with a timer, progress and an estimate of the time left.
+- Reading sessions with progress and an estimate of the time left. A timer is there for
+  those who want one, on the Reading tab of a book.
 - Quotes: photograph the page (text recognition runs on the phone), paste from the clipboard,
   or share selected text from an e-book reader straight into Shelfmark.
 - Notes, goals (books, pages or minutes, once or repeating), statistics and reading streaks.
+- A calendar with the covers of what you read each day and a heatmap of the year.
+- Recaps of every month and year: what you finished, your best day, favourite authors,
+  when you read most, what you spent.
+- Milestones for books, pages, sessions, hours, reviews, quotes, streaks and long books.
+
+**Looks**
+
+- 18 themes in light and dark, or build your own from four colours.
 
 **Friends**
 
@@ -65,8 +89,15 @@ Share again whenever your shelf has changed. The friend's copy is replaced.
 
 ## Install
 
-Build the APK (see below) or take one from the releases page, copy it to the phone and open it.
-Android asks once whether it may install apps from that source.
+Take an APK from the [releases page](https://github.com/TRGamer-tech/shelfmark/releases), copy
+it to the phone and open it. Android asks once whether it may install apps from that source.
+Each release has two files: `Shelfmark-x.y.z.apk` (smaller and faster) and
+`Shelfmark-x.y.z-debug.apk` (the debug build).
+
+**Updating.** Install the new APK over the old one, your library stays. That works between
+all builds from the releases page, debug or not, because they are signed with the same key,
+and because the database is migrated step by step (the schemas of every version are kept in
+`app/schemas`). The one thing Android refuses is going back to an older version.
 
 If the older Shelfmark (the one built from the desktop version) is installed, export your
 library there first, uninstall it, then install this one and import the export under
@@ -82,7 +113,9 @@ You need a JDK (17 or newer) and the Android SDK (platform 37.2, build-tools 37)
 ./gradlew assembleRelease      # app/build/outputs/apk/release/app-release.apk
 ```
 
-**Signing.** Put a `keystore.properties` next to `settings.gradle.kts`:
+**Signing.** Android only installs an update over an earlier version that was signed with the
+same key, so debug and release builds both use one stable key when it is available. Put a
+`keystore.properties` next to `settings.gradle.kts`:
 
 ```properties
 storeFile=/path/to/your.keystore
@@ -91,9 +124,19 @@ keyAlias=...
 keyPassword=...
 ```
 
-Without it the release build is signed with the debug key so that it still installs. Keep the
-keystore and this file private. They are listed in `.gitignore`. Android only installs an update
-over an earlier version that was signed with the same key.
+or set `SHELFMARK_KEYSTORE_FILE` and `SHELFMARK_KEYSTORE_PASSWORD` in the environment. Without
+either, both builds are signed with the debug key of your machine: they work, but only update
+each other. Keep the keystore and the properties file private. They are listed in `.gitignore`.
+
+**Releases.** Pushing a tag like `v1.2.0` runs `.github/workflows/release.yml`, which builds
+both APKs and attaches them to a GitHub release. The key comes from two repository secrets,
+`SHELFMARK_KEYSTORE_BASE64` (the keystore file, base64 encoded) and
+`SHELFMARK_KEYSTORE_PASSWORD`. Without them the workflow publishes nothing. Raise `versionCode`
+in `app/build.gradle.kts` for every release.
+
+**Changing the database.** Raise the version in `AppDatabase` and add a migration (an
+`AutoMigration` is enough for new tables and columns). `MigrationTest` opens a database of the
+first version with the current code and has to keep passing.
 
 ## Tests
 
@@ -102,28 +145,41 @@ over an earlier version that was signed with the same key.
 ```
 
 The suite covers the catalogue clients (against recorded responses), barcode decoding, the
-sharing and borrow request flow between simulated phones, backup and import, statistics and
-goals. It also drives the real screens (in German) and writes screenshots to
+sharing and borrow request flow between simulated phones, backup and import (Goodreads,
+StoryGraph, CSV, the desktop Shelfmark), the database migration, statistics, calendar, recaps,
+milestones and goals. It also drives the real screens (in German) and writes screenshots to
 `app/build/outputs/roborazzi`.
 
 - `SHELFMARK_LIVE=1 ./gradlew testDebugUnitTest --tests '*LiveCatalogueTest'` talks to the real
-  Open Library and Google Books.
+  catalogues.
 - Maven Central rate-limits the large Robolectric jars per IP address. If the download is
   refused, point that one test dependency at a mirror:
   `-Pshelfmark.robolectricMirror=https://maven-central.storage-download.googleapis.com/maven2/`
 
 ## Book data
 
-- [Open Library](https://openlibrary.org), no key needed.
-- Google Books. It often refuses requests without a key. A free API key of your own can be
-  entered under **Settings > Book catalogues**.
+Every search and every scan asks all of these at once and merges the answers. None of them
+needs an account.
+
+| Catalogue | Good for |
+| --- | --- |
+| [Open Library](https://openlibrary.org) | The widest general catalogue, with covers and blurbs |
+| Google Books | Blurbs and covers. It often refuses requests without a key, a free API key of your own can be entered under **Settings > Book catalogues** |
+| Apple Books | Recent titles with large covers |
+| [lobid](https://lobid.org) (hbz) | German-language books, quick suggestions while typing |
+| [Deutsche Nationalbibliothek](https://www.dnb.de) | Everything published in Germany since 1913, and covers by ISBN |
+| [K10plus](https://www.bszgbv.de/services/k10plus/) | The union catalogue of German academic libraries, old and rare editions |
+| [swisscovery](https://swisscovery.slsp.ch) | Swiss libraries, Swiss publishers |
+
+Cover pictures also come from the Open Library and DNB cover services, which answer by ISBN.
 
 ## Not here yet
 
-Things the desktop Shelfmark has that this version does not: the calendar and the monthly and
-yearly recaps, milestones, the purchase log, shelf ornaments and lying stacks, custom themes
-built from four colours, per-shelf sort order, the timer alarm, and import from Goodreads,
-StoryGraph and CSV exports.
+Things the desktop Shelfmark has that this version does not: books lying in stacks, a sort
+order per shelf, and the timer alarm.
+
+A server for friends, so that libraries and borrow requests travel by themselves instead of as
+files, is the next larger step.
 
 ## Licences
 

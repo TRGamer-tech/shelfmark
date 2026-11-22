@@ -7,13 +7,21 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// Optional release signing: put a keystore.properties next to settings.gradle.kts
-// (storeFile, storePassword, keyAlias, keyPassword). Without it the release
-// build falls back to the debug key so it still installs.
+// One stable signing key for debug and release builds, so every build installs over the
+// one before it and the library on the phone survives. The key is never in the repository.
+// It comes from keystore.properties next to settings.gradle.kts (storeFile, storePassword,
+// keyAlias, keyPassword), or from the environment (the release workflow does that).
+// Without a key the builds still work, signed with the debug key of the machine.
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+
+fun signing(property: String, variable: String): String? =
+    keystoreProps.getProperty(property)?.takeIf { it.isNotBlank() } ?: System.getenv(variable)?.takeIf { it.isNotBlank() }
+
+val signingStore = signing("storeFile", "SHELFMARK_KEYSTORE_FILE")
+val signingPassword = signing("storePassword", "SHELFMARK_KEYSTORE_PASSWORD")
 
 android {
     namespace = "ch.schmidtbit.shelfmark"
@@ -25,8 +33,9 @@ android {
         applicationId = "ch.schmidtbit.shelfmark"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        // Raise versionCode with every release, Android refuses to install a lower one over a higher one.
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The text recognition library is about 10 MB per processor type. 32 bit Intel
         // phones no longer exist, x86_64 stays for emulators.
@@ -36,22 +45,26 @@ android {
     }
 
     signingConfigs {
-        if (keystoreProps.containsKey("storeFile")) {
-            create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+        if (signingStore != null && signingPassword != null) {
+            create("shelfmark") {
+                storeFile = rootProject.file(signingStore)
+                storePassword = signingPassword
+                keyAlias = signing("keyAlias", "SHELFMARK_KEY_ALIAS") ?: "shelfmark"
+                keyPassword = signing("keyPassword", "SHELFMARK_KEY_PASSWORD") ?: signingPassword
             }
         }
     }
 
     buildTypes {
+        debug {
+            // Same key as the release build: a debug build updates an installed app instead of refusing to install.
+            signingConfigs.findByName("shelfmark")?.let { signingConfig = it }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("shelfmark") ?: signingConfigs.getByName("debug")
         }
     }
 
