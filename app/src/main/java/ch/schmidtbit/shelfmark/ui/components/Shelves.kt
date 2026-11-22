@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -107,10 +110,48 @@ fun ShelfRow(
     }
 }
 
-/** Books standing face out on shelf boards. */
+/** A run of books under one heading, e.g. everything on the "Reading" list. */
+data class ShelfSection(
+    val key: String,
+    val items: List<ShelfItem>,
+    /** Heading above the shelf, or null for a shelf without one. */
+    val title: String? = null,
+    /** Opens just this list when the heading is tapped. */
+    val onOpen: (() -> Unit)? = null,
+)
+
+@Composable
+private fun ShelfHeading(section: ShelfSection) {
+    val title = section.title ?: return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (section.onOpen != null) Modifier.clickable(onClick = section.onOpen) else Modifier)
+            .padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 2.dp)
+            .testTag("shelf_${section.key}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleLarge)
+        Text(
+            section.items.size.toString(),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .padding(horizontal = 9.dp, vertical = 2.dp),
+        )
+        if (section.onOpen != null) {
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Books standing face out on shelf boards, one group of shelves per section. */
 @Composable
 fun CoverShelf(
-    items: List<ShelfItem>,
+    sections: List<ShelfSection>,
     onClick: (ShelfItem) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(),
@@ -118,27 +159,30 @@ fun CoverShelf(
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val columns = (maxWidth / 112.dp).toInt().coerceIn(3, 8)
-        val rows = remember(items, columns) { items.chunked(columns) }
+        val prepared = remember(sections, columns) { sections.map { it to it.items.chunked(columns) } }
         LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize().testTag("coverShelf")) {
             if (header != null) item(key = "header") { header() }
-            items(rows.size, key = { rows[it].first().key }) { index ->
-                val row = rows[index]
-                ShelfRow {
-                    row.forEach { item ->
-                        Box(Modifier.weight(1f)) {
-                            BookCover(
-                                title = item.title,
-                                authors = item.authors,
-                                model = item.cover,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onClick(item) }
-                                    .semantics { contentDescription = item.title },
-                            )
-                            item.ribbon?.let { Ribbon(it, Modifier.align(Alignment.TopEnd).padding(end = 8.dp)) }
+            prepared.forEach { (section, rows) ->
+                if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section) }
+                items(rows.size, key = { "${section.key}_${rows[it].first().key}" }) { index ->
+                    val row = rows[index]
+                    ShelfRow {
+                        row.forEach { item ->
+                            Box(Modifier.weight(1f)) {
+                                BookCover(
+                                    title = item.title,
+                                    authors = item.authors,
+                                    model = item.cover,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onClick(item) }
+                                        .semantics { contentDescription = item.title },
+                                )
+                                item.ribbon?.let { Ribbon(it, Modifier.align(Alignment.TopEnd).padding(end = 8.dp)) }
+                            }
                         }
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -186,7 +230,7 @@ internal fun packRows(widths: List<Float>, maxWidth: Float, gap: Float): List<In
 /** Books standing spine out, the way they do on a real shelf. Needs no cover pictures at all. */
 @Composable
 fun SpineShelf(
-    items: List<ShelfItem>,
+    sections: List<ShelfSection>,
     onClick: (ShelfItem) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(),
@@ -194,14 +238,19 @@ fun SpineShelf(
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val available = maxWidth.value - 32f
-        val rows = remember(items, available) { packRows(items.map { spineWidth(it.pageCount) }, available, gap = 2f) }
+        val prepared = remember(sections, available) {
+            sections.map { it to packRows(it.items.map { item -> spineWidth(item.pageCount) }, available, gap = 2f) }
+        }
         LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize().testTag("spineShelf")) {
             if (header != null) item(key = "header") { header() }
-            items(rows.size, key = { items[rows[it].first].key }) { index ->
-                ShelfRow(spacing = 2.dp) {
-                    for (i in rows[index]) {
-                        val item = items[i]
-                        Spine(item, Modifier.clickable { onClick(item) })
+            prepared.forEach { (section, rows) ->
+                if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section) }
+                items(rows.size, key = { "${section.key}_${section.items[rows[it].first].key}" }) { index ->
+                    ShelfRow(spacing = 2.dp) {
+                        for (i in rows[index]) {
+                            val item = section.items[i]
+                            Spine(item, Modifier.clickable { onClick(item) })
+                        }
                     }
                 }
             }

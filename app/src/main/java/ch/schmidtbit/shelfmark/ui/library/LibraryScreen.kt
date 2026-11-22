@@ -71,10 +71,14 @@ import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.CoverShelf
 import ch.schmidtbit.shelfmark.ui.components.RatingBar
 import ch.schmidtbit.shelfmark.ui.components.ShelfItem
+import ch.schmidtbit.shelfmark.ui.components.ShelfSection
 import ch.schmidtbit.shelfmark.ui.components.SpineShelf
 import ch.schmidtbit.shelfmark.ui.coverModelOf
 import ch.schmidtbit.shelfmark.ui.labelRes
 import ch.schmidtbit.shelfmark.ui.theme.LocalShelfColors
+
+/** The order the built-in lists appear in, from what is on the nightstand to what was given up. */
+val StatusOrder = listOf(ReadingStatus.READING, ReadingStatus.NONE, ReadingStatus.READ, ReadingStatus.WISHLIST, ReadingStatus.ABANDONED)
 
 @Composable
 fun LibraryScreen(
@@ -149,7 +153,7 @@ fun LibraryScreen(
                 state.loading -> Unit
                 state.all.isEmpty() -> EmptyLibrary(onAdd)
                 state.visible.isEmpty() -> NothingMatches()
-                else -> Shelves(state, onOpenBook)
+                else -> Shelves(state, onOpenBook, viewModel::setFilter)
             }
         }
     }
@@ -213,7 +217,7 @@ private fun FilterRow(state: LibraryState, onFilter: (LibraryFilter) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Chip(stringResource(R.string.filter_all), state.all.size, state.filter == LibraryFilter.All) { onFilter(LibraryFilter.All) }
-        listOf(ReadingStatus.READING, ReadingStatus.NONE, ReadingStatus.READ, ReadingStatus.WISHLIST, ReadingStatus.ABANDONED).forEach { status ->
+        StatusOrder.forEach { status ->
             val filter = LibraryFilter.Status(status)
             Chip(stringResource(status.labelRes()), state.count(status), state.filter == filter) { onFilter(filter) }
         }
@@ -240,25 +244,35 @@ private fun Chip(label: String, count: Int, selected: Boolean, onClick: () -> Un
 }
 
 @Composable
-private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit) {
+private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (LibraryFilter) -> Unit) {
     val coverDir = LocalContainer.current.covers.dir
     val reading = MaterialTheme.colorScheme.secondary
     val lent = LocalShelfColors.current.spice
-    val items = remember(state.visible, coverDir) {
-        state.visible.map { book ->
-            ShelfItem(
-                key = book.id,
-                title = book.title,
-                authors = book.authors,
-                cover = coverModelOf(coverDir, book),
-                pageCount = book.pageCount,
-                format = book.format,
-                ribbon = when {
-                    book.lentTo.isNotBlank() -> lent
-                    book.status == ReadingStatus.READING -> reading
-                    else -> null
-                },
-            )
+    fun item(book: Book) = ShelfItem(
+        key = book.id,
+        title = book.title,
+        authors = book.authors,
+        cover = coverModelOf(coverDir, book),
+        pageCount = book.pageCount,
+        format = book.format,
+        ribbon = when {
+            book.lentTo.isNotBlank() -> lent
+            book.status == ReadingStatus.READING -> reading
+            else -> null
+        },
+    )
+    // With no filter the bookcase has a shelf per list, like sorting books by where they stand in life.
+    val grouped = state.filter == LibraryFilter.All && state.query.isBlank()
+    val labels = StatusOrder.associateWith { stringResource(it.labelRes()) }
+    val sections = remember(state.visible, coverDir, grouped, labels) {
+        if (grouped) {
+            StatusOrder.mapNotNull { status ->
+                val books = state.visible.filter { it.status == status }
+                if (books.isEmpty()) null
+                else ShelfSection(status.name, books.map(::item), labels.getValue(status)) { onFilter(LibraryFilter.Status(status)) }
+            }
+        } else {
+            listOf(ShelfSection("all", state.visible.map(::item)))
         }
     }
     val bottomSpace = PaddingValues(top = 4.dp, bottom = 96.dp)
@@ -271,8 +285,8 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit) {
         )
     }
     when (state.settings.viewMode) {
-        ViewMode.COVERS -> CoverShelf(items, { onOpenBook(it.key) }, contentPadding = bottomSpace, header = header)
-        ViewMode.SPINES -> SpineShelf(items, { onOpenBook(it.key) }, contentPadding = bottomSpace, header = header)
+        ViewMode.COVERS -> CoverShelf(sections, { onOpenBook(it.key) }, contentPadding = bottomSpace, header = header)
+        ViewMode.SPINES -> SpineShelf(sections, { onOpenBook(it.key) }, contentPadding = bottomSpace, header = header)
         ViewMode.LIST -> LazyColumn(contentPadding = bottomSpace, modifier = Modifier.fillMaxSize().testTag("bookList")) {
             item(key = "header") { header() }
             items(state.visible, key = { it.id }) { book ->

@@ -49,6 +49,7 @@ import ch.schmidtbit.shelfmark.ui.components.formatDuration
 import ch.schmidtbit.shelfmark.ui.formatRating
 import ch.schmidtbit.shelfmark.ui.labelRes
 import ch.schmidtbit.shelfmark.ui.theme.LocalShelfColors
+import ch.schmidtbit.shelfmark.ui.theme.Sans
 import java.time.LocalDate
 import java.time.Month
 import java.time.format.TextStyle
@@ -191,7 +192,7 @@ private fun LibraryCard(stats: LibraryStats) {
 private fun Tile(value: String, label: String, modifier: Modifier = Modifier, footnote: String? = null) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), modifier = modifier) {
         Column(Modifier.padding(12.dp)) {
-            Text(value, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, style = MaterialTheme.typography.headlineSmall.copy(fontFamily = Sans), color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
             if (footnote != null) Text(footnote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }

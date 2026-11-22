@@ -58,6 +58,7 @@ import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.CoverShelf
 import ch.schmidtbit.shelfmark.ui.components.RatingBar
 import ch.schmidtbit.shelfmark.ui.components.ShelfItem
+import ch.schmidtbit.shelfmark.ui.components.ShelfSection
 import ch.schmidtbit.shelfmark.ui.components.SpiceBar
 import ch.schmidtbit.shelfmark.ui.detail.EmptyHint
 import ch.schmidtbit.shelfmark.ui.labelRes
@@ -97,8 +98,13 @@ fun FriendLibraryScreen(friendId: String, onBack: () -> Unit) {
             }
         }
     }
-    val items = remember(visible, available) {
-        visible.map { ShelfItem(it.localId, it.title, it.authors, it.coverUrl.ifBlank { null }, it.pageCount, it.format, ribbon = if (it.available) available else null) }
+    val sections = remember(visible, available) {
+        listOf(
+            ShelfSection(
+                key = "friend",
+                items = visible.map { ShelfItem(it.localId, it.title, it.authors, it.coverUrl.ifBlank { null }, it.pageCount, it.format, ribbon = if (it.available) available else null) },
+            ),
+        )
     }
 
     Scaffold(
@@ -142,7 +148,7 @@ fun FriendLibraryScreen(friendId: String, onBack: () -> Unit) {
             if (visible.isEmpty()) {
                 EmptyHint(stringResource(R.string.library_nothing_matches))
             } else {
-                CoverShelf(items, { openId = it.key }, contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp))
+                CoverShelf(sections, { openId = it.key }, contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp))
             }
         }
     }
