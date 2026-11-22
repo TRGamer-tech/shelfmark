@@ -287,7 +287,7 @@
     <string name="reader_night">Night owl</string>
     <string name="reader_night_text">You read most at night.</string>
     <string name="reader_quiet">Quiet shelf</string>
-    <string name="reader_quiet_text">Nothing was logged in this time. The books are patient.</string>
+    <string name="reader_quiet_text">No reading sessions in this time. The books are patient.</string>
     <string name="reader_weekend">Weekend reader</string>
     <string name="reader_weekend_text">Most of your reading happened on Saturdays and Sundays.</string>
     <string name="recap_best_day">Best day</string>

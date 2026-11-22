@@ -286,7 +286,7 @@
     <string name="reader_night">Nachteule</string>
     <string name="reader_night_text">Du hast am meisten in der Nacht gelesen.</string>
     <string name="reader_quiet">Stilles Regal</string>
-    <string name="reader_quiet_text">In dieser Zeit wurde nichts erfasst. Die Bücher sind geduldig.</string>
+    <string name="reader_quiet_text">Keine Lesesitzungen in dieser Zeit. Die Bücher sind geduldig.</string>
     <string name="reader_weekend">Wochenendleser</string>
     <string name="reader_weekend_text">Du hast vor allem am Samstag und Sonntag gelesen.</string>
     <string name="recap_best_day">Bester Tag</string>

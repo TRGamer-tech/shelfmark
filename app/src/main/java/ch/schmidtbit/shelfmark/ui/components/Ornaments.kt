@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
+import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 
 /** Width and height of an ornament in dp. They are sized to sit among book spines. */
@@ -45,6 +46,21 @@ private val Sea = Color(0xFF3F7FB5)
 private val Wood = Color(0xFF7A5230)
 
 /** A small drawn object. All twelve are plain shapes drawn in code, so they scale and need no pictures. */
+fun OrnamentKind.labelRes(): Int = when (this) {
+    OrnamentKind.PLANT -> R.string.ornament_plant
+    OrnamentKind.CACTUS -> R.string.ornament_cactus
+    OrnamentKind.CANDLE -> R.string.ornament_candle
+    OrnamentKind.MUG -> R.string.ornament_mug
+    OrnamentKind.VASE -> R.string.ornament_vase
+    OrnamentKind.LAMP -> R.string.ornament_lamp
+    OrnamentKind.GLOBE -> R.string.ornament_globe
+    OrnamentKind.CLOCK -> R.string.ornament_clock
+    OrnamentKind.TROPHY -> R.string.ornament_trophy
+    OrnamentKind.FRAME -> R.string.ornament_frame
+    OrnamentKind.PUMPKIN -> R.string.ornament_pumpkin
+    OrnamentKind.BOOKEND -> R.string.ornament_bookend
+}
+
 @Composable
 fun OrnamentView(kind: OrnamentKind, modifier: Modifier = Modifier, scale: Float = 1f) {
     val (width, height) = ornamentSize(kind)

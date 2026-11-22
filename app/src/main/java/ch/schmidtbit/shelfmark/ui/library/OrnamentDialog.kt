@@ -32,6 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import ch.schmidtbit.shelfmark.ui.components.labelRes
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.schmidtbit.shelfmark.R
@@ -39,20 +43,6 @@ import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.components.OrnamentView
 
-fun OrnamentKind.labelRes(): Int = when (this) {
-    OrnamentKind.PLANT -> R.string.ornament_plant
-    OrnamentKind.CACTUS -> R.string.ornament_cactus
-    OrnamentKind.CANDLE -> R.string.ornament_candle
-    OrnamentKind.MUG -> R.string.ornament_mug
-    OrnamentKind.VASE -> R.string.ornament_vase
-    OrnamentKind.LAMP -> R.string.ornament_lamp
-    OrnamentKind.GLOBE -> R.string.ornament_globe
-    OrnamentKind.CLOCK -> R.string.ornament_clock
-    OrnamentKind.TROPHY -> R.string.ornament_trophy
-    OrnamentKind.FRAME -> R.string.ornament_frame
-    OrnamentKind.PUMPKIN -> R.string.ornament_pumpkin
-    OrnamentKind.BOOKEND -> R.string.ornament_bookend
-}
 
 /** Choose what stands between the books of one shelf, and where. */
 @Composable
@@ -69,12 +59,14 @@ fun OrnamentDialog(shelfKey: String, shelfName: String, bookCount: Int, onDismis
                 Text(stringResource(R.string.ornament_add), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
                     OrnamentKind.entries.forEach { kind ->
+                        val name = stringResource(kind.labelRes())
                         Box(
                             Modifier
                                 .width(54.dp)
                                 .height(54.dp)
                                 // New ornaments go to the end of the shelf and can be moved from there.
-                                .clickable { container.launch { container.library.addOrnament(shelfKey, kind, bookCount) } }
+                                .clickable(onClickLabel = stringResource(R.string.ornament_add), role = Role.Button) { container.launch { container.library.addOrnament(shelfKey, kind, bookCount) } }
+                                .semantics { contentDescription = name }
                                 .testTag("addOrnament_${kind.name}"),
                             contentAlignment = Alignment.BottomCenter,
                         ) {

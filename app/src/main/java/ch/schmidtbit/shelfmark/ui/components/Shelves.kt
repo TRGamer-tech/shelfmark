@@ -298,7 +298,10 @@ fun SpineShelf(
                         for (i in rows[index]) {
                             when (val thing = things[i]) {
                                 is ShelfThing.Spine -> Spine(thing.item, Modifier.clickable { onClick(thing.item) })
-                                is ShelfThing.Deco -> OrnamentView(thing.kind, Modifier.semantics { contentDescription = "ornament_${thing.kind.name}" })
+                                is ShelfThing.Deco -> {
+                                    val name = stringResource(thing.kind.labelRes())
+                                    OrnamentView(thing.kind, Modifier.semantics { contentDescription = name })
+                                }
                             }
                         }
                     }
