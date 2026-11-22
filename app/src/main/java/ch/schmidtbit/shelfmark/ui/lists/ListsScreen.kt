@@ -79,7 +79,7 @@ fun ListsScreen(viewModel: LibraryViewModel, onOpenList: (LibraryFilter) -> Unit
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_lists), style = MaterialTheme.typography.headlineSmall) }) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("lists"), contentPadding = PaddingValues(bottom = 24.dp)) {
             item { SectionTitle(stringResource(R.string.lists_standard)) }
             val standard = listOf(
                 ReadingStatus.READING to Icons.Rounded.AutoStories,
@@ -95,6 +95,7 @@ fun ListsScreen(viewModel: LibraryViewModel, onOpenList: (LibraryFilter) -> Unit
                     books = state.all.filter { it.status == status },
                     coverDir = coverDir,
                     onClick = { onOpenList(LibraryFilter.Status(status)) },
+                    tag = "list_${status.name}",
                 )
             }
             item {
@@ -125,6 +126,7 @@ fun ListsScreen(viewModel: LibraryViewModel, onOpenList: (LibraryFilter) -> Unit
                     books = state.all.filter { it.id in members },
                     coverDir = coverDir,
                     onClick = { onOpenList(LibraryFilter.OnShelf(shelf.id)) },
+                    tag = "list_custom_${shelf.id}",
                     onRename = { renaming = shelf },
                     onDelete = { deleting = shelf },
                 )
@@ -177,6 +179,7 @@ private fun ListCard(
     books: List<Book>,
     coverDir: java.io.File,
     onClick: () -> Unit,
+    tag: String,
     onRename: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
@@ -184,7 +187,7 @@ private fun ListCard(
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag(tag),
     ) {
         Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))

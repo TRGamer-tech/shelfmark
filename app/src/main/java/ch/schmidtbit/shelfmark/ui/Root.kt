@@ -4,6 +4,9 @@ package ch.schmidtbit.shelfmark.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -105,6 +108,8 @@ import ch.schmidtbit.shelfmark.ui.theme.ShelfmarkTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.reflect.KClass
 
+private const val TRANSITION_MS = 180
+
 private data class TopTab(val route: Any, val type: KClass<*>, val label: Int, val icon: ImageVector, val tag: String)
 
 private val TopTabs = listOf(
@@ -179,7 +184,17 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = LibraryRoute, modifier = Modifier.padding(padding).consumeWindowInsets(padding)) {
+        // Short fades: during a transition the screen that leaves still covers the new one
+        // and takes its taps, so a long crossfade makes buttons feel dead.
+        NavHost(
+            navController = nav,
+            startDestination = LibraryRoute,
+            modifier = Modifier.padding(padding).consumeWindowInsets(padding),
+            enterTransition = { fadeIn(tween(TRANSITION_MS)) },
+            exitTransition = { fadeOut(tween(TRANSITION_MS)) },
+            popEnterTransition = { fadeIn(tween(TRANSITION_MS)) },
+            popExitTransition = { fadeOut(tween(TRANSITION_MS)) },
+        ) {
             composable<LibraryRoute> {
                 LibraryScreen(libraryViewModel, onOpenBook = { nav.navigate(BookRoute(it)) }, onAdd = { adding = true }, onSettings = { nav.navigate(SettingsRoute) })
             }
@@ -234,11 +249,16 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
 
     ImportDialogs(nav)
 
-    // Files and text that other apps hand to Shelfmark.
+    // Files and text that other apps hand to Shelfmark. The work runs in the app scope:
+    // clearing the slot restarts this effect, and that must not cancel a running import.
     val intent by incoming.collectAsState()
     LaunchedEffect(intent) {
         val received = intent ?: return@LaunchedEffect
         incoming.value = null
+        fun asQuote(text: String) {
+            container.pendingQuoteText = text
+            nav.navigate(QuoteRoute())
+        }
         when (received.action) {
             Intent.ACTION_VIEW -> received.data?.let(importer::open)
             Intent.ACTION_SEND -> {
@@ -247,16 +267,10 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                 when {
                     stream != null -> importer.open(stream)
                     // Plain text that is not Shelfmark data is meant as a quote.
-                    !text.isNullOrBlank() -> if (!importer.openText(text, reportUnknown = false)) {
-                        container.pendingQuoteText = text
-                        nav.navigate(QuoteRoute())
-                    }
+                    !text.isNullOrBlank() -> container.launch { if (!importer.openText(text, reportUnknown = false)) asQuote(text) }
                 }
             }
-            Intent.ACTION_PROCESS_TEXT -> received.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.takeIf { it.isNotBlank() }?.let {
-                container.pendingQuoteText = it
-                nav.navigate(QuoteRoute())
-            }
+            Intent.ACTION_PROCESS_TEXT -> received.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.takeIf { it.isNotBlank() }?.let(::asQuote)
         }
     }
 }

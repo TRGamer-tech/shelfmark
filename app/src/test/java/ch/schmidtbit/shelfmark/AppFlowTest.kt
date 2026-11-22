@@ -1,0 +1,576 @@
+package ch.schmidtbit.shelfmark
+
+import android.content.Intent
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
+import ch.schmidtbit.shelfmark.data.SampleBooks
+import ch.schmidtbit.shelfmark.data.db.AppDatabase
+import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.data.model.BookFormat
+import ch.schmidtbit.shelfmark.data.model.Goal
+import ch.schmidtbit.shelfmark.data.model.GoalKind
+import ch.schmidtbit.shelfmark.data.model.GoalRepeat
+import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Ownership
+import ch.schmidtbit.shelfmark.data.model.Quote
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
+import ch.schmidtbit.shelfmark.data.model.ReadingStatus
+import ch.schmidtbit.shelfmark.data.remote.BookLookup
+import ch.schmidtbit.shelfmark.data.remote.BookSource
+import ch.schmidtbit.shelfmark.data.remote.RemoteBook
+import ch.schmidtbit.shelfmark.data.repo.ImportResult
+import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
+import ch.schmidtbit.shelfmark.data.repo.SocialRepository
+import ch.schmidtbit.shelfmark.data.repo.ViewMode
+import ch.schmidtbit.shelfmark.data.share.ShareCodec
+import ch.schmidtbit.shelfmark.util.Dates
+import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
+import com.github.takahirom.roborazzi.captureScreenRoboImage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowLooper
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+/** A catalogue that answers from memory, so the add-a-book flows can run without a network. */
+private object FakeCatalogue : BookSource {
+    override val name = "fake"
+    val vorleser = RemoteBook(
+        title = "Der Vorleser", authors = listOf("Bernhard Schlink"), isbn = "9783257229530", publisher = "Diogenes", year = "1997",
+        pageCount = 206, description = "Sie ist reizbar, rätselhaft und viel älter als er.", format = BookFormat.PAPERBACK, language = "de",
+    )
+    val queries = mutableListOf<Pair<String, Boolean>>()
+
+    override suspend fun search(query: String, limit: Int, lang: String, partial: Boolean): List<RemoteBook> {
+        queries += query to partial
+        return if (query.contains("vorl", ignoreCase = true)) listOf(vorleser.copy(description = ""), RemoteBook("Vorlesungen", authors = listOf("G. W. F. Hegel"), year = "1837")) else emptyList()
+    }
+
+    override suspend fun byIsbn(isbn: String, lang: String): RemoteBook? = vorleser.takeIf { it.isbn == isbn }
+}
+
+/**
+ * Drives the real activity, in German, through the things a person does with the app.
+ * Every step also writes a screenshot to build/outputs/roborazzi.
+ */
+@OptIn(ExperimentalRoborazziApi::class)
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35], qualifiers = "de-w412dp-h915dp-420dpi")
+class AppFlowTest {
+    @get:Rule val compose = createEmptyComposeRule()
+    @get:Rule val folder = TemporaryFolder()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private lateinit var app: ShelfmarkApp
+    private lateinit var container: AppContainer
+    private var scenario: ActivityScenario<MainActivity>? = null
+
+    @Before fun setUp() {
+        FakeCatalogue.queries.clear()
+        // FileProvider remembers the cache directory of the first test in a static map,
+        // while every Robolectric test gets a fresh data directory.
+        androidx.core.content.FileProvider::class.java.getDeclaredField("sCache").apply { isAccessible = true }
+            .let { (it.get(null) as MutableMap<*, *>).clear() }
+        app = ApplicationProvider.getApplicationContext()
+        container = AppContainer(
+            context = app,
+            database = AppDatabase.inMemory(app),
+            lookupOverride = BookLookup(listOf(FakeCatalogue)),
+            settingsStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "ui.preferences_pb") },
+        )
+        app.container = container
+        // The clock is advanced by hand in waitFor, so an endless animation (a blinking
+        // cursor, a progress spinner) cannot keep a test waiting for "idle" forever.
+        compose.mainClock.autoAdvance = false
+    }
+
+    @After fun tearDown() {
+        scenario?.close()
+        container.database.close()
+        scope.cancel()
+    }
+
+    // ---- helpers ----
+
+    private fun start(intent: Intent? = null, onboarded: Boolean = true, samples: Boolean = false) {
+        runBlocking {
+            if (onboarded) container.settings.setOnboarded()
+            if (samples) SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+        }
+        scenario = if (intent == null) ActivityScenario.launch(MainActivity::class.java) else ActivityScenario.launch(intent)
+    }
+
+    /** Lets background work and delayed tasks (debounced search, auto-save) finish. */
+    private fun waitFor(timeoutMs: Long = 10_000, condition: () -> Boolean) {
+        compose.waitUntil(timeoutMs) {
+            ShadowLooper.idleMainLooper(100, TimeUnit.MILLISECONDS)
+            compose.mainClock.advanceTimeBy(100)
+            condition()
+        }
+    }
+
+    private fun waitForText(text: String) = waitFor { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+    private fun waitForTag(tag: String) = waitFor { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+    /** Waits out a running screen transition: the screen that leaves still takes the taps until it is gone. */
+    private fun pause() = repeat(3) {
+        ShadowLooper.idleMainLooper(100, TimeUnit.MILLISECONDS)
+        compose.mainClock.advanceTimeBy(100)
+    }
+
+    private fun tap(tag: String) { waitForTag(tag); pause(); compose.onAllNodesWithTag(tag).onFirst().performClick() }
+    private fun tapText(text: String) { waitForText(text); pause(); compose.onAllNodesWithText(text, substring = true).onFirst().performClick() }
+    private fun type(tag: String, text: String) { waitForTag(tag); compose.onNodeWithTag(tag).performTextInput(text) }
+    private fun scrollTo(tag: String) {
+        waitForTag(tag)
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithTag(tag).performScrollTo()
+        compose.mainClock.autoAdvance = false
+    }
+
+    private fun scrollListTo(listTag: String, tag: String) {
+        waitForTag(listTag)
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithTag(listTag).performScrollToNode(hasTestTag(tag))
+        compose.mainClock.autoAdvance = false
+    }
+
+    private fun openBook(title: String) {
+        waitFor { compose.onAllNodesWithContentDescription(title).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithContentDescription(title).onFirst().performClick()
+    }
+
+    /** Lets a screen transition run to its end, so the screen left behind is gone. */
+    private fun settle() {
+        repeat(12) {
+            ShadowLooper.idleMainLooper(100, TimeUnit.MILLISECONDS)
+            compose.mainClock.advanceTimeBy(100)
+        }
+        compose.waitForIdle()
+    }
+
+    private fun shot(name: String) {
+        settle()
+        captureScreenRoboImage("build/outputs/roborazzi/$name.png")
+    }
+
+    private fun books(): List<Book> = runBlocking { container.library.allBooks() }
+    private fun book(title: String): Book = books().first { it.title == title }
+
+    /** The file the app last handed to the share sheet. */
+    private fun lastSharedFile(): String {
+        val dir = File(app.cacheDir, "shared")
+        waitFor { dir.listFiles()?.isNotEmpty() == true }
+        return dir.listFiles()!!.maxByOrNull { it.lastModified() }!!.readText()
+    }
+
+    private fun clearShared() = File(app.cacheDir, "shared").listFiles()?.forEach { it.delete() }
+
+    private fun shareIntentOf(text: String) = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+
+    /** A friend's phone, reduced to its data layer. */
+    private inner class Friend(name: String) {
+        val db = AppDatabase.inMemory(app)
+        val settings = SettingsRepository(PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "$name.preferences_pb") })
+        val social = SocialRepository(db, settings)
+        init { runBlocking { settings.setProfileName(name) } }
+    }
+
+    // ---- tests ----
+
+    @Test fun firstStartLeadsToAnEmptyShelf() {
+        start(onboarded = false)
+        waitForTag("onboarding")
+        shot("01_onboarding_welcome")
+        tap("onboardingNext")
+        waitForText("Wie soll es aussehen?")
+        shot("02_onboarding_theme")
+        tap("onboardingNext")
+        tap("startEmpty")
+        waitForText("Dein Regal ist noch leer")
+        shot("03_empty_shelf")
+        assertTrue(runBlocking { container.settings.current().onboarded })
+    }
+
+    @Test fun addABookByHandAndFillInEverything() {
+        start()
+        tap("addBook")
+        shot("10_add_sheet")
+        tap("addManual")
+        type("fieldTitle", "Die Wand")
+        type("fieldAuthors", "Marlen Haushofer")
+        tap("format_HARDCOVER")
+        scrollTo("fieldPages")
+        type("fieldPages", "288")
+        scrollTo("fieldDescription")
+        type("fieldDescription", "Eine Frau, allein hinter einer unsichtbaren Wand.")
+        shot("11_manual_entry")
+        tap("saveBook")
+
+        // The new book opens straight away.
+        waitForTag("bookOverview")
+        waitForText("Die Wand")
+        var saved = book("Die Wand")
+        assertEquals("Marlen Haushofer", saved.authors)
+        assertEquals(288, saved.pageCount)
+        assertEquals(BookFormat.HARDCOVER, saved.format)
+        assertEquals("Eine Frau, allein hinter einer unsichtbaren Wand.", saved.description)
+        assertEquals(Ownership.OWNED, saved.ownership)
+
+        // List, stars, spice.
+        tap("status_READ")
+        tap("star4")
+        tap("spice3")
+        waitFor { book("Die Wand").let { it.status == ReadingStatus.READ && it.rating == 4f && it.spice == 3 } }
+        saved = book("Die Wand")
+        assertEquals(Dates.today(), saved.finishedOn)
+        tap("star4")
+        waitFor { book("Die Wand").rating == 3.5f }
+
+        // Review text saves itself.
+        scrollListTo("bookOverview", "review")
+        type("review", "Still und stark.")
+        waitFor { book("Die Wand").review == "Still und stark." }
+        shot("12_book_rated")
+
+        // Ownership: borrowed from someone.
+        scrollListTo("bookOverview", "own_BORROWED")
+        tap("own_BORROWED")
+        scrollListTo("bookOverview", "borrowedFrom")
+        type("borrowedFrom", "Clara")
+        waitFor { book("Die Wand").let { it.ownership == Ownership.BORROWED && it.borrowedFrom == "Clara" } }
+        assertTrue(!book("Die Wand").availableToLend)
+        shot("13_book_ownership")
+    }
+
+    @Test fun searchSuggestsWhileTypingAndAddsTheBook() {
+        start()
+        tap("addBook")
+        tap("addSearch")
+        type("searchField", "der vorl")
+        waitForText("Vorschläge")
+        waitForText("Der Vorleser")
+        // The half-typed word was sent as a suggestion query.
+        assertEquals("der vorl" to true, FakeCatalogue.queries.last())
+        shot("20_search_suggestions")
+
+        tapText("Der Vorleser")
+        waitForTag("previewSheet")
+        // The blurb is fetched in the background once the preview is open.
+        waitForText("Sie ist reizbar")
+        shot("21_search_preview")
+        tap("pick_WISHLIST")
+        tap("confirmAdd")
+
+        waitForTag("bookOverview")
+        val added = book("Der Vorleser")
+        assertEquals("9783257229530", added.isbn)
+        assertEquals(206, added.pageCount)
+        assertEquals(BookFormat.PAPERBACK, added.format)
+        assertEquals(ReadingStatus.WISHLIST, added.status)
+        assertEquals(Ownership.NOT_OWNED, added.ownership)
+        assertTrue(added.description.startsWith("Sie ist reizbar"))
+    }
+
+    @Test fun anOldBookWithoutCodeCanBeTypedInFromTheSearch() {
+        start()
+        tap("addBook")
+        tap("addSearch")
+        type("searchField", "Ein vergessenes Buch von 1890")
+        waitForText("Nichts gefunden")
+        tap("manualEntry")
+        // The title carries over into the form.
+        waitForText("Ein vergessenes Buch von 1890")
+        tap("saveBook")
+        waitForTag("bookOverview")
+        assertNotNull(books().firstOrNull { it.title == "Ein vergessenes Buch von 1890" })
+    }
+
+    @Test fun typedIsbnOnTheScanScreenFindsTheBook() {
+        start()
+        tap("addBook")
+        tap("addScan")
+        shot("30_scan_screen")
+        type("isbnField", "978-3-257-22953-0")
+        tap("isbnLookup")
+        waitForTag("previewSheet")
+        waitForText("Der Vorleser")
+        shot("31_scan_result")
+        tap("confirmAdd")
+        waitForTag("scanAdded")
+        assertEquals("9783257229530", book("Der Vorleser").isbn)
+
+        // Scanning the same code again recognises the book instead of adding it twice.
+        type("isbnField", "9783257229530")
+        tap("isbnLookup")
+        waitForText("Bereits in deiner Bibliothek")
+        assertEquals(1, books().size)
+    }
+
+    @Test fun shelfCanBeShownAsCoversSpinesOrList() {
+        start(samples = true)
+        waitForTag("coverShelf")
+        shot("40_shelf_covers")
+        runBlocking { container.settings.setViewMode(ViewMode.SPINES) }
+        waitForTag("spineShelf")
+        shot("41_shelf_spines")
+        runBlocking { container.settings.setViewMode(ViewMode.LIST) }
+        waitForTag("bookList")
+        shot("42_shelf_list")
+        tap("tabLists")
+        waitForText("Standardlisten")
+        shot("43_lists")
+        // A standard list opens on the shelf with only its books.
+        tap("list_WISHLIST")
+        waitForTag("bookList")
+        waitForText("2 Bücher")
+        waitForText("Jane Eyre")
+        settle()
+        assertTrue(compose.onAllNodesWithText("Dracula").fetchSemanticsNodes().isEmpty())
+    }
+
+    // Dialogs with text fields never report "idle" when Robolectric emulates a phone sized
+    // screen (a bare Compose dialog shows the same), so these flows run at its default size.
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun ownListsCanBeCreatedAndFilled() {
+        start(samples = true)
+        tap("tabLists")
+        waitForText("Standardlisten")
+        scrollListTo("lists", "newList")
+        tap("newList")
+        type("nameField", "Ferienlektüre")
+        tapText("Speichern")
+        waitFor { runBlocking { container.library.shelves.first() }.size == 1 }
+        val shelf = runBlocking { container.library.shelves.first().single() }
+        assertEquals("Ferienlektüre", shelf.name)
+        runBlocking { container.library.setOnShelf(book("Dracula").id, shelf.id, true) }
+
+        // Opening the list shows only its books on the shelf.
+        scrollListTo("lists", "list_custom_${shelf.id}")
+        tap("list_custom_${shelf.id}")
+        waitFor { compose.onAllNodesWithContentDescription("Dracula").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(compose.onAllNodesWithContentDescription("Faust").fetchSemanticsNodes().isEmpty())
+        waitForText("1 Buch")
+    }
+
+    @Test fun aBookBeingReadShowsItsProgress() {
+        start(samples = true)
+        openBook("Der Prozess")
+        waitForTag("bookOverview")
+        waitForTag("logSession")
+        shot("50_book_reading")
+    }
+
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun loggingASessionMovesTheBookmark() {
+        runBlocking { container.library.addBook(SampleBooks.create(Dates.today()).first { it.title == "Der Prozess" }) }
+        start()
+        openBook("Der Prozess")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "logSession")
+        tap("logSession")
+        type("sessionTo", "180")
+        type("sessionMinutes", "90")
+        tap("sessionSave")
+        waitFor { book("Der Prozess").currentPage == 180 }
+        val sessions = runBlocking { container.library.sessionsOf(book("Der Prozess").id).first() }
+        assertEquals(120, sessions.single().startPage)
+        assertEquals(180, sessions.single().endPage)
+        assertEquals(90f, sessions.single().minutes)
+        tapText("Lesen")
+        waitForText("120 bis 180")
+
+        // Reading to the last page finishes the book.
+        tapText("Übersicht")
+        scrollListTo("bookOverview", "logSession")
+        tap("logSession")
+        type("sessionTo", "256")
+        tap("sessionSave")
+        waitFor { book("Der Prozess").status == ReadingStatus.READ }
+        assertEquals(Dates.today(), book("Der Prozess").finishedOn)
+    }
+
+    @Test fun sharedTextBecomesAQuote() {
+        runBlocking { container.library.addBook(Book(title = "Momo", authors = "Michael Ende")) }
+        start(intent = shareIntentOf("Zeit ist Leben. Und das Leben wohnt im Herzen."))
+        waitForTag("quoteText")
+        waitForText("Zeit ist Leben")
+        tap("pickBook")
+        tap("pick_book_${book("Momo").id}")
+        type("quotePage", "57")
+        shot("60_quote_editor")
+        tap("saveQuote")
+        waitFor { runBlocking { container.library.quotes.first() }.isNotEmpty() }
+        val quote = runBlocking { container.library.quotes.first() }.single()
+        assertEquals("Zeit ist Leben. Und das Leben wohnt im Herzen.", quote.quote.text)
+        assertEquals(57, quote.quote.page)
+        assertEquals("Momo", quote.bookTitle)
+    }
+
+    @Test fun iBorrowFromAFriend() {
+        runBlocking { container.settings.setProfileName("Ben") }
+        val anna = Friend("Anna")
+        runBlocking {
+            anna.db.books().insert(Book(title = "Dune", authors = "Frank Herbert", status = ReadingStatus.READ, rating = 5f, spice = 1, review = "Sand überall."))
+            anna.db.books().insert(Book(title = "Emma", authors = "Jane Austen", lentTo = "Clara"))
+        }
+        val libraryFile = ShareCodec.encode(runBlocking { anna.social.exportLibrary(includeStatus = true, includeRatings = true) })
+
+        // Anna's library file arrives.
+        start(intent = shareIntentOf(libraryFile))
+        waitForTag("importDialog")
+        waitForText("Die Bibliothek von Anna wurde importiert: 2 Bücher.")
+        shot("70_library_imported")
+        tap("importAction")
+        waitForText("Ausleihbar")
+        shot("71_friend_shelf")
+
+        // Her rating is visible, and the book can be asked for.
+        openBook("Dune")
+        waitForTag("friendBookSheet")
+        waitForText("Anna besitzt dieses Buch")
+        waitForText("Sand überall.")
+        shot("72_friend_book")
+        clearShared()
+        tap("askToBorrow")
+        val requestFile = lastSharedFile()
+        assertEquals(Intent.ACTION_CHOOSER, shadowOf(app).nextStartedActivity.action)
+        waitForTag("requestState")
+
+        // Anna opens the request and says yes.
+        val received = runBlocking { anna.social.import(requestFile) } as ImportResult.RequestReceived
+        assertEquals("Ben", received.fromName)
+        val answerFile = ShareCodec.encode(runBlocking { anna.social.answerRequest(received.requestId, accept = true) }!!)
+        assertEquals("Ben", runBlocking { anna.db.books().all() }.first { it.title == "Dune" }.lentTo)
+
+        // Her answer arrives here.
+        scenario!!.onActivity { it.deliver(shareIntentOf(answerFile)) }
+        waitForText("Anna hat Ja gesagt. Du kannst «Dune» ausleihen.")
+        shot("73_answer_received")
+        assertEquals(LendStatus.ACCEPTED, runBlocking { container.social.requests.first() }.single().status)
+    }
+
+    @Test fun aFriendBorrowsFromMe() {
+        val myDune = runBlocking {
+            container.settings.setProfileName("Anna")
+            container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+        }
+        start()
+        tap("tabFriends")
+        waitForText("Meine Bibliothek teilen")
+        shot("80_friends")
+        clearShared()
+        tap("shareLibrary")
+        val libraryFile = lastSharedFile()
+
+        // Ben opens my library and asks for Dune.
+        val ben = Friend("Ben")
+        val imported = runBlocking { ben.social.import(libraryFile) } as ImportResult.LibraryImported
+        assertEquals("Anna", imported.name)
+        val dune = runBlocking { ben.social.friendBooks(imported.friendId).first() }.single()
+        assertTrue(dune.available)
+        val requestFile = ShareCodec.encode(runBlocking { ben.social.createRequest(dune, "Für die Ferien?") })
+
+        // His request arrives: one question, yes or no.
+        scenario!!.onActivity { it.deliver(shareIntentOf(requestFile)) }
+        waitForTag("requestDialog")
+        waitForText("Ben möchte «Dune» ausleihen. Einverstanden?")
+        waitForText("Für die Ferien?")
+        shot("81_borrow_request")
+        clearShared()
+        tap("dialogYes")
+        val answerFile = lastSharedFile()
+
+        // My copy is now marked as lent to Ben, and Ben gets his yes.
+        waitFor { runBlocking { container.library.getBook(myDune) }!!.lentTo == "Ben" }
+        val answer = runBlocking { ben.social.import(answerFile) } as ImportResult.AnswerReceived
+        assertTrue(answer.accepted)
+        tap("allRequests")
+        waitForText("Zugesagt")
+        shot("82_requests")
+    }
+
+    @Test fun statisticsGoalsQuotesAndSettingsScreens() {
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            val prozess = book("Der Prozess")
+            val now = System.currentTimeMillis()
+            container.database.sessions().insert(ReadingSession(bookId = prozess.id, startedAt = now - 2 * 86_400_000L, startPage = 0, endPage = 60, minutes = 75f))
+            container.database.sessions().insert(ReadingSession(bookId = prozess.id, startedAt = now - 86_400_000L, startPage = 60, endPage = 120, minutes = 80f))
+            container.library.saveGoal(Goal(kind = GoalKind.BOOKS, target = 12, startDay = 0, endDay = 0, repeat = GoalRepeat.YEARLY))
+            container.library.saveQuote(Quote(bookId = prozess.id, text = "Jemand musste Josef K. verleumdet haben.", page = 7))
+        }
+        start()
+        tap("tabStats")
+        waitForTag("stats")
+        waitForText("Bücher beendet")
+        shot("90_stats")
+        tap("openGoals")
+        waitForTag("goalCard")
+        waitForText("4 von 12 Bücher")
+        shot("91_goals")
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        tap("tabQuotes")
+        waitForText("Jemand musste Josef K. verleumdet haben.")
+        shot("92_quotes")
+
+        tap("tabLibrary")
+        tap("openSettings")
+        waitForTag("lang_de")
+        shot("93_settings")
+        tap("theme_paper")
+        waitFor { runBlocking { container.settings.current().theme } == "paper" }
+        tap("theme_ember")
+        waitFor { runBlocking { container.settings.current().theme } == "ember" }
+        shot("94_settings_ember_theme")
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        waitForTag("coverShelf")
+        shot("95_shelf_ember_theme")
+    }
+
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun aGoalCanBeSetInTheDialog() {
+        start()
+        tap("tabStats")
+        tap("openGoals")
+        tap("newGoal")
+        tap("goalKind_PAGES")
+        tap("goalRepeat_WEEKLY")
+        tap("goalSave")
+        waitFor { runBlocking { container.library.goals.first() }.isNotEmpty() }
+        val goal = runBlocking { container.library.goals.first() }.single()
+        assertEquals(GoalKind.PAGES, goal.kind)
+        assertEquals(GoalRepeat.WEEKLY, goal.repeat)
+        assertEquals(12, goal.target)
+        waitForTag("goalCard")
+    }
+}

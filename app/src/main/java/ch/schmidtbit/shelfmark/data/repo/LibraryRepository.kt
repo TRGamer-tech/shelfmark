@@ -47,10 +47,22 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
         if (previous != null && previous.coverPath != book.coverPath) covers.delete(previous.coverPath)
     }
 
-    suspend fun setStatus(bookId: Long, status: ReadingStatus) {
-        val book = db.books().get(bookId) ?: return
-        updateBook(book.withStatus(status, Dates.today()))
+    /**
+     * Applies [change] to the stored book in one transaction. Edits made in quick succession
+     * (list, stars, spice) each start from the latest state, so none of them is lost.
+     */
+    suspend fun modify(bookId: Long, change: (Book) -> Book) {
+        var replacedCover: String? = null
+        db.withTransaction {
+            val current = db.books().get(bookId) ?: return@withTransaction
+            val updated = change(current).copy(id = current.id, updatedAt = System.currentTimeMillis())
+            db.books().update(updated)
+            if (current.coverPath != updated.coverPath) replacedCover = current.coverPath
+        }
+        replacedCover?.let(covers::delete)
     }
+
+    suspend fun setStatus(bookId: Long, status: ReadingStatus) = modify(bookId) { it.withStatus(status, Dates.today()) }
 
     suspend fun deleteBook(id: Long) {
         val book = db.books().get(id) ?: return

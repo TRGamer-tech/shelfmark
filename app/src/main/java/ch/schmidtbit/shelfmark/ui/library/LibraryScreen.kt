@@ -127,7 +127,7 @@ fun LibraryScreen(
                             onSort = viewModel::setSort,
                         )
                     }
-                    IconButton(onClick = onSettings) {
+                    IconButton(onClick = onSettings, modifier = Modifier.testTag("openSettings")) {
                         Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.settings_title))
                     }
                 },

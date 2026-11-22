@@ -123,7 +123,8 @@ fun BookScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var logging by remember { mutableStateOf(false) }
 
-    fun save(updated: Book) = container.launch { library.updateBook(updated) }
+    // Edits are applied to the stored book, not to the copy on screen, which may lag a moment behind.
+    fun change(edit: (Book) -> Book) { container.launch { library.modify(bookId, edit) } }
 
     Scaffold(
         topBar = {
@@ -132,7 +133,7 @@ fun BookScreen(
                 navigationIcon = { BackButton(onBack) },
                 actions = {
                     if (book != null) {
-                        IconButton(onClick = { save(book.copy(favorite = !book.favorite)) }) {
+                        IconButton(onClick = { change { it.copy(favorite = !it.favorite) } }) {
                             Icon(
                                 if (book.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                 contentDescription = stringResource(R.string.book_favorite),
@@ -179,7 +180,7 @@ fun BookScreen(
                     shelfIds = shelfIds,
                     sessions = sessions,
                     minutesPerPage = settings?.minutesPerPage ?: 1.5f,
-                    onSave = ::save,
+                    onChange = ::change,
                     onLogSession = { logging = true },
                     onTimer = onTimer,
                 )
@@ -249,7 +250,7 @@ private fun OverviewTab(
     shelfIds: List<Long>,
     sessions: List<ReadingSession>,
     minutesPerPage: Float,
-    onSave: (Book) -> Unit,
+    onChange: ((Book) -> Book) -> Unit,
     onLogSession: () -> Unit,
     onTimer: () -> Unit,
 ) {
@@ -266,7 +267,7 @@ private fun OverviewTab(
                     listOf(ReadingStatus.WISHLIST, ReadingStatus.NONE, ReadingStatus.READING, ReadingStatus.READ, ReadingStatus.ABANDONED).forEach { status ->
                         FilterChip(
                             selected = book.status == status,
-                            onClick = { onSave(book.withStatus(status, Dates.today())) },
+                            onClick = { onChange { it.withStatus(status, Dates.today()) } },
                             label = { Text(stringResource(status.labelRes())) },
                             modifier = Modifier.testTag("status_${status.name}"),
                         )
@@ -288,7 +289,7 @@ private fun OverviewTab(
         item(key = "rating") {
             SectionCard(stringResource(R.string.book_section_rating)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RatingBar(book.rating, starSize = 30.dp, onChange = { onSave(book.copy(rating = it)) })
+                    RatingBar(book.rating, starSize = 30.dp, onChange = { stars -> onChange { it.copy(rating = stars) } })
                     Spacer(Modifier.weight(1f))
                     Text(
                         if (book.rating > 0f) stringResource(R.string.rating_of_five, formatRating(book.rating)) else stringResource(R.string.rating_none),
@@ -298,7 +299,7 @@ private fun OverviewTab(
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SpiceBar(book.spice, size = 28.dp, onChange = { onSave(book.copy(spice = it)) })
+                    SpiceBar(book.spice, size = 28.dp, onChange = { level -> onChange { it.copy(spice = level) } })
                     Spacer(Modifier.weight(1f))
                     Text(
                         stringResource(R.string.spice_label) + if (book.spice > 0) "  ${book.spice}/5" else "",
@@ -321,7 +322,7 @@ private fun OverviewTab(
                     label = stringResource(R.string.book_review_hint),
                     minLines = 3,
                     tag = "review",
-                ) { text -> container.library.getBook(book.id)?.let { container.library.updateBook(it.copy(review = text)) } }
+                ) { text -> container.library.modify(book.id) { it.copy(review = text) } }
             }
         }
         item(key = "ownership") {
@@ -330,7 +331,7 @@ private fun OverviewTab(
                     Ownership.entries.forEach { ownership ->
                         FilterChip(
                             selected = book.ownership == ownership,
-                            onClick = { onSave(book.copy(ownership = ownership)) },
+                            onClick = { onChange { it.copy(ownership = ownership) } },
                             label = { Text(stringResource(ownership.labelRes())) },
                             modifier = Modifier.testTag("own_${ownership.name}"),
                         )
@@ -340,7 +341,7 @@ private fun OverviewTab(
                     Ownership.BORROWED -> {
                         Spacer(Modifier.height(8.dp))
                         AutoSaveField(book.id, book.borrowedFrom, stringResource(R.string.book_borrowed_from), minLines = 1, tag = "borrowedFrom") { text ->
-                            container.library.getBook(book.id)?.let { container.library.updateBook(it.copy(borrowedFrom = text)) }
+                            container.library.modify(book.id) { it.copy(borrowedFrom = text) }
                         }
                     }
                     Ownership.OWNED -> {
@@ -350,13 +351,13 @@ private fun OverviewTab(
                                 stringResource(R.string.book_lent_to, book.lentTo, Dates.format(book.lentSince)),
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                            TextButton(onClick = { onSave(book.copy(lentTo = "", lentSince = null)) }) {
+                            TextButton(onClick = { onChange { it.copy(lentTo = "", lentSince = null) } }) {
                                 Text(stringResource(R.string.book_returned))
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(stringResource(R.string.book_lendable), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                Switch(checked = book.lendable, onCheckedChange = { onSave(book.copy(lendable = it)) }, modifier = Modifier.testTag("lendable"))
+                                Switch(checked = book.lendable, onCheckedChange = { allowed -> onChange { it.copy(lendable = allowed) } }, modifier = Modifier.testTag("lendable"))
                             }
                             TextButton(onClick = { lendTo = true }) { Text(stringResource(R.string.book_mark_lent)) }
                         }
@@ -416,12 +417,12 @@ private fun OverviewTab(
         }
     }
 
-    if (pickStart) DayPickerDialog(book.startedOn, { pickStart = false }) { pickStart = false; onSave(book.copy(startedOn = it)) }
-    if (pickEnd) DayPickerDialog(book.finishedOn, { pickEnd = false }) { pickEnd = false; onSave(book.copy(finishedOn = it)) }
+    if (pickStart) DayPickerDialog(book.startedOn, { pickStart = false }) { day -> pickStart = false; onChange { it.copy(startedOn = day) } }
+    if (pickEnd) DayPickerDialog(book.finishedOn, { pickEnd = false }) { day -> pickEnd = false; onChange { it.copy(finishedOn = day) } }
     if (lendTo) {
         NameDialog(stringResource(R.string.book_mark_lent), "", { lendTo = false }) { name ->
             lendTo = false
-            onSave(book.copy(lentTo = name, lentSince = Dates.today()))
+            onChange { it.copy(lentTo = name, lentSince = Dates.today()) }
         }
     }
     if (newList) {

@@ -23,6 +23,11 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        deliver(intent)
+    }
+
+    /** Queues a shared file or text for the UI to pick up. */
+    fun deliver(intent: Intent) {
         incoming.value = intent
     }
 }
