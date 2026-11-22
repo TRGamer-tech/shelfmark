@@ -48,4 +48,54 @@ class LiveCatalogueTest {
         // Valid check digit, but in a range no publisher uses.
         assertEquals(null, lookup.byIsbn("9786999999994", "en"))
     }
+
+    private fun report(name: String, book: ch.schmidtbit.shelfmark.data.remote.RemoteBook?) =
+        println("LIVE $name -> ${book?.title} / ${book?.authorLine} / ${book?.isbn} / ${book?.pageCount} p / ${book?.year} / cover=${book?.coverUrl?.take(60)}")
+
+    @Test fun lobidKnowsTheGermanPaperback() = runBlocking {
+        val api = ch.schmidtbit.shelfmark.data.remote.LobidApi(fetcher)
+        val book = api.byIsbn("9783257229530", "de")
+        report("lobid isbn", book)
+        assertEquals("Der Vorleser", book!!.title)
+        val found = api.search("die unendliche geschichte ende", 8, "de", false)
+        println("LIVE lobid search -> ${found.map { it.title }}")
+        assertTrue(found.isNotEmpty())
+    }
+
+    @Test fun k10plusKnowsTheGermanPaperback() = runBlocking {
+        val api = ch.schmidtbit.shelfmark.data.remote.SruCatalogue.k10plus(fetcher)
+        val book = api.byIsbn("9783257229530", "de")
+        report("k10plus isbn", book)
+        assertEquals("Der Vorleser", book!!.title)
+        assertTrue(api.search("unendliche geschichte ende", 15, "de", false).any { it.title.contains("unendliche Geschichte", ignoreCase = true) })
+    }
+
+    @Test fun swisscoveryKnowsTheGermanPaperback() = runBlocking {
+        val api = ch.schmidtbit.shelfmark.data.remote.SruCatalogue.swisscovery(fetcher)
+        val book = api.byIsbn("9783257229530", "de")
+        report("swisscovery isbn", book)
+        assertEquals("Der Vorleser", book!!.title)
+        assertTrue(api.search("unendliche geschichte ende", 15, "de", false).any { it.title.contains("unendliche Geschichte", ignoreCase = true) })
+    }
+
+    @Test fun appleBooksFindsTitlesWithCovers() = runBlocking {
+        val found = ch.schmidtbit.shelfmark.data.remote.ITunesApi(fetcher) { "CH" }.search("der vorleser schlink", 5, "de", false)
+        report("applebooks search", found.firstOrNull())
+        assertTrue(found.first().coverUrl.startsWith("https://"))
+    }
+
+    @Test fun allCataloguesTogetherFindAnOldGermanEdition() = runBlocking {
+        val everything = BookLookup(
+            listOf(
+                OpenLibraryApi(fetcher), GoogleBooksApi(fetcher), ch.schmidtbit.shelfmark.data.remote.ITunesApi(fetcher) { "CH" },
+                ch.schmidtbit.shelfmark.data.remote.LobidApi(fetcher), ch.schmidtbit.shelfmark.data.remote.SruCatalogue.dnb(fetcher),
+                ch.schmidtbit.shelfmark.data.remote.SruCatalogue.k10plus(fetcher), ch.schmidtbit.shelfmark.data.remote.SruCatalogue.swisscovery(fetcher),
+            ),
+        )
+        // A Swiss classic, a recent German novel by ISBN, and a title search.
+        listOf("9783423282734", "9783257069709", "9783462050974").forEach { isbn -> report("all isbn $isbn", everything.byIsbn(isbn, "de")) }
+        val results = everything.search("homo faber frisch", 10, "de")
+        println("LIVE all search -> ${results.take(5).map { it.title + " / " + it.authorLine + " / cover=" + it.coverUrl.isNotBlank() }}")
+        assertTrue(results.first().title.contains("Homo faber", ignoreCase = true))
+    }
 }

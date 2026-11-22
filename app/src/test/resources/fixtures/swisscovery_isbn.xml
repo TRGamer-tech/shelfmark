@@ -1,0 +1,486 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/">
+  <version>1.2</version>
+  <numberOfRecords>7</numberOfRecords>
+  <records>
+    <record>
+      <recordSchema>marcxml</recordSchema>
+      <recordPacking>xml</recordPacking>
+      <recordData>
+        <record xmlns="http://www.loc.gov/MARC21/slim">
+          <leader>01668nam a2200481 c 4500</leader>
+          <controlfield tag="001">991003007919705501</controlfield>
+          <controlfield tag="005">20231128164635.0</controlfield>
+          <controlfield tag="008">950905s1998    sz     |      00| ||ger|d</controlfield>
+          <datafield ind1=" " ind2=" " tag="020">
+            <subfield code="a">3257229534</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(swissbib)164967435-41slsp_network</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">164967435</subfield>
+            <subfield code="9">ExL</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(NEBIS)005380103EBI01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="040">
+            <subfield code="a">SzZuIDS NEBIS ZBZ</subfield>
+            <subfield code="d">CH-ZuSLS</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="4" tag="082">
+            <subfield code="a">833/.914</subfield>
+            <subfield code="2">22</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="4" tag="082">
+            <subfield code="a">438</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="4" tag="082">
+            <subfield code="a">833.9</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="4" tag="082">
+            <subfield code="a">833.914</subfield>
+          </datafield>
+          <datafield ind1="1" ind2=" " tag="100">
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="d">1944-</subfield>
+            <subfield code="0">(DE-588)115673784</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="0" tag="245">
+            <subfield code="a">&lt;&lt;Der&gt;&gt; Vorleser</subfield>
+            <subfield code="b">Roman</subfield>
+            <subfield code="c">Bernhard Schlink</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="250">
+            <subfield code="a">[7. Aufl.]</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="1" tag="264">
+            <subfield code="a">Zürich</subfield>
+            <subfield code="b">Diogenes</subfield>
+            <subfield code="c">1998</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="300">
+            <subfield code="a">206 S.</subfield>
+          </datafield>
+          <datafield ind1="0" ind2=" " tag="490">
+            <subfield code="a">Diogenes-Taschenbuch</subfield>
+            <subfield code="v">22953</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="0" tag="600">
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="t">Vorleser</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Aufseherin</subfield>
+            <subfield code="0">(DE-588)4342624-4</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Erste Liebe</subfield>
+            <subfield code="0">(DE-588)4308639-1</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Frau</subfield>
+            <subfield code="0">(DE-588)4018202-2</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Heranwachsender</subfield>
+            <subfield code="0">(DE-588)4072431-1</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Konzentrationslager</subfield>
+            <subfield code="0">(DE-588)4032352-3</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Liebesbeziehung</subfield>
+            <subfield code="0">(DE-588)4167616-6</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Strafverfahren</subfield>
+            <subfield code="0">(DE-588)4116634-6</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Strafverfolgung</subfield>
+            <subfield code="0">(DE-588)4057803-3</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">German fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">German fiction</subfield>
+            <subfield code="y">20th century</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">Mystery</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">War crime trials</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">World War, 1939-1945</subfield>
+            <subfield code="x">Atrocities</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="651">
+            <subfield code="a">Deutschland</subfield>
+            <subfield code="0">(DE-588)4011882-4</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="651">
+            <subfield code="a">Deutschland</subfield>
+            <subfield code="g">Bundesrepublik</subfield>
+            <subfield code="0">(DE-588)4011889-7</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="651">
+            <subfield code="a">Germany</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="2" tag="700">
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="d">1944-</subfield>
+            <subfield code="t">&lt;&lt;Der&gt;&gt; Vorleser</subfield>
+            <subfield code="0">(DE-588)4535518-6</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_UZB</subfield>
+            <subfield code="6">990053801030205508</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="900">
+            <subfield code="a">IDSZ1ZH</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="900">
+            <subfield code="a">IDSZ2zbzmon200706e</subfield>
+            <subfield code="c">IDSZ2scha</subfield>
+          </datafield>
+        </record>
+      </recordData>
+      <recordIdentifier>991003007919705501</recordIdentifier>
+      <recordPosition>1</recordPosition>
+    </record>
+    <record>
+      <recordSchema>marcxml</recordSchema>
+      <recordPacking>xml</recordPacking>
+      <recordData>
+        <record xmlns="http://www.loc.gov/MARC21/slim">
+          <leader>02615nam a2200757 c 4500</leader>
+          <controlfield tag="001">991006441079705501</controlfield>
+          <controlfield tag="005">20260319151923.0</controlfield>
+          <controlfield tag="008">201011t19951995sz ||||| |||| 00| ||ger d</controlfield>
+          <datafield ind1=" " ind2=" " tag="020">
+            <subfield code="a">3257229534</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="020">
+            <subfield code="a">3257060653</subfield>
+          </datafield>
+          <datafield ind1="7" ind2=" " tag="024">
+            <subfield code="a">http://catalogue.bnf.fr/ark:/12148/cb376710529</subfield>
+            <subfield code="2">uri</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(swissbib)219930015-41slsp_network</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">219930015</subfield>
+            <subfield code="9">ExL</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(RERO)2078704-41slsp</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(NEBIS)001475663EBI01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(IDSBB)001157192DSV01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(IDSLU)000084949ILU01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(IDSSG)000739854HSB01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="035">
+            <subfield code="a">(ABN)000075476ABN01</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="040">
+            <subfield code="a">RERO frbcuc</subfield>
+            <subfield code="d">CH-ZuSLS</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="044">
+            <subfield code="a">sz</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="072">
+            <subfield code="a">al</subfield>
+            <subfield code="2">rero</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="072">
+            <subfield code="a">dl</subfield>
+            <subfield code="2">SzZuIDS BS/BE</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="072">
+            <subfield code="a">592</subfield>
+            <subfield code="2">IDS LU</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="4" tag="082">
+            <subfield code="a">833/.91/4</subfield>
+            <subfield code="2">21</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="4" tag="082">
+            <subfield code="a">830</subfield>
+            <subfield code="2">15</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="4" tag="082">
+            <subfield code="a">833.9</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="084">
+            <subfield code="a">GN 8896</subfield>
+            <subfield code="2">rvk</subfield>
+          </datafield>
+          <datafield ind1="1" ind2=" " tag="100">
+            <subfield code="6">880-01</subfield>
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="d">1944-....</subfield>
+            <subfield code="0">(IDREF)032386648</subfield>
+            <subfield code="4">cre</subfield>
+          </datafield>
+          <datafield ind1="1" ind2=" " tag="880">
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="d">1944-</subfield>
+            <subfield code="6">100-01</subfield>
+            <subfield code="0">(DE-588)115673784</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="0" tag="245">
+            <subfield code="a">&lt;&lt;Der&gt;&gt; Vorleser</subfield>
+            <subfield code="b">Roman</subfield>
+            <subfield code="c">Bernhard Schlink</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="1" tag="264">
+            <subfield code="a">Zürich</subfield>
+            <subfield code="b">Diogenes</subfield>
+            <subfield code="c">[1995]</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="4" tag="264">
+            <subfield code="c">© 1995</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="300">
+            <subfield code="a">206 S.</subfield>
+            <subfield code="c">19 cm</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="336">
+            <subfield code="b">txt</subfield>
+            <subfield code="2">rdacontent</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="337">
+            <subfield code="b">n</subfield>
+            <subfield code="2">rdamedia</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="338">
+            <subfield code="b">nc</subfield>
+            <subfield code="2">rdacarrier</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="7" tag="630">
+            <subfield code="a">&lt;&lt;The&gt;&gt; reader</subfield>
+            <subfield code="g">Film</subfield>
+            <subfield code="0">(DE-588)7661711-7</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Frau</subfield>
+            <subfield code="0">(DE-588)4018202-2</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Heranwachsender</subfield>
+            <subfield code="0">(DE-588)4072431-1</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Liebesbeziehung</subfield>
+            <subfield code="0">(DE-588)4167616-6</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Roman</subfield>
+            <subfield code="0">(DE-588)4050479-7</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Strafverfolgung</subfield>
+            <subfield code="0">(DE-588)4057803-3</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">War crime trials</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="650">
+            <subfield code="a">World War, 1939-1945</subfield>
+            <subfield code="x">Atrocities</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Heidelberg</subfield>
+            <subfield code="2">icz</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Holocaust, Belletristik</subfield>
+            <subfield code="2">icz</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Nationalsozialismus, Romane</subfield>
+            <subfield code="2">icz</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Roman</subfield>
+            <subfield code="2">icz</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">DEUTSCHE LITERATUR</subfield>
+            <subfield code="9">ger</subfield>
+            <subfield code="0">(ETHUDK)000036463</subfield>
+            <subfield code="2">ethudk</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">ROMANE (LITERATURGATTUNG)</subfield>
+            <subfield code="9">ger</subfield>
+            <subfield code="0">(ETHUDK)000036420</subfield>
+            <subfield code="2">ethudk</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">"1995"</subfield>
+            <subfield code="2">ethudk</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Aufseherin</subfield>
+            <subfield code="0">(DE-588)4342624-4</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Erste Liebe</subfield>
+            <subfield code="0">(DE-588)4308639-1</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Konzentrationslager</subfield>
+            <subfield code="0">(DE-588)4032352-3</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="650">
+            <subfield code="a">Strafverfahren</subfield>
+            <subfield code="0">(DE-588)4116634-6</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="0" tag="651">
+            <subfield code="a">Germany</subfield>
+            <subfield code="v">Fiction</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="651">
+            <subfield code="a">Deutschland</subfield>
+            <subfield code="g">Bundesrepublik</subfield>
+            <subfield code="0">(DE-588)4011889-7</subfield>
+            <subfield code="2">gnd</subfield>
+          </datafield>
+          <datafield ind1=" " ind2="7" tag="655">
+            <subfield code="a">Fiktionale Darstellung</subfield>
+            <subfield code="2">gnd-content</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="690">
+            <subfield code="a">Literatur</subfield>
+            <subfield code="2">fhnw-E8</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="690">
+            <subfield code="a">Sexualität</subfield>
+            <subfield code="2">fhnw-E8</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="690">
+            <subfield code="a">Dokumenttyp</subfield>
+            <subfield code="x">Belletristik</subfield>
+            <subfield code="2">fhnw-E8</subfield>
+          </datafield>
+          <datafield ind1="1" ind2="2" tag="700">
+            <subfield code="a">Schlink, Bernhard</subfield>
+            <subfield code="d">1944-</subfield>
+            <subfield code="t">&lt;&lt;Der&gt;&gt; Vorleser</subfield>
+            <subfield code="0">(DE-588)4535518-6</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_RZH</subfield>
+            <subfield code="6">990014756630205526</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_UGE</subfield>
+            <subfield code="6">991004963649705502</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_UZB</subfield>
+            <subfield code="6">990014756630205508</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_FHO</subfield>
+            <subfield code="6">990014756630205515</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_ABN</subfield>
+            <subfield code="6">990000754760108281</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_UBE</subfield>
+            <subfield code="6">99116798918605511</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_RZS</subfield>
+            <subfield code="6">99849490105505</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_BCUFR</subfield>
+            <subfield code="6">991014361699705509</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_RBE</subfield>
+            <subfield code="6">9911571920105527</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1="0" ind2="1" tag="852">
+            <subfield code="a">41SLSP_UBS</subfield>
+            <subfield code="6">9911571920105504</subfield>
+            <subfield code="9">P</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="900">
+            <subfield code="a">IDSE8830 SCHL</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="900">
+            <subfield code="a">IDSZ1ZH</subfield>
+          </datafield>
+          <datafield ind1=" " ind2=" " tag="900">
+            <subfield code="a">IDSERICZIMPORT</subfield>
+          </datafield>
+        </record>
+      </recordData>
+      <recordIdentifier>991006441079705501</recordIdentifier>
+      <recordPosition>2</recordPosition>
+    </record>
+  </records>
+  <nextRecordPosition>3</nextRecordPosition>
+  <extraResponseData xmlns:xb="http://www.exlibris.com/repository/search/xmlbeans/">
+    <xb:exact>true</xb:exact>
+    <xb:responseDate>2026-11-22T22:35:42+0100</xb:responseDate>
+  </extraResponseData>
+</searchRetrieveResponse>

@@ -1,0 +1,193 @@
+{
+ "@context": "http://lobid.org/resources/context.jsonld",
+ "id": "http://lobid.org/resources/search?q=isbn:9783257229530&format=json&size=2",
+ "totalItems": 2,
+ "member": [
+  {
+   "@context": "http://lobid.org/resources/context.jsonld",
+   "id": "http://lobid.org/resources/990108980060206441#!",
+   "type": [
+    "BibliographicResource",
+    "Book"
+   ],
+   "medium": [
+    {
+     "label": "Print",
+     "id": "http://rdaregistry.info/termList/RDAproductionMethod/1010"
+    }
+   ],
+   "title": "Der Vorleser",
+   "almaMmsId": "990108980060206441",
+   "hbzId": "HT012745630",
+   "deprecatedUri": "http://lobid.org/resources/HT012745630#!",
+   "isbn": [
+    "9783257229530",
+    "3257229534"
+   ],
+   "oclcNumber": [
+    "263641955"
+   ],
+   "otherTitleInformation": [
+    "Roman"
+   ],
+   "publication": [
+    {
+     "dateStatement": "1997",
+     "startDate": "1997",
+     "type": [
+      "PublicationEvent"
+     ],
+     "location": [
+      "Zürich"
+     ],
+     "publishedBy": [
+      "Diogenes"
+     ]
+    }
+   ],
+   "natureOfContent": [
+    {
+     "label": "Fiktionale Darstellung",
+     "id": "https://d-nb.info/gnd/1071854844"
+    }
+   ],
+   "subjectslabels": [
+    "Vergangenheitsbewältigung, literarisch",
+    "Frau",
+    "Liebesbeziehung",
+    "Heranwachsender",
+    "Deutschland (Bundesrepublik)",
+    "Konzentrationslager",
+    "Aufseherin",
+    "Strafverfolgung"
+   ],
+   "isPartOf": [
+    {
+     "hasSuperordinate": [
+      {
+       "id": "http://lobid.org/resources/HT002122704#!",
+       "label": "Diogenes-Taschenbuch"
+      }
+     ],
+     "numbering": "22953",
+     "type": [
+      "IsPartOfRelation"
+     ]
+    }
+   ],
+   "language": [
+    {
+     "id": "http://id.loc.gov/vocabulary/iso639-2/ger",
+     "label": "Deutsch"
+    }
+   ],
+   "extent": "206 S.",
+   "note": [
+    "Hier auch später erschienene, unveränderte Nachdrucke"
+   ],
+   "bibliographicLevel": {
+    "label": "Monograph/Item",
+    "id": "https://www.loc.gov/marc/bibliographic/bdleader.html#Monograph_Item"
+   },
+   "responsibilityStatement": [
+    "Bernhard Schlink"
+   ],
+   "contribution": [
+    {
+     "agent": {
+      "gndIdentifier": "115673784",
+      "id": "https://d-nb.info/gnd/115673784",
+      "label": "Schlink, Bernhard",
+      "type": [
+       "Person"
+      ],
+      "dateOfBirth": "1944"
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    }
+   ]
+  },
+  {
+   "@context": "http://lobid.org/resources/context.jsonld",
+   "id": "http://lobid.org/resources/991000324099706483#!",
+   "type": [
+    "BibliographicResource",
+    "Book"
+   ],
+   "medium": [
+    {
+     "label": "Print",
+     "id": "http://rdaregistry.info/termList/RDAproductionMethod/1010"
+    }
+   ],
+   "title": "Der Vorleser",
+   "almaMmsId": "991000324099706483",
+   "isbn": [
+    "3257229534",
+    "9783257229530"
+   ],
+   "otherTitleInformation": [
+    "Roman"
+   ],
+   "publication": [
+    {
+     "dateStatement": "1997",
+     "startDate": "1997",
+     "type": [
+      "PublicationEvent"
+     ],
+     "location": [
+      "Diogenes-Verl."
+     ],
+     "publishedBy": [
+      "Zürich"
+     ]
+    }
+   ],
+   "isPartOf": [
+    {
+     "hasSuperordinate": [
+      {
+       "label": "Diogenes-Taschenbuch"
+      }
+     ],
+     "numbering": "22953",
+     "type": [
+      "IsPartOfRelation"
+     ]
+    }
+   ],
+   "extent": "206 S.",
+   "bibliographicLevel": {
+    "label": "Monograph/Item",
+    "id": "https://www.loc.gov/marc/bibliographic/bdleader.html#Monograph_Item"
+   },
+   "responsibilityStatement": [
+    "Bernhard Schlink"
+   ],
+   "contribution": [
+    {
+     "agent": {
+      "label": "Schlink, Bernhard",
+      "type": [
+       "Person"
+      ]
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    }
+   ]
+  }
+ ]
+}

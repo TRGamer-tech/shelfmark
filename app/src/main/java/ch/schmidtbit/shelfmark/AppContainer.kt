@@ -6,6 +6,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
+import ch.schmidtbit.shelfmark.data.remote.CoverFinder
+import ch.schmidtbit.shelfmark.data.remote.ITunesApi
+import ch.schmidtbit.shelfmark.data.remote.ImageProbe
+import ch.schmidtbit.shelfmark.data.remote.LobidApi
+import ch.schmidtbit.shelfmark.data.remote.OkHttpImageProbe
+import ch.schmidtbit.shelfmark.data.remote.SruCatalogue
 import ch.schmidtbit.shelfmark.data.remote.GoogleBooksApi
 import ch.schmidtbit.shelfmark.data.remote.OkHttpFetcher
 import ch.schmidtbit.shelfmark.data.remote.OpenLibraryApi
@@ -32,6 +38,7 @@ class AppContainer(
     val database: AppDatabase = AppDatabase.create(context),
     lookupOverride: BookLookup? = null,
     settingsStore: DataStore<Preferences>? = null,
+    private val coverProbeOverride: ImageProbe? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -52,14 +59,23 @@ class AppContainer(
     val lookup: BookLookup by lazy {
         lookupOverride ?: run {
             val fetcher = OkHttpFetcher(httpClient)
+            // Ordered by how much a hit is worth: full records with covers first,
+            // then the library catalogues that fill in what those do not know.
             BookLookup(
                 listOf(
                     OpenLibraryApi(fetcher),
                     GoogleBooksApi(fetcher) { settings.current().googleBooksKey },
+                    ITunesApi(fetcher),
+                    LobidApi(fetcher),
+                    SruCatalogue.dnb(fetcher),
+                    SruCatalogue.k10plus(fetcher),
+                    SruCatalogue.swisscovery(fetcher),
                 ),
             )
         }
     }
+
+    val coverFinder: CoverFinder by lazy { CoverFinder(lookup, coverProbeOverride ?: OkHttpImageProbe(httpClient)) }
 
     /**
      * Scope for writes started from the UI. It outlives any screen, so a save is not

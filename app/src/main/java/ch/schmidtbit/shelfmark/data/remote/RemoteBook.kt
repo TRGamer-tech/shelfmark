@@ -65,8 +65,8 @@ internal fun parseFormat(text: String): BookFormat {
         t.isBlank() -> BookFormat.UNKNOWN
         listOf("audio", "hörbuch", "hoerbuch", " cd", "mp3").any { it in t } -> BookFormat.AUDIOBOOK
         listOf("ebook", "e-book", "kindle", "epub", "electronic", "digital").any { it in t } -> BookFormat.EBOOK
-        listOf("hardcover", "hardback", "gebunden", "leinen", "hard cover", "library binding", "pappband", "fester einband").any { it in t } -> BookFormat.HARDCOVER
-        listOf("paperback", "taschenbuch", "softcover", "broschiert", "kartoniert", "mass market", "pocket", "trade paper", "broschur").any { it in t } -> BookFormat.PAPERBACK
+        listOf("hardcover", "hardback", "gebunden", "leinen", "hard cover", "library binding", "pappband", "fester einband", "festeinband", "geb.", "gb.", "pp.", "ln.").any { it in t } -> BookFormat.HARDCOVER
+        listOf("paperback", "taschenbuch", "softcover", "broschiert", "kartoniert", "mass market", "pocket", "trade paper", "broschur", "kart.", "brosch", "pbk").any { it in t } -> BookFormat.PAPERBACK
         else -> BookFormat.UNKNOWN
     }
 }
