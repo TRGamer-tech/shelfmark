@@ -36,10 +36,14 @@ class BookRulesTest {
         assertEquals(9L, read.finishedOn)
     }
 
-    @Test fun rereadingClearsTheEndDate() {
-        val again = book.copy(status = ReadingStatus.READ, startedOn = 5, finishedOn = 9).withStatus(ReadingStatus.READING, 200)
-        assertEquals(5L, again.startedOn)
+    @Test fun rereadingStartsOverAndCountsTheSecondRead() {
+        val first = book.copy(startedOn = 5).withStatus(ReadingStatus.READ, 9)
+        assertEquals(1, first.readCount)
+        val again = first.withStatus(ReadingStatus.READING, 200)
+        assertEquals(200L, again.startedOn)
         assertNull(again.finishedOn)
+        assertEquals(0, again.currentPage)
+        assertEquals(2, again.withStatus(ReadingStatus.READ, 230).readCount)
     }
 
     @Test fun wishlistBooksAreNotOwned() {

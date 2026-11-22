@@ -10,7 +10,10 @@ import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
 import ch.schmidtbit.shelfmark.data.model.FriendWithCount
+import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.LendRequest
+import ch.schmidtbit.shelfmark.data.model.Note
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.QuoteWithBook
 import ch.schmidtbit.shelfmark.data.model.Shelf
@@ -107,6 +110,63 @@ interface QuoteDao {
 
     @Query("DELETE FROM quotes WHERE id = :id")
     suspend fun delete(id: Long)
+}
+
+@Dao
+interface SessionDao {
+    @Query("SELECT * FROM sessions ORDER BY startedAt DESC, id DESC")
+    fun observeAll(): Flow<List<ReadingSession>>
+
+    @Query("SELECT * FROM sessions WHERE bookId = :bookId ORDER BY startedAt DESC, id DESC")
+    fun observeForBook(bookId: Long): Flow<List<ReadingSession>>
+
+    @Query("SELECT * FROM sessions ORDER BY id")
+    suspend fun all(): List<ReadingSession>
+
+    @Insert
+    suspend fun insert(session: ReadingSession): Long
+
+    @Query("DELETE FROM sessions WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes WHERE bookId = :bookId ORDER BY createdAt DESC, id DESC")
+    fun observeForBook(bookId: Long): Flow<List<Note>>
+
+    @Query("SELECT * FROM notes ORDER BY id")
+    suspend fun all(): List<Note>
+
+    @Insert
+    suspend fun insert(note: Note): Long
+
+    @Update
+    suspend fun update(note: Note)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Dao
+interface GoalDao {
+    @Query("SELECT * FROM goals ORDER BY archived, createdAt DESC, id DESC")
+    fun observeAll(): Flow<List<Goal>>
+
+    @Query("SELECT * FROM goals ORDER BY id")
+    suspend fun all(): List<Goal>
+
+    @Insert
+    suspend fun insert(goal: Goal): Long
+
+    @Update
+    suspend fun update(goal: Goal)
+
+    @Query("DELETE FROM goals WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM goals")
+    suspend fun clear()
 }
 
 @Dao

@@ -17,6 +17,11 @@ enum class Ownership { OWNED, BORROWED, NOT_OWNED }
 
 enum class LendStatus { PENDING, ACCEPTED, DECLINED }
 
+enum class GoalKind { BOOKS, PAGES, MINUTES }
+
+/** ONCE runs between two dates, the others start over every day, week, month or year. */
+enum class GoalRepeat { ONCE, DAILY, WEEKLY, MONTHLY, YEARLY }
+
 @Serializable
 @Entity(tableName = "books", indices = [Index("isbn")])
 data class Book(
@@ -51,7 +56,17 @@ data class Book(
     val review: String = "",
     val startedOn: Long? = null,
     val finishedOn: Long? = null,
+    /** Furthest page reached in the current read (minutes for audiobooks). */
     val currentPage: Int = 0,
+    /** How many times the book was finished. */
+    val readCount: Int = 0,
+    val favorite: Boolean = false,
+    /** Genres and tags as display strings, separated by ", ". */
+    val genres: String = "",
+    val tags: String = "",
+    val series: String = "",
+    /** Position in the series, 0 = not set. */
+    val seriesPosition: Float = 0f,
     val addedAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {
@@ -98,6 +113,61 @@ data class Quote(
     val note: String = "",
     /** True if the text came from the camera (OCR) rather than typing or pasting. */
     val fromOcr: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** One sitting with a book: from which page to which, and how long it took. */
+@Serializable
+@Entity(
+    tableName = "sessions",
+    foreignKeys = [
+        ForeignKey(entity = Book::class, parentColumns = ["id"], childColumns = ["bookId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("bookId")],
+)
+data class ReadingSession(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: Long,
+    /** Local wall clock time the session started, as epoch milliseconds. */
+    val startedAt: Long = System.currentTimeMillis(),
+    val startPage: Int = 0,
+    val endPage: Int = 0,
+    /** Minutes spent, 0 when the session was logged without a time. */
+    val minutes: Float = 0f,
+    val note: String = "",
+) {
+    val pages: Int get() = (endPage - startPage).coerceAtLeast(0)
+}
+
+@Serializable
+@Entity(
+    tableName = "notes",
+    foreignKeys = [
+        ForeignKey(entity = Book::class, parentColumns = ["id"], childColumns = ["bookId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("bookId")],
+)
+data class Note(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: Long,
+    val title: String = "",
+    val text: String,
+    val page: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Serializable
+@Entity(tableName = "goals")
+data class Goal(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String = "",
+    val kind: GoalKind = GoalKind.BOOKS,
+    val target: Int,
+    /** Epoch days. For repeating goals only the repeat matters and these are ignored. */
+    val startDay: Long,
+    val endDay: Long,
+    val repeat: GoalRepeat = GoalRepeat.ONCE,
+    val archived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

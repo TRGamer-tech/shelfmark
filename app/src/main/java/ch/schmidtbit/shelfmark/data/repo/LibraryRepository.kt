@@ -4,7 +4,10 @@ import androidx.room.withTransaction
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookShelf
+import ch.schmidtbit.shelfmark.data.model.Goal
+import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Quote
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.QuoteWithBook
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
@@ -18,10 +21,14 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
     val shelves: Flow<List<Shelf>> = db.shelves().observeAll()
     val links: Flow<List<BookShelf>> = db.shelves().observeLinks()
     val quotes: Flow<List<QuoteWithBook>> = db.quotes().observeAll()
+    val sessions: Flow<List<ReadingSession>> = db.sessions().observeAll()
+    val goals: Flow<List<Goal>> = db.goals().observeAll()
 
     fun book(id: Long): Flow<Book?> = db.books().observe(id)
     fun shelfIdsOf(bookId: Long): Flow<List<Long>> = db.shelves().observeShelfIds(bookId)
     fun quotesOf(bookId: Long): Flow<List<Quote>> = db.quotes().observeForBook(bookId)
+    fun sessionsOf(bookId: Long): Flow<List<ReadingSession>> = db.sessions().observeForBook(bookId)
+    fun notesOf(bookId: Long): Flow<List<Note>> = db.notes().observeForBook(bookId)
 
     suspend fun getBook(id: Long): Book? = db.books().get(id)
     suspend fun allBooks(): List<Book> = db.books().all()
@@ -69,4 +76,35 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
         if (quote.id == 0L) db.quotes().insert(quote) else quote.id.also { db.quotes().update(quote) }
 
     suspend fun deleteQuote(id: Long) = db.quotes().delete(id)
+
+    /**
+     * Logs a reading session and moves the book along with it: the bookmark advances,
+     * an unstarted book counts as being read, and reaching the last page finishes it.
+     */
+    suspend fun logSession(session: ReadingSession) = db.withTransaction {
+        db.sessions().insert(session.copy(id = 0))
+        val book = db.books().get(session.bookId) ?: return@withTransaction
+        val today = Dates.today()
+        var updated = book
+        if (book.status != ReadingStatus.READING && book.status != ReadingStatus.READ) {
+            updated = updated.withStatus(ReadingStatus.READING, today)
+        }
+        updated = updated.copy(currentPage = maxOf(updated.currentPage, session.endPage))
+        if (updated.pageCount > 0 && session.endPage >= updated.pageCount && updated.status == ReadingStatus.READING) {
+            updated = updated.withStatus(ReadingStatus.READ, today)
+        }
+        db.books().update(updated.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteSession(id: Long) = db.sessions().delete(id)
+
+    suspend fun saveNote(note: Note): Long =
+        if (note.id == 0L) db.notes().insert(note) else note.id.also { db.notes().update(note) }
+
+    suspend fun deleteNote(id: Long) = db.notes().delete(id)
+
+    suspend fun saveGoal(goal: Goal): Long =
+        if (goal.id == 0L) db.goals().insert(goal) else goal.id.also { db.goals().update(goal) }
+
+    suspend fun deleteGoal(id: Long) = db.goals().delete(id)
 }

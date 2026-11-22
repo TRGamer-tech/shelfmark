@@ -5,6 +5,9 @@ import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
+import ch.schmidtbit.shelfmark.data.model.Goal
+import ch.schmidtbit.shelfmark.data.model.Note
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
@@ -110,6 +113,9 @@ data class BackupPayload(
     val shelves: List<Shelf>,
     val links: List<BookShelf>,
     val quotes: List<Quote>,
+    val sessions: List<ReadingSession> = emptyList(),
+    val notes: List<Note> = emptyList(),
+    val goals: List<Goal> = emptyList(),
 )
 
 object ShareCodec {

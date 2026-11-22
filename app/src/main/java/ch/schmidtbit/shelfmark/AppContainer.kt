@@ -16,6 +16,11 @@ import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
 import ch.schmidtbit.shelfmark.data.model.Book
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -26,10 +31,11 @@ class AppContainer(
     context: Context,
     val database: AppDatabase = AppDatabase.create(context),
     lookupOverride: BookLookup? = null,
+    settingsStore: DataStore<Preferences>? = null,
 ) {
     private val appContext = context.applicationContext
 
-    val settings = SettingsRepository(appContext.dataStore)
+    val settings = SettingsRepository(settingsStore ?: appContext.dataStore)
     val covers = CoverStore(appContext)
     val library = LibraryRepository(database, covers)
     val social = SocialRepository(database, settings)
@@ -54,6 +60,14 @@ class AppContainer(
             )
         }
     }
+
+    /**
+     * Scope for writes started from the UI. It outlives any screen, so a save is not
+     * cut short when the user navigates away right after tapping the button.
+     */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
     /** Hands a book from the scanner or the search to the edit form without squeezing it through a route. */
     var draft: Book? = null

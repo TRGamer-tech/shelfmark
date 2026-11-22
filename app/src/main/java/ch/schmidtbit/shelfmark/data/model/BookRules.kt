@@ -9,10 +9,14 @@ fun Book.withStatus(newStatus: ReadingStatus, today: Long): Book {
     if (newStatus == status) return this
     val moved = copy(status = newStatus)
     return when (newStatus) {
-        ReadingStatus.READING -> moved.copy(startedOn = startedOn ?: today, finishedOn = null)
+        // Picking up a finished book again is a re-read: it starts from the first page.
+        ReadingStatus.READING ->
+            if (status == ReadingStatus.READ) moved.copy(startedOn = today, finishedOn = null, currentPage = 0)
+            else moved.copy(startedOn = startedOn ?: today, finishedOn = null)
         ReadingStatus.READ -> moved.copy(
             finishedOn = finishedOn ?: today,
             currentPage = if (pageCount > 0) pageCount else currentPage,
+            readCount = readCount + 1,
         )
         ReadingStatus.ABANDONED, ReadingStatus.WISHLIST, ReadingStatus.NONE -> moved
     }
@@ -24,6 +28,12 @@ fun Book.withDefaultsFor(newStatus: ReadingStatus, today: Long): Book {
     val physical = format != BookFormat.EBOOK && format != BookFormat.AUDIOBOOK
     return copy(ownership = owned, lendable = physical).withStatus(newStatus, today)
 }
+
+val Book.isAudio: Boolean get() = format == BookFormat.AUDIOBOOK
+
+fun Book.genreList(): List<String> = genres.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+fun Book.tagList(): List<String> = tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
 /** Reading progress from 0 to 1, or null when it cannot be computed. */
 val Book.progress: Float?

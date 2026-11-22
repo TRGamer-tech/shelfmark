@@ -1,0 +1,93 @@
+package ch.schmidtbit.shelfmark.ui
+
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import ch.schmidtbit.shelfmark.AppContainer
+import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.data.model.BookFormat
+import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Ownership
+import ch.schmidtbit.shelfmark.data.model.ReadingStatus
+import ch.schmidtbit.shelfmark.data.repo.SortOrder
+import java.io.File
+
+val LocalContainer = staticCompositionLocalOf<AppContainer> { error("AppContainer not provided") }
+
+/** A ViewModel that gets the [AppContainer] handed to its constructor. */
+@Composable
+inline fun <reified VM : ViewModel> containerViewModel(key: String? = null, crossinline create: (AppContainer) -> VM): VM {
+    val container = LocalContainer.current
+    return viewModel(key = key, factory = viewModelFactory { initializer { create(container) } })
+}
+
+@StringRes
+fun ReadingStatus.labelRes(): Int = when (this) {
+    ReadingStatus.NONE -> R.string.status_unread
+    ReadingStatus.WISHLIST -> R.string.status_wishlist
+    ReadingStatus.READING -> R.string.status_reading
+    ReadingStatus.READ -> R.string.status_read
+    ReadingStatus.ABANDONED -> R.string.status_abandoned
+}
+
+@StringRes
+fun BookFormat.labelRes(): Int = when (this) {
+    BookFormat.UNKNOWN -> R.string.format_unknown
+    BookFormat.HARDCOVER -> R.string.format_hardcover
+    BookFormat.PAPERBACK -> R.string.format_paperback
+    BookFormat.EBOOK -> R.string.format_ebook
+    BookFormat.AUDIOBOOK -> R.string.format_audiobook
+    BookFormat.OTHER -> R.string.format_other
+}
+
+@StringRes
+fun Ownership.labelRes(): Int = when (this) {
+    Ownership.OWNED -> R.string.ownership_owned
+    Ownership.BORROWED -> R.string.ownership_borrowed
+    Ownership.NOT_OWNED -> R.string.ownership_not_owned
+}
+
+@StringRes
+fun LendStatus.labelRes(): Int = when (this) {
+    LendStatus.PENDING -> R.string.request_pending
+    LendStatus.ACCEPTED -> R.string.request_accepted
+    LendStatus.DECLINED -> R.string.request_declined
+}
+
+@StringRes
+fun SortOrder.labelRes(): Int = when (this) {
+    SortOrder.ADDED -> R.string.sort_added
+    SortOrder.TITLE -> R.string.sort_title
+    SortOrder.AUTHOR -> R.string.sort_author
+    SortOrder.RATING -> R.string.sort_rating
+}
+
+@Composable
+fun ReadingStatus.label(): String = stringResource(labelRes())
+
+/** What Coil should load for a book: the user's own photo wins over the catalogue cover. */
+@Composable
+fun Book.coverModel(): Any? {
+    val covers = LocalContainer.current.covers
+    return when {
+        coverPath.isNotBlank() -> covers.file(coverPath)
+        coverUrl.isNotBlank() -> coverUrl
+        else -> null
+    }
+}
+
+fun coverModelOf(coverDir: File, book: Book): Any? = when {
+    book.coverPath.isNotBlank() -> File(coverDir, book.coverPath)
+    book.coverUrl.isNotBlank() -> book.coverUrl
+    else -> null
+}
+
+/** 4.5 is shown as "4.5", 4.0 as "4". */
+fun formatRating(rating: Float): String =
+    if (rating % 1f == 0f) rating.toInt().toString() else String.format(java.util.Locale.getDefault(), "%.1f", rating)

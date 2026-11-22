@@ -8,12 +8,18 @@ import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
+import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.LendRequest
+import ch.schmidtbit.shelfmark.data.model.Note
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.Shelf
 
 @Database(
-    entities = [Book::class, Shelf::class, BookShelf::class, Quote::class, Friend::class, FriendBook::class, LendRequest::class],
+    entities = [
+        Book::class, Shelf::class, BookShelf::class, Quote::class, ReadingSession::class, Note::class, Goal::class,
+        Friend::class, FriendBook::class, LendRequest::class,
+    ],
     version = 1,
     exportSchema = true,
 )
@@ -21,6 +27,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun books(): BookDao
     abstract fun shelves(): ShelfDao
     abstract fun quotes(): QuoteDao
+    abstract fun sessions(): SessionDao
+    abstract fun notes(): NoteDao
+    abstract fun goals(): GoalDao
     abstract fun social(): SocialDao
 
     companion object {
