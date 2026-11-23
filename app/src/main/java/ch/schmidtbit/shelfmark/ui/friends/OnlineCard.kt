@@ -57,6 +57,7 @@ import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.share.ShareFiles
 import ch.schmidtbit.shelfmark.ui.LocalContainer
+import ch.schmidtbit.shelfmark.ui.LocalImporter
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.lists.NameDialog
 import ch.schmidtbit.shelfmark.work.Notifier
@@ -90,6 +91,7 @@ fun displayCode(code: String): String = code.chunked(5).joinToString("-")
 @Composable
 fun OnlineCard(settings: Settings) {
     val container = LocalContainer.current
+    val importer = LocalImporter.current
     val context = LocalContext.current
     val status by container.server.status.collectAsStateWithLifecycle()
     val waiting by container.server.waiting.collectAsStateWithLifecycle(initialValue = 0)
@@ -177,7 +179,8 @@ fun OnlineCard(settings: Settings) {
                         Text(pluralStringResource(R.plurals.server_waiting, waiting, waiting), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                IconButton(onClick = { container.launch { container.refreshFriends(force = true) } }, enabled = !status.running, modifier = Modifier.testTag("syncNow")) {
+                // Through the importer, so that a request or an answer that just came in is shown at once.
+                IconButton(onClick = { importer.refresh(force = true) }, enabled = !status.running, modifier = Modifier.testTag("syncNow")) {
                     Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.server_sync_now))
                 }
             }
