@@ -28,7 +28,12 @@ import ch.schmidtbit.shelfmark.data.stats.MilestoneCategory
 import ch.schmidtbit.shelfmark.data.stats.Milestones
 import ch.schmidtbit.shelfmark.data.stats.ReaderType
 import ch.schmidtbit.shelfmark.data.stats.TimeOfDay
+import ch.schmidtbit.shelfmark.ui.components.ShelfItem
+import ch.schmidtbit.shelfmark.ui.components.ShelfThing
 import ch.schmidtbit.shelfmark.ui.components.arrange
+import ch.schmidtbit.shelfmark.ui.components.labelRes
+import ch.schmidtbit.shelfmark.ui.components.leanOf
+import ch.schmidtbit.shelfmark.ui.components.ornamentSize
 import ch.schmidtbit.shelfmark.ui.detail.formatPrice
 import ch.schmidtbit.shelfmark.ui.settings.hexOf
 import ch.schmidtbit.shelfmark.ui.settings.parseHex
@@ -322,6 +327,35 @@ class ShelfBitsTest {
         // An empty shelf can still hold ornaments.
         assertEquals(listOf(false to 0), arrange(0, listOf(5 to OrnamentKind.CACTUS)))
         assertEquals(listOf(true to 0, true to 1), arrange(2, emptyList()))
+    }
+
+    @Test fun theLastBookLeansWhenThereIsRoomAndSomethingToLeanOn() {
+        fun spine(title: String, pages: Int = 300) = ShelfThing.Spine(ShelfItem(key = title.hashCode().toLong(), title = title, authors = "", cover = null, pageCount = pages))
+        val row = listOf(spine("Emma"), spine("Dune"), spine("Momo"))
+        // On a shelf that is not full the last book leans, at an angle that differs from shelf to shelf.
+        val leans = (0 until 40).map { leanOf("READ", it, row, available = 300f) }
+        assertTrue(leans.all { it != null })
+        assertTrue(leans.map { it!!.angle }.toSet().size >= 3)
+        leans.filterNotNull().forEach {
+            assertTrue(it.angle in 5f..9f)
+            // The foot stands out just far enough for the edge to touch the neighbour.
+            assertTrue(it.offset > 5f && it.offset < 40f)
+        }
+        // No room, nobody to lean on, or an ornament in the way: the book stands straight.
+        val full = row.sumOf { it.width.toDouble() }.toFloat() + 6f
+        assertTrue((0 until 40).all { leanOf("READ", it, row, available = full) == null })
+        assertTrue((0 until 40).all { leanOf("READ", it, listOf(spine("Emma")), 300f) == null })
+        assertTrue((0 until 40).all { leanOf("READ", it, row + ShelfThing.Deco(OrnamentKind.PLANT), 300f) == null })
+        assertTrue((0 until 40).all { leanOf("READ", it, listOf(ShelfThing.Deco(OrnamentKind.PLANT), spine("Emma")), 300f) == null })
+    }
+
+    @Test fun everyOrnamentHasASizeAndAName() {
+        OrnamentKind.entries.forEach { kind ->
+            val (width, height) = ornamentSize(kind)
+            assertTrue("$kind", width in 20f..80f && height in 30f..95f)
+            assertTrue("$kind", kind.labelRes() != 0)
+        }
+        assertEquals(14, OrnamentKind.entries.size)
     }
 
     @Test fun coloursAreWrittenAndReadAsHex() {

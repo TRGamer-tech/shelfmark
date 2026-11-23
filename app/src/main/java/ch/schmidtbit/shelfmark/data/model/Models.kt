@@ -21,7 +21,7 @@ enum class LendStatus { PENDING, ACCEPTED, DECLINED }
 enum class GoalKind { BOOKS, PAGES, MINUTES }
 
 /** Little things that stand between the books on a shelf. */
-enum class OrnamentKind { PLANT, CACTUS, CANDLE, MUG, VASE, LAMP, GLOBE, CLOCK, TROPHY, FRAME, PUMPKIN, BOOKEND }
+enum class OrnamentKind { PLANT, CACTUS, CANDLE, MUG, VASE, LAMP, GLOBE, CLOCK, TROPHY, FRAME, PUMPKIN, BOOKEND, CAT, BOOKSTACK }
 
 /** ONCE runs between two dates, the others start over every day, week, month or year. */
 enum class GoalRepeat { ONCE, DAILY, WEEKLY, MONTHLY, YEARLY }

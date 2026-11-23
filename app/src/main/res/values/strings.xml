@@ -68,6 +68,8 @@
     <string name="calendar_year">The year %1$d</string>
     <string name="camera_permission_grant">Allow camera</string>
     <string name="camera_permission_text">Shelfmark needs the camera to scan barcodes and to photograph quotes.</string>
+    <string name="continue_page">Page %1$d of %2$d</string>
+    <string name="continue_reading">Continue reading</string>
     <string name="cover_find_missing">Find missing covers</string>
     <string name="cover_finding">Searching covers: %1$d of %2$d</string>
     <string name="cover_none_found">No catalogue has a cover for this book. You can still take a photo or choose a picture.</string>
@@ -167,6 +169,14 @@
     <string name="goals_manage">Manage goals</string>
     <string name="goals_none">No goals yet.</string>
     <string name="goals_title">Goals</string>
+    <string name="greeting_day">Good to see you</string>
+    <string name="greeting_day_name">Good to see you, %1$s</string>
+    <string name="greeting_evening">Good evening</string>
+    <string name="greeting_evening_name">Good evening, %1$s</string>
+    <string name="greeting_morning">Good morning</string>
+    <string name="greeting_morning_name">Good morning, %1$s</string>
+    <string name="greeting_night">Still up?</string>
+    <string name="greeting_night_name">Still up, %1$s?</string>
     <string name="import_answer_no">%1$s would rather not lend “%2$s” right now.</string>
     <string name="import_answer_title">Answer received</string>
     <string name="import_answer_yes">%1$s said yes. You can borrow “%2$s”.</string>
@@ -194,6 +204,7 @@
     <string name="library_sort">Sort by</string>
     <string name="library_view">View</string>
     <string name="library_view_options">View and sorting</string>
+    <string name="list_empty_shelf">This shelf is still empty. Books are put on it from their own page.</string>
     <string name="lists_custom">My lists</string>
     <string name="lists_custom_empty">Create your own lists, for example “Holiday reads” or “Favourites”.</string>
     <string name="lists_delete_text">The books stay in your library.</string>
@@ -234,8 +245,10 @@
     <string name="ornament_add">Put something on the shelf</string>
     <string name="ornament_at_start">At the start of the shelf</string>
     <string name="ornament_bookend">Bookend</string>
+    <string name="ornament_bookstack">Stack of books</string>
     <string name="ornament_cactus">Cactus</string>
     <string name="ornament_candle">Candle</string>
+    <string name="ornament_cat">Sleeping cat</string>
     <string name="ornament_clock">Clock</string>
     <string name="ornament_dialog_title">Decorate %1$s</string>
     <string name="ornament_frame">Picture frame</string>
@@ -513,6 +526,10 @@
     <plurals name="days_left">
         <item quantity="one">%d day left</item>
         <item quantity="other">%d days left</item>
+    </plurals>
+    <plurals name="greeting_books">
+        <item quantity="one">%d book on your shelves</item>
+        <item quantity="other">%d books on your shelves</item>
     </plurals>
     <plurals name="import_added">
         <item quantity="one">%d book added</item>

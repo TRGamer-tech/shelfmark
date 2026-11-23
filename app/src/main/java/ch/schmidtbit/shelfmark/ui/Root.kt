@@ -5,6 +5,14 @@ package ch.schmidtbit.shelfmark.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import ch.schmidtbit.shelfmark.ui.components.LocalMotion
+import ch.schmidtbit.shelfmark.ui.components.systemAnimationsOff
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
@@ -137,8 +145,11 @@ fun ShelfmarkRoot(container: AppContainer, incoming: MutableStateFlow<Intent?>) 
     val importer = remember(container) { ImportController(container, context) }
     CompositionLocalProvider(LocalContainer provides container, LocalImporter provides importer) {
         ShelfmarkTheme(current.theme, current.customThemes) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                if (current.onboarded) MainNav(incoming) else Onboarding(current)
+            // Movement is the user's choice, and off where the phone has animations switched off.
+            CompositionLocalProvider(LocalMotion provides (current.motion && !systemAnimationsOff())) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    if (current.onboarded) MainNav(incoming) else Onboarding(current)
+                }
             }
         }
     }
@@ -146,6 +157,7 @@ fun ShelfmarkRoot(container: AppContainer, incoming: MutableStateFlow<Intent?>) 
 
 @Composable
 private fun MainNav(incoming: MutableStateFlow<Intent?>) {
+    val motion = LocalMotion.current
     val container = LocalContainer.current
     val importer = LocalImporter.current
     val nav = rememberNavController()
@@ -198,10 +210,12 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             navController = nav,
             startDestination = LibraryRoute,
             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
-            enterTransition = { fadeIn(tween(TRANSITION_MS)) },
+            // A new page rises into place, the old one sinks back. A book comes forward
+            // out of the shelf (see its route below).
+            enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) slideInVertically(tween(TRANSITION_MS)) { it / 36 } else EnterTransition.None },
             exitTransition = { fadeOut(tween(TRANSITION_MS)) },
             popEnterTransition = { fadeIn(tween(TRANSITION_MS)) },
-            popExitTransition = { fadeOut(tween(TRANSITION_MS)) },
+            popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) slideOutVertically(tween(TRANSITION_MS)) { it / 36 } else ExitTransition.None },
         ) {
             composable<LibraryRoute> {
                 LibraryScreen(libraryViewModel, onOpenBook = { nav.navigate(BookRoute(it)) }, onAdd = { adding = true }, onSettings = { nav.navigate(SettingsRoute) })
@@ -225,7 +239,10 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             composable<MilestonesRoute> { MilestonesScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
             composable<QuotesRoute> { QuotesScreen(onAdd = { nav.navigate(QuoteRoute()) }, onEdit = { nav.navigate(QuoteRoute(quoteId = it)) }) }
             composable<FriendsRoute> { FriendsScreen(onOpenFriend = { nav.navigate(FriendRoute(it)) }, onRequests = { nav.navigate(RequestsRoute) }) }
-            composable<BookRoute> { stackEntry ->
+            composable<BookRoute>(
+                enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) scaleIn(tween(TRANSITION_MS), initialScale = 0.93f) else EnterTransition.None },
+                popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) scaleOut(tween(TRANSITION_MS), targetScale = 0.93f) else ExitTransition.None },
+            ) { stackEntry ->
                 val route = stackEntry.toRoute<BookRoute>()
                 BookScreen(
                     bookId = route.id,

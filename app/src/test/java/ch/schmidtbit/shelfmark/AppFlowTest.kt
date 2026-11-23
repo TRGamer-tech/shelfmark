@@ -856,4 +856,80 @@ class AppFlowTest {
         start(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_REQUESTS))
         waitForText("Noch keine Ausleih-Anfragen")
     }
+
+    @Test fun myOwnListsAreShelvesBelowTheOthers() {
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            val favourites = container.library.createShelf("Lieblinge")
+            container.library.createShelf("Urlaub")
+            container.library.setOnShelf(book("Dracula").id, favourites, true)
+            container.library.setOnShelf(book("Faust").id, favourites, true)
+            container.settings.setViewMode(ViewMode.SPINES)
+            container.settings.setProfileName("Martin")
+            // Scrolling in a test waits until everything stands still, which a flickering candle never does.
+            container.settings.setMotion(false)
+        }
+        val shelves = runBlocking { container.library.shelves.first() }
+        val favourites = shelves.first { it.name == "Lieblinge" }
+        val holiday = shelves.first { it.name == "Urlaub" }
+        start()
+        waitForTag("spineShelf")
+        // The shelf says hello and offers the book being read.
+        waitForTag("greeting")
+        waitForText(", Martin")
+        waitForText("10 Bücher in deinen Regalen")
+        waitForTag("continueReading")
+        waitForText("Seite 120 von 256")
+
+        // With "All" selected, each list of my own is a shelf, the empty one too.
+        scrollListTo("spineShelf", "shelf_list_${favourites.id}")
+        waitForText("Lieblinge")
+        scrollListTo("spineShelf", "emptyShelf_list_${holiday.id}")
+        waitForText("Urlaub")
+        waitForText("Dieses Regal ist noch leer")
+        shot("46_own_lists_as_shelves")
+
+        // Covers show them the same way.
+        runBlocking { container.settings.setViewMode(ViewMode.COVERS) }
+        waitForTag("coverShelf")
+        scrollListTo("coverShelf", "emptyShelf_list_${holiday.id}")
+        shot("47_own_lists_covers")
+
+        // The heading still leads to the list alone.
+        scrollListTo("coverShelf", "shelf_list_${favourites.id}")
+        tap("shelf_list_${favourites.id}")
+        waitForText("2 Bücher")
+        settle()
+        assertTrue(compose.onAllNodesWithContentDescription("Der Prozess").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test fun theShelfIsAliveAndCanBeStilled() {
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            container.settings.setViewMode(ViewMode.SPINES)
+            // Everything that moves, on one shelf.
+            listOf(OrnamentKind.CANDLE, OrnamentKind.MUG, OrnamentKind.CAT, OrnamentKind.CLOCK, OrnamentKind.BOOKSTACK, OrnamentKind.LAMP)
+                .forEachIndexed { index, kind -> container.library.addOrnament("READING", kind, 1 + index) }
+        }
+        start()
+        waitForTag("spineShelf")
+        waitFor { compose.onAllNodesWithContentDescription("Schlafende Katze").fetchSemanticsNodes().isNotEmpty() }
+        waitFor { compose.onAllNodesWithContentDescription("Bücherstapel").fetchSemanticsNodes().isNotEmpty() }
+        // Somewhere a book leans on its neighbour.
+        waitForTag("leaning")
+        shot("48_lively_shelf")
+        // A book can still be taken out while everything moves.
+        openBook("Der Prozess")
+        waitForTag("bookOverview")
+        back()
+
+        // And all of it can be switched off.
+        tap("openSettings")
+        scrollTo("motion")
+        tap("motion")
+        waitFor { !runBlocking { container.settings.current() }.motion }
+        back()
+        waitForTag("spineShelf")
+        shot("49_still_shelf")
+    }
 }

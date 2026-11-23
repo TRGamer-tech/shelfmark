@@ -37,6 +37,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
@@ -83,6 +86,18 @@ fun ShelfBoard(modifier: Modifier = Modifier) {
                         size = Size(size.width, size.height - top),
                     )
                     drawLine(Color.White.copy(alpha = 0.28f), Offset(0f, top), Offset(size.width, top), strokeWidth = 1.dp.toPx())
+                    // Grain: a few long, uneven lines in the front edge of the board.
+                    val grain = c.woodDark.copy(alpha = 0.22f)
+                    var x = -size.width * 0.1f
+                    var n = 0
+                    while (x < size.width) {
+                        val length = size.width * (0.18f + 0.11f * (n % 4))
+                        val y = top + (size.height - top) * (0.25f + 0.22f * (n % 3))
+                        // Kept inside the board: nothing is clipped here, and a short board has close ends.
+                        drawLine(grain, Offset(x.coerceAtLeast(0f), y), Offset((x + length).coerceAtMost(size.width), y + 0.6.dp.toPx()), strokeWidth = 0.8.dp.toPx())
+                        x += length * 0.72f
+                        n++
+                    }
                 },
         )
         Box(
@@ -106,6 +121,15 @@ fun ShelfRow(
             Modifier
                 .fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, back)))
+                .drawBehind {
+                    // The corner where the back wall meets the board is the darkest place of a shelf.
+                    val depth = 16.dp.toPx()
+                    drawRect(
+                        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f)), startY = size.height - depth, endY = size.height),
+                        topLeft = Offset(0f, size.height - depth),
+                        size = Size(size.width, depth),
+                    )
+                }
                 .padding(start = 16.dp, end = 16.dp, top = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(spacing),
             verticalAlignment = Alignment.Bottom,
@@ -127,10 +151,22 @@ data class ShelfSection(
     val ornaments: List<Pair<Int, OrnamentKind>> = emptyList(),
     /** Opens the dialog for choosing ornaments. */
     val onDecorate: (() -> Unit)? = null,
+    /** Shown on the bare board when the shelf has nothing on it. Without it an empty shelf is not drawn at all. */
+    val emptyHint: String? = null,
 )
 
+/** A shelf with nothing on it yet: the board is there, and a few words say what it is waiting for. */
+@Composable
+private fun EmptyShelf(hint: String, sectionKey: String) {
+    ShelfRow {
+        Box(Modifier.fillMaxWidth().height(96.dp).testTag("emptyShelf_$sectionKey"), contentAlignment = Alignment.Center) {
+            Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
+    }
+}
+
 /** A spine or an ornament: the two kinds of thing that stand on a shelf in the spine view. */
-private sealed interface ShelfThing {
+internal sealed interface ShelfThing {
     val width: Float
 
     data class Spine(val item: ShelfItem) : ShelfThing {
@@ -207,18 +243,19 @@ fun CoverShelf(
             if (header != null) item(key = "header") { header() }
             prepared.forEach { (section, rows) ->
                 if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section) }
+                if (rows.isEmpty() && section.emptyHint != null) item(key = "empty_${section.key}") { EmptyShelf(section.emptyHint, section.key) }
                 items(rows.size, key = { "${section.key}_${rows[it].first().key}" }) { index ->
                     val row = rows[index]
                     ShelfRow {
-                        row.forEach { item ->
-                            Box(Modifier.weight(1f)) {
+                        row.forEachIndexed { column, item ->
+                            Box(Modifier.weight(1f).settleIn(index * 2 + column)) {
                                 BookCover(
                                     title = item.title,
                                     authors = item.authors,
                                     model = item.cover,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { onClick(item) }
+                                        .bookPress { onClick(item) }
                                         .semantics { contentDescription = item.title },
                                 )
                                 item.ribbon?.let { Ribbon(it, Modifier.align(Alignment.TopEnd).padding(end = 8.dp)) }
@@ -270,6 +307,30 @@ internal fun packRows(widths: List<Float>, maxWidth: Float, gap: Float): List<In
     return rows
 }
 
+/** How the last book of a row leans: by how many degrees, and how far its foot stands from the neighbour. */
+internal data class Lean(val angle: Float, val offset: Float)
+
+/**
+ * Decides whether the last book of a row leans. It does whenever the shelf is not full and
+ * there is a neighbour to lean on, as on a real shelf, where the last book never stands by
+ * itself. (An ornament behind it holds the row up, a bookend for instance.) The angle
+ * differs from shelf to shelf. The foot of the book stands just far enough out that its
+ * edge touches the neighbour.
+ */
+internal fun leanOf(sectionKey: String, rowIndex: Int, row: List<ShelfThing>, available: Float): Lean? {
+    val last = row.lastOrNull() as? ShelfThing.Spine ?: return null
+    val neighbour = row.getOrNull(row.size - 2) as? ShelfThing.Spine ?: return null
+    val mood = ((sectionKey.hashCode() * 31 + rowIndex) and 0x7fffffff)
+    val angle = 5f + (mood % 5)
+    val radians = Math.toRadians(angle.toDouble())
+    val height = spineHeight(last.item.title, last.item.format)
+    val neighbourHeight = spineHeight(neighbour.item.title, neighbour.item.format)
+    // Against a taller neighbour the top corner touches, against a shorter one the edge rests on its corner.
+    val offset = minOf(height * Math.sin(radians), neighbourHeight * Math.tan(radians)).toFloat()
+    val used = row.sumOf { it.width.toDouble() }.toFloat() + 2f * (row.size - 1)
+    return if (available - used >= offset + 2f) Lean(angle, offset) else null
+}
+
 /** Books standing spine out, the way they do on a real shelf. Needs no cover pictures at all. */
 @Composable
 fun SpineShelf(
@@ -293,14 +354,35 @@ fun SpineShelf(
             if (header != null) item(key = "header") { header() }
             prepared.forEach { (section, things, rows) ->
                 if (section.title != null) item(key = "heading_${section.key}") { ShelfHeading(section, decorate = true) }
+                if (rows.isEmpty() && section.emptyHint != null) item(key = "empty_${section.key}") { EmptyShelf(section.emptyHint, section.key) }
                 items(rows.size, key = { "${section.key}_row$it" }) { index ->
+                    val row = rows[index]
+                    val lean = remember(section.key, index, things, available) { leanOf(section.key, index, row.map { things[it] }, available) }
                     ShelfRow(spacing = 2.dp) {
-                        for (i in rows[index]) {
+                        for (i in row) {
+                            val place = Modifier.settleIn(index * 3 + (i - row.first))
                             when (val thing = things[i]) {
-                                is ShelfThing.Spine -> Spine(thing.item, Modifier.clickable { onClick(thing.item) })
+                                is ShelfThing.Spine ->
+                                    if (lean != null && i == row.last) {
+                                        // The last book of a shelf that is not full leans on its neighbour.
+                                        Box(place.padding(start = lean.offset.dp)) {
+                                            Spine(
+                                                thing.item,
+                                                Modifier
+                                                    .graphicsLayer {
+                                                        rotationZ = -lean.angle
+                                                        transformOrigin = TransformOrigin(0f, 1f)
+                                                    }
+                                                    .bookPress { onClick(thing.item) }
+                                                    .testTag("leaning"),
+                                            )
+                                        }
+                                    } else {
+                                        Spine(thing.item, place.bookPress { onClick(thing.item) })
+                                    }
                                 is ShelfThing.Deco -> {
                                     val name = stringResource(thing.kind.labelRes())
-                                    OrnamentView(thing.kind, Modifier.semantics { contentDescription = name })
+                                    OrnamentView(thing.kind, place.semantics { contentDescription = name })
                                 }
                             }
                         }

@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ch.schmidtbit.shelfmark.ui.components.AnimatedProgress
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.stats.Milestone
 import ch.schmidtbit.shelfmark.data.stats.MilestoneCategory
@@ -143,7 +144,7 @@ private fun MilestoneCard(milestone: Milestone) {
             Text(milestone.value.toString(), style = MaterialTheme.typography.headlineSmall.copy(fontFamily = Sans), color = MaterialTheme.colorScheme.primary)
         }
         Spacer(Modifier.height(10.dp))
-        LinearProgressIndicator(progress = { milestone.progress }, modifier = Modifier.fillMaxWidth().height(6.dp))
+        AnimatedProgress(milestone.progress, Modifier.fillMaxWidth().height(6.dp))
         Text(
             milestone.next?.let { stringResource(R.string.milestone_next, it) } ?: stringResource(R.string.milestone_all_done),
             style = MaterialTheme.typography.bodySmall,

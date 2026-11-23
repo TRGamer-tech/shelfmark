@@ -24,6 +24,15 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.ui.formatRating
 import ch.schmidtbit.shelfmark.ui.theme.LocalShelfColors
@@ -61,7 +70,7 @@ fun RatingBar(
             } else {
                 Modifier
             }
-            Icon(icon, contentDescription = null, tint = if (rating >= star - 0.5f) color else empty, modifier = tap.size(starSize))
+            Icon(icon, contentDescription = null, tint = if (rating >= star - 0.5f) color else empty, modifier = tap.size(starSize).pop(rating >= star - 0.5f, onChange != null))
         }
     }
 }
@@ -87,8 +96,26 @@ fun SpiceBar(
             } else {
                 Modifier
             }
-            Icon(ChilliIcon, contentDescription = null, tint = if (i <= level) hot else cold, modifier = tap.size(size))
+            Icon(ChilliIcon, contentDescription = null, tint = if (i <= level) hot else cold, modifier = tap.size(size).pop(i <= level, onChange != null))
         }
+    }
+}
+
+/** A star or chilli that has just been given swells for a moment, like a stamp being pressed down. */
+private fun Modifier.pop(on: Boolean, enabled: Boolean): Modifier = composed {
+    if (!enabled || !LocalMotion.current) return@composed this
+    val scale = remember { Animatable(1f) }
+    var before by remember { mutableStateOf(on) }
+    LaunchedEffect(on) {
+        if (on && !before) {
+            scale.snapTo(1.35f)
+            scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
+        }
+        before = on
+    }
+    graphicsLayer {
+        scaleX = scale.value
+        scaleY = scale.value
     }
 }
 

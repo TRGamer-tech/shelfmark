@@ -1,22 +1,23 @@
 # Shelfmark
 
-A personal library and reading tracker for Android. No account, no ads, no server: your books
-stay on your phone. The interface is available in English and German.
+A personal library and reading tracker for Android that tries to feel like a real bookshelf.
+No account, no ads. Your books stay on your phone, and what friends get to see is up to you.
+The interface is available in English and German.
 
 This is the native Android version (Kotlin, Jetpack Compose) of the desktop Shelfmark. It can
 import the desktop app's library file.
 
 <p>
-  <img src="docs/screenshots/45_shelf_decorated.png" width="23%" alt="Shelf with book spines and ornaments">
+  <img src="docs/screenshots/48_lively_shelf.png" width="23%" alt="Shelf with book spines, ornaments and a leaning book">
+  <img src="docs/screenshots/46_own_lists_as_shelves.png" width="23%" alt="Lists of one's own as shelves">
   <img src="docs/screenshots/12_book_rated.png" width="23%" alt="Book page with rating and spice level">
-  <img src="docs/screenshots/81_borrow_request.png" width="23%" alt="A friend asks to borrow a book">
   <img src="docs/screenshots/95_shelf_ember_theme.png" width="23%" alt="Dark theme">
 </p>
 <p>
+  <img src="docs/screenshots/85_friend_online.png" width="23%" alt="Friends through the server">
   <img src="docs/screenshots/97_calendar_day.png" width="23%" alt="Reading calendar">
   <img src="docs/screenshots/98_recap_month.png" width="23%" alt="Monthly recap">
   <img src="docs/screenshots/100_milestones.png" width="23%" alt="Milestones">
-  <img src="docs/screenshots/41_shelf_spines.png" width="23%" alt="Shelf with book spines">
 </p>
 
 ## What it does
@@ -37,15 +38,23 @@ import the desktop app's library file.
 - Import your list from Goodreads, StoryGraph or any CSV file (Settings > Import from other
   apps). Books you already have are not duplicated, they only gain what was missing.
 
-**Organising**
+**The shelf**
 
 - Built-in lists: Wishlist, Unread, Reading, Read, Abandoned. Moving a book between them keeps
   the start and finish dates up to date.
-- As many lists of your own as you like.
-- The shelf as book spines on wooden boards, as covers, or as a plain list. Books without a
-  cover picture get a drawn cloth cover, so every book looks like a book.
-- Ornaments: put a plant, a mug, a globe or nine other things between the books of any shelf.
-- A purchase log per book: price, shop and date. The recaps add it up.
+- As many lists of your own as you like. Each one is a shelf of its own below the built-in
+  ones, also while it is still empty.
+- Book spines on wooden boards, covers, or a plain list. Books without a cover picture get a
+  drawn cloth cover, so every book looks like a book.
+- It lives a little: lamplight falls on the shelf and dust drifts in it, books settle into
+  place and rise under your finger, and the last book of a shelf that is not full leans on its
+  neighbour.
+- Ornaments to put between the books: a candle that flickers, tea that steams, a clock that
+  tells the time, a sleeping cat, a plant, a globe and eight more.
+- The shelf greets you and offers the book you are reading.
+- All movement can be switched off (Settings > A lively shelf), and is off where the phone
+  has animations disabled.
+- 18 themes in light and dark, or build your own from four colours.
 
 **Reading**
 
@@ -60,24 +69,29 @@ import the desktop app's library file.
 - Recaps of every month and year: what you finished, your best day, favourite authors,
   when you read most, what you spent.
 - Milestones for books, pages, sessions, hours, reviews, quotes, streaks and long books.
-
-**Looks**
-
-- 18 themes in light and dark, or build your own from four colours.
+- A purchase log per book: price, shop and date.
 
 **Friends**
 
-- Share your library as a small file through any messenger. You choose whether friends see
-  only what you own, or also your reading status, lists, ratings and reviews.
+- You choose what friends see: only what you own, or also your reading status, lists, ratings
+  and reviews.
 - Per book: whether you own it, borrowed it, or do not have it, and whether friends may ask
   for it.
 - A friend can ask to borrow a book that is available. You answer with one tap, yes or no.
   Saying yes marks your copy as lent to them.
+- Two ways to get there, see below: through a server, where everything arrives by itself, or
+  with small files sent through any messenger.
 
 ## How sharing works
 
-There is no server. Everything friends exchange is a small `.shelfmark.json` file that travels
-through the messenger you already use:
+**Through the server.** In the Friends tab, tap **Connect**. You get a friend code like
+`ZJ242-5U97E`. Whoever enters your code is your friend, and you are theirs. From then on your
+shared shelf is kept up to date for them, and borrow requests and answers arrive by
+themselves, with a notification when the app is closed. Leaving is one button in the settings
+and removes everything of yours from the server.
+
+**With files.** Without a server, or for a friend who does not use it, everything travels as
+a small `.shelfmark.json` file through the messenger you already use:
 
 1. You tap **Share my library** and send the file.
 2. Your friend opens it with Shelfmark and can browse your shelf.
@@ -85,18 +99,57 @@ through the messenger you already use:
    back to you.
 4. You open it, tap **Yes** or **No**, and send the answer file.
 
-Share again whenever your shelf has changed. The friend's copy is replaced.
+## The server
+
+The server is a [Supabase](https://supabase.com) project of your own. The free plan is enough.
+The app does not come with one: whoever builds the app decides which server it talks to.
+
+**Setting it up**
+
+1. Create a project at supabase.com.
+2. Open the **SQL editor**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and
+   run it. It can be run again later, it only updates the functions.
+3. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
+   the **publishable key** (the public one, `sb_publishable_...`, never the secret one).
+4. Give both to the build, see [Build](#build), or type them into the app under
+   Settings > Server for friends > Use a server of your own.
+
+**What it stores, and who can read it**
+
+- Per person: a random id, a name, a friend code, a hash of a secret that only their phone
+  knows, and the library snapshot they chose to share.
+- Borrow requests and answers on their way. They are deleted as soon as the receiving phone
+  has fetched them.
+- The tables live in a schema the Supabase Data API does not expose, with row level security
+  on and no policies. The app can only call the functions `public.shelfmark_*`, and each of
+  them checks the id and the secret. A library is handed out to friends of its owner and to
+  nobody else.
+- The publishable key is in every copy of the app and is not a secret. It lets a stranger
+  call the same functions, where they can create a profile and learn nothing.
+
+**Keeping a free project awake.** Supabase pauses a free project when its database sees no
+activity for a week. The app therefore checks in once a day (a job in the background, and
+again whenever the app is opened), which writes one timestamp. That check sends nothing
+about the user and also runs for people who never connected. Where the database has the
+`pg_cron` extension, `schema.sql` adds the same heartbeat from inside as a second line of
+defence. Supabase does not publish how much activity is enough, so this is the sensible
+thing to do, not a guarantee.
+
+**Trying it without Supabase.** [`supabase/dev_server.py`](supabase/dev_server.py) answers
+the same calls on top of a local PostgreSQL, and [`supabase/test.sql`](supabase/test.sql)
+plays the whole friend flow against the functions. A debug build may talk plain HTTP to
+`10.0.2.2` and `localhost` for that, and to nothing else.
 
 ## Install
 
-Take an APK from the [releases page](https://github.com/TRGamer-tech/shelfmark/releases), copy
+Take the APK from the [releases page](https://github.com/TRGamer-tech/shelfmark/releases), copy
 it to the phone and open it. Android asks once whether it may install apps from that source.
 For now a release has one file, the debug build `Shelfmark-x.y.z-debug.apk`.
 
 **Updating.** Install the new APK over the old one, your library stays. That works between
-all builds from the releases page, because they are signed with the same key,
-and because the database is migrated step by step (the schemas of every version are kept in
-`app/schemas`). The one thing Android refuses is going back to an older version.
+all builds from the releases page, because they are signed with the same key, and because the
+database is migrated step by step (the schemas of every version are kept in `app/schemas`).
+The one thing Android refuses is going back to an older version.
 
 If the older Shelfmark (the one built from the desktop version) is installed, export your
 library there first, uninstall it, then install this one and import the export under
@@ -111,6 +164,18 @@ You need a JDK (17 or newer) and the Android SDK (platform 37.2, build-tools 37)
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew assembleRelease      # app/build/outputs/apk/release/app-release.apk
 ```
+
+**Server.** The address and the publishable key of the Supabase project come from
+`local.properties`:
+
+```properties
+shelfmark.serverUrl=https://xxxxxxxx.supabase.co
+shelfmark.serverKey=sb_publishable_...
+```
+
+or from `-Pshelfmark.serverUrl=... -Pshelfmark.serverKey=...`, or from the environment
+(`SHELFMARK_SUPABASE_URL`, `SHELFMARK_SUPABASE_KEY`). Without them the app is built without a
+server.
 
 **Signing.** Android only installs an update over an earlier version that was signed with the
 same key, so debug and release builds both use one stable key when it is available. Put a
@@ -129,10 +194,17 @@ each other. Keep the keystore and the properties file private. They are listed i
 
 **Releases.** Raise `versionName` and `versionCode` in `app/build.gradle.kts`, then start the
 release workflow: **Actions > Release > Run workflow** on `main`. It builds the debug APK,
-creates the tag `v<versionName>` and publishes a GitHub release with the APK attached. Pushing such a
-tag yourself starts it too. The signing key comes from two repository secrets (Settings >
-Secrets and variables > Actions): `SHELFMARK_KEYSTORE_BASE64` (the keystore file, base64
-encoded) and `SHELFMARK_KEYSTORE_PASSWORD`. Without them the workflow stops before building.
+creates the tag `v<versionName>` and publishes a GitHub release with the APK attached. Pushing
+such a tag yourself starts it too. It reads four repository secrets (Settings > Secrets and
+variables > Actions):
+
+| Secret | What it is |
+| --- | --- |
+| `SHELFMARK_KEYSTORE_BASE64` | The keystore file, base64 encoded. Without it nothing is built |
+| `SHELFMARK_KEYSTORE_PASSWORD` | Its password |
+| `SHELFMARK_SUPABASE_URL` | The address of the server. Optional |
+| `SHELFMARK_SUPABASE_KEY` | The publishable key of the server. Optional |
+
 Notes for a release go into `docs/releases/<tag>.md`.
 
 **Changing the database.** Raise the version in `AppDatabase` and add a migration (an
@@ -146,13 +218,15 @@ first version with the current code and has to keep passing.
 ```
 
 The suite covers the catalogue clients (against recorded responses), barcode decoding, the
-sharing and borrow request flow between simulated phones, backup and import (Goodreads,
-StoryGraph, CSV, the desktop Shelfmark), the database migration, statistics, calendar, recaps,
-milestones and goals. It also drives the real screens (in German) and writes screenshots to
-`app/build/outputs/roborazzi`.
+sharing and borrow request flow between simulated phones (with files, and through a server
+rebuilt in memory), backup and import (Goodreads, StoryGraph, CSV, the desktop Shelfmark), the
+database migrations, statistics, calendar, recaps, milestones and goals. It also drives the
+real screens (in German) and writes screenshots to `app/build/outputs/roborazzi`.
 
 - `SHELFMARK_LIVE=1 ./gradlew testDebugUnitTest --tests '*LiveCatalogueTest'` talks to the real
   catalogues.
+- `SHELFMARK_SERVER_URL=http://127.0.0.1:54330 SHELFMARK_SERVER_KEY=sb_publishable_local_development ./gradlew testDebugUnitTest --tests '*LiveServerTest'`
+  plays the friend flow against a real database, through `supabase/dev_server.py`.
 - Maven Central rate-limits the large Robolectric jars per IP address. If the download is
   refused, point that one test dependency at a mirror:
   `-Pshelfmark.robolectricMirror=https://maven-central.storage-download.googleapis.com/maven2/`
@@ -176,11 +250,11 @@ Cover pictures also come from the Open Library and DNB cover services, which ans
 
 ## Not here yet
 
-Things the desktop Shelfmark has that this version does not: books lying in stacks, a sort
-order per shelf, and the timer alarm.
-
-A server for friends, so that libraries and borrow requests travel by themselves instead of as
-files, is the next larger step.
+- A sort order per shelf, and the timer alarm of the desktop Shelfmark.
+- News from friends the moment it happens. The app looks for it when it is opened and twice a
+  day in the background, which is what works without a push service.
+- A backup does not carry the profile for the server. On a new phone you connect again and
+  hand out a new friend code.
 
 ## Licences
 

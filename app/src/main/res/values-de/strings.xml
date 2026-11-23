@@ -67,6 +67,8 @@
     <string name="calendar_year">Das Jahr %1$d</string>
     <string name="camera_permission_grant">Kamera erlauben</string>
     <string name="camera_permission_text">Shelfmark braucht die Kamera, um Barcodes zu scannen und Zitate zu fotografieren.</string>
+    <string name="continue_page">Seite %1$d von %2$d</string>
+    <string name="continue_reading">Weiterlesen</string>
     <string name="cover_find_missing">Fehlende Cover suchen</string>
     <string name="cover_finding">Suche Cover: %1$d von %2$d</string>
     <string name="cover_none_found">Kein Katalog hat ein Cover für dieses Buch. Du kannst ein Foto machen oder ein Bild auswählen.</string>
@@ -166,6 +168,14 @@
     <string name="goals_manage">Ziele verwalten</string>
     <string name="goals_none">Noch keine Ziele.</string>
     <string name="goals_title">Ziele</string>
+    <string name="greeting_day">Schön, dass du da bist</string>
+    <string name="greeting_day_name">Schön, dass du da bist, %1$s</string>
+    <string name="greeting_evening">Guten Abend</string>
+    <string name="greeting_evening_name">Guten Abend, %1$s</string>
+    <string name="greeting_morning">Guten Morgen</string>
+    <string name="greeting_morning_name">Guten Morgen, %1$s</string>
+    <string name="greeting_night">Noch wach?</string>
+    <string name="greeting_night_name">Noch wach, %1$s?</string>
     <string name="import_answer_no">%1$s möchte «%2$s» im Moment nicht ausleihen.</string>
     <string name="import_answer_title">Antwort erhalten</string>
     <string name="import_answer_yes">%1$s hat Ja gesagt. Du kannst «%2$s» ausleihen.</string>
@@ -193,6 +203,7 @@
     <string name="library_sort">Sortieren nach</string>
     <string name="library_view">Ansicht</string>
     <string name="library_view_options">Ansicht und Sortierung</string>
+    <string name="list_empty_shelf">Dieses Regal ist noch leer. Bücher stellst du von ihrer Seite aus hinein.</string>
     <string name="lists_custom">Eigene Listen</string>
     <string name="lists_custom_empty">Lege eigene Listen an, zum Beispiel «Ferienlektüre» oder «Lieblingsbücher».</string>
     <string name="lists_delete_text">Die Bücher bleiben in deiner Bibliothek.</string>
@@ -233,8 +244,10 @@
     <string name="ornament_add">Etwas aufs Regal stellen</string>
     <string name="ornament_at_start">Am Anfang des Regals</string>
     <string name="ornament_bookend">Buchstütze</string>
+    <string name="ornament_bookstack">Bücherstapel</string>
     <string name="ornament_cactus">Kaktus</string>
     <string name="ornament_candle">Kerze</string>
+    <string name="ornament_cat">Schlafende Katze</string>
     <string name="ornament_clock">Uhr</string>
     <string name="ornament_dialog_title">%1$s dekorieren</string>
     <string name="ornament_frame">Bilderrahmen</string>
@@ -512,6 +525,10 @@
     <plurals name="days_left">
         <item quantity="one">noch %d Tag</item>
         <item quantity="other">noch %d Tage</item>
+    </plurals>
+    <plurals name="greeting_books">
+        <item quantity="one">%d Buch in deinen Regalen</item>
+        <item quantity="other">%d Bücher in deinen Regalen</item>
     </plurals>
     <plurals name="import_added">
         <item quantity="one">%d Buch hinzugefügt</item>

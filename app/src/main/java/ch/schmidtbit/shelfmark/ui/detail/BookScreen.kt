@@ -66,6 +66,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ch.schmidtbit.shelfmark.ui.components.AnimatedProgress
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
@@ -454,7 +455,7 @@ private fun ProgressCard(book: Book, sessions: List<ReadingSession>, minutesPerP
         }
         book.progress?.let {
             Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().height(8.dp))
+            AnimatedProgress(it, Modifier.fillMaxWidth().height(8.dp))
         }
         ReadingMath.minutesLeft(book, sessions, minutesPerPage)?.let { left ->
             Spacer(Modifier.height(8.dp))

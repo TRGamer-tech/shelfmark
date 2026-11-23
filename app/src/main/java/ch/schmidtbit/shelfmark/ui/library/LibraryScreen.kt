@@ -60,6 +60,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ch.schmidtbit.shelfmark.ui.components.AnimatedProgress
+import ch.schmidtbit.shelfmark.ui.components.DustMotes
+import ch.schmidtbit.shelfmark.ui.components.LampLight
+import ch.schmidtbit.shelfmark.ui.components.LivelyScope
+import ch.schmidtbit.shelfmark.ui.components.OrnamentView
+import ch.schmidtbit.shelfmark.ui.components.ShelfBoard
+import ch.schmidtbit.shelfmark.data.model.OrnamentKind
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
@@ -147,13 +156,21 @@ fun LibraryScreen(
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            FilterRow(state, viewModel::setFilter)
-            when {
-                state.loading -> Unit
-                state.all.isEmpty() -> EmptyLibrary(onAdd)
-                state.visible.isEmpty() -> NothingMatches()
-                else -> Shelves(state, onOpenBook, viewModel::setFilter)
+        // The shelf is the one place that lives: lamplight from above, dust in it, a candle that flickers.
+        LivelyScope {
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                LampLight(Modifier.matchParentSize())
+                Column(Modifier.fillMaxSize()) {
+                    FilterRow(state, viewModel::setFilter)
+                    when {
+                        state.loading -> Unit
+                        state.all.isEmpty() -> EmptyLibrary(onAdd)
+                        state.visible.isEmpty() -> NothingMatches()
+                        else -> Shelves(state, onOpenBook, viewModel::setFilter)
+                    }
+                }
+                // In front of the books, where dust is. It is only drawn, so every tap goes through to the shelf.
+                DustMotes(Modifier.matchParentSize())
             }
         }
     }
@@ -265,37 +282,52 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
     val grouped = state.filter == LibraryFilter.All && state.query.isBlank()
     val labels = StatusOrder.associateWith { stringResource(it.labelRes()) }
     var decorating by remember { mutableStateOf<Triple<String, String, Int>?>(null) }
-    val sections = remember(state.visible, state.ornaments, state.filter, state.shelves, coverDir, grouped, labels) {
-        fun section(key: String, title: String, books: List<Book>, onOpen: (() -> Unit)?) = ShelfSection(
+    val emptyList = stringResource(R.string.list_empty_shelf)
+    val sections = remember(state.visible, state.ornaments, state.filter, state.shelves, state.links, coverDir, grouped, labels, emptyList) {
+        fun section(key: String, title: String, books: List<Book>, emptyHint: String? = null, onOpen: (() -> Unit)?) = ShelfSection(
             key = key,
             items = books.map(::item),
             title = title,
             onOpen = onOpen,
             ornaments = state.ornaments.filter { it.shelfKey == key }.map { it.position to it.kind },
             onDecorate = { decorating = Triple(key, title, books.size) },
+            emptyHint = emptyHint,
         )
         when {
             grouped -> StatusOrder.mapNotNull { status ->
                 val books = state.visible.filter { it.status == status }
                 if (books.isEmpty()) null else section(status.name, labels.getValue(status), books) { onFilter(LibraryFilter.Status(status)) }
-            }
+            } +
+                // Lists of one's own are shelves of their own, below the built-in ones.
+                // A book that is on a list stands there as well as on the shelf of its state.
+                state.shelves.map { shelf ->
+                    val ids = state.links.filter { it.shelfId == shelf.id }.mapTo(HashSet()) { it.bookId }
+                    section("list_${shelf.id}", shelf.name, state.visible.filter { it.id in ids }, emptyHint = emptyList) { onFilter(LibraryFilter.OnShelf(shelf.id)) }
+                }
             // A single list keeps its heading, so it can be decorated too.
             state.filter is LibraryFilter.Status && state.query.isBlank() ->
-                listOf(section(state.filter.status.name, labels.getValue(state.filter.status), state.visible, null))
+                listOf(section(state.filter.status.name, labels.getValue(state.filter.status), state.visible, onOpen = null))
             state.filter is LibraryFilter.OnShelf && state.query.isBlank() ->
-                listOf(section("list_${state.filter.shelfId}", state.shelves.firstOrNull { it.id == state.filter.shelfId }?.name.orEmpty(), state.visible, null))
+                listOf(section("list_${state.filter.shelfId}", state.shelves.firstOrNull { it.id == state.filter.shelfId }?.name.orEmpty(), state.visible, onOpen = null))
             else -> listOf(ShelfSection("all", state.visible.map(::item)))
         }
     }
     decorating?.let { (key, title, count) -> OrnamentDialog(key, title, count) { decorating = null } }
     val bottomSpace = PaddingValues(top = 4.dp, bottom = 96.dp)
+    // The book that was last read in, to pick up where one left off.
+    val current = remember(state.all) { state.all.filter { it.status == ReadingStatus.READING }.maxByOrNull { it.updatedAt } }
     val header: @Composable () -> Unit = {
-        Text(
-            pluralStringResource(R.plurals.book_count, state.visible.size, state.visible.size),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-        )
+        if (grouped) {
+            Greeting(state.settings.profileName, state.all.size)
+            current?.let { book -> ContinueCard(book, coverModelOf(coverDir, book)) { onOpenBook(book.id) } }
+        } else {
+            Text(
+                pluralStringResource(R.plurals.book_count, state.visible.size, state.visible.size),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
     }
     when (state.settings.viewMode) {
         ViewMode.COVERS -> CoverShelf(sections, { onOpenBook(it.key) }, contentPadding = bottomSpace, header = header)
@@ -303,7 +335,7 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
         ViewMode.LIST -> LazyColumn(contentPadding = bottomSpace, modifier = Modifier.fillMaxSize().testTag("bookList")) {
             item(key = "header") { header() }
             items(state.visible, key = { it.id }) { book ->
-                BookRow(book, coverModelOf(coverDir, book)) { onOpenBook(book.id) }
+                BookRow(book, coverModelOf(coverDir, book), Modifier.animateItem()) { onOpenBook(book.id) }
                 HorizontalDivider(Modifier.padding(start = 84.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
@@ -336,7 +368,58 @@ fun BookRow(book: Book, cover: Any?, modifier: Modifier = Modifier, onClick: () 
             }
             book.progress?.takeIf { book.status == ReadingStatus.READING }?.let {
                 Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
+                AnimatedProgress(it, Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/** A word of welcome that knows what time it is, and how many books are waiting. */
+@Composable
+private fun Greeting(name: String, bookCount: Int) {
+    val hour = remember { java.time.LocalTime.now().hour }
+    val text = when (hour) {
+        in 5..10 -> if (name.isBlank()) stringResource(R.string.greeting_morning) else stringResource(R.string.greeting_morning_name, name)
+        in 11..17 -> if (name.isBlank()) stringResource(R.string.greeting_day) else stringResource(R.string.greeting_day_name, name)
+        in 18..22 -> if (name.isBlank()) stringResource(R.string.greeting_evening) else stringResource(R.string.greeting_evening_name, name)
+        else -> if (name.isBlank()) stringResource(R.string.greeting_night) else stringResource(R.string.greeting_night_name, name)
+    }
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 4.dp).testTag("greeting")) {
+        Text(text, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            pluralStringResource(R.plurals.greeting_books, bookCount, bookCount),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** The book being read, with a bookmark of how far along it is. One tap opens it. */
+@Composable
+private fun ContinueCard(book: Book, cover: Any?, onOpen: () -> Unit) {
+    Card(
+        onClick = onOpen,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("continueReading"),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            BookCover(book.title, book.authors, cover, Modifier.width(44.dp), elevation = 2.dp, tiny = true)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.continue_reading), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                book.progress?.let { progress ->
+                    Spacer(Modifier.height(6.dp))
+                    AnimatedProgress(progress, Modifier.fillMaxWidth().height(6.dp))
+                    if (book.pageCount > 0) {
+                        Text(
+                            stringResource(R.string.continue_page, book.currentPage, book.pageCount),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -349,8 +432,15 @@ private fun EmptyLibrary(onAdd: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(Icons.AutoMirrored.Rounded.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(72.dp))
-        Spacer(Modifier.height(16.dp))
+        // A shelf that is ready and waiting: light on, tea poured, the cat already asleep.
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.testTag("emptyStillLife")) {
+            OrnamentView(OrnamentKind.LAMP)
+            OrnamentView(OrnamentKind.BOOKSTACK)
+            OrnamentView(OrnamentKind.MUG)
+            OrnamentView(OrnamentKind.CAT)
+        }
+        ShelfBoard()
+        Spacer(Modifier.height(20.dp))
         Text(stringResource(R.string.library_empty_title), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(
