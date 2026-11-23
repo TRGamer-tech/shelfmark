@@ -282,6 +282,12 @@ interface SocialDao {
     @Query("DELETE FROM lend_requests WHERE id = :id")
     suspend fun deleteRequest(id: String)
 
+    @Query("SELECT * FROM lend_requests ORDER BY createdAt, id")
+    suspend fun allRequests(): List<LendRequest>
+
+    @Query("DELETE FROM lend_requests")
+    suspend fun clearRequests()
+
     @Query("SELECT COUNT(*) FROM lend_requests WHERE incoming = 1 AND status = 'PENDING'")
     fun observePendingIncoming(): Flow<Int>
 }

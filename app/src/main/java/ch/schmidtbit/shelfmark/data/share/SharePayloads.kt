@@ -111,8 +111,9 @@ data class LendAnswerMsg(
 )
 
 /**
- * The settings that belong to the person rather than to one device, so that phone and
- * website agree on them: the name, what friends may see, the reading speed, the theme.
+ * The settings that belong to the person rather than to one device, so that the shelf
+ * looks the same on every phone and on the website: the name, what friends may see, the
+ * reading speed, the theme, how the shelf is shown and sorted, and whether it moves.
  */
 @Serializable
 data class VaultPrefs(
@@ -122,6 +123,11 @@ data class VaultPrefs(
     val minutesPerPage: Float = 1.5f,
     val theme: String = "system",
     val customThemes: List<CustomTheme> = emptyList(),
+    /** COVERS, SPINES or LIST. */
+    val viewMode: String = "COVERS",
+    /** ADDED, TITLE, AUTHOR or RATING. */
+    val sort: String = "ADDED",
+    val motion: Boolean = true,
 )
 
 /**

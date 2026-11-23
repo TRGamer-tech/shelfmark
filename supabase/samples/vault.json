@@ -212,6 +212,9 @@
         "accent": -8665985,
         "text": -1511192
       }
-    ]
+    ],
+    "viewMode": "SPINES",
+    "sort": "TITLE",
+    "motion": false
   }
 }

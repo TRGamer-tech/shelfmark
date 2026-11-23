@@ -107,6 +107,7 @@ class AppFlowTest {
 
     /** Rebuilds the app's container with a server to talk to. Call before [start]. */
     private fun useServer() {
+        container.scope.cancel()
         container.database.close()
         container = AppContainer(
             context = app,
@@ -147,6 +148,8 @@ class AppFlowTest {
 
     @After fun tearDown() {
         scenario?.close()
+        // The app syncs a few seconds after a change. Nothing of it may run once the database is gone.
+        container.scope.cancel()
         container.database.close()
         scope.cancel()
     }
@@ -731,39 +734,43 @@ class AppFlowTest {
         assertEquals(setOf("favorites", "sci-fi"), runBlocking { container.library.shelves.first() }.map { it.name }.toSet())
     }
 
-    @Test fun friendsFindEachOtherThroughTheServer() {
+    private val benEmail = "ben@shelfmark.test"
+    private val benPassword = "geheim-ben"
+
+    @Test fun friendsFindEachOtherThroughTheirAccounts() {
         useServer()
         runBlocking {
             container.settings.setProfileName("Ben")
             container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
         }
-        // Asked before the app runs: once it does, saving a setting from here would block
-        // the very thread the app needs to save its own.
-        val myId = runBlocking { container.settings.ensureUserId() }
-        // Anna is on another phone, connected to the same server.
+        // Anna is on another phone, with an account on the same server.
         val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
         runBlocking {
             anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", status = ReadingStatus.READ, rating = 4.5f, review = "Ganz wunderbar.", lendable = true))
-            anna.server.connect()
+            anna.join()
         }
         try {
             start()
-            // Opening the app checks in with the server, connected or not.
+            // Opening the app checks in with the server, signed in or not, and says nothing about anybody.
             waitFor { fakeServer.calls["shelfmark_ping"] == 1 }
-            assertTrue(!fakeServer.knows(myId))
+            assertTrue(!fakeServer.hasAccount(benEmail))
 
             tap("tabFriends")
-            waitForTag("onlineCard")
-            waitForText("Einmal verbinden")
-            shot("83_friends_offer")
-            tap("connectOnline")
+            waitForTag("accountCard")
+            waitForText("Mit einem Konto")
+            shot("83_friends_account")
+            type("accountEmail", benEmail)
+            type("accountPassword", benPassword)
+            tap("signUp")
             waitForTag("friendCode")
             // The code shows as soon as the server knows me. The first exchange runs a moment longer.
             waitFor { !container.server.status.value.running && runBlocking { container.settings.current() }.lastSyncAt > 0 }
             val myCode = runBlocking { container.settings.current() }.friendCode
             assertEquals(10, myCode.length)
             waitForText(myCode.chunked(5).joinToString("-"))
-            assertTrue(fakeServer.knows(myId))
+            waitForText("Angemeldet als $benEmail")
+            // The library went to the account with it.
+            assertEquals(1L, fakeServer.revisionOf(benEmail))
             shot("84_friends_connected")
 
             // Anna types in my code. I do nothing but look again.
@@ -784,21 +791,21 @@ class AppFlowTest {
             waitForText("Ganz wunderbar.")
             clearShared()
             tap("askToBorrow")
-            waitFor { fakeServer.waitingFor(anna.id) == 1 }
+            waitFor { fakeServer.waitingFor(anna.email) == 1 }
             assertTrue(File(app.cacheDir, "shared").listFiles().isNullOrEmpty())
             waitFor { org.robolectric.shadows.ShadowToast.getTextOfLatestToast() == "Gesendet" }
 
             // Anna says yes on her phone, and the answer shows up here by itself.
             val asked = runBlocking { anna.server.sync() } as SyncResult.Done
             assertEquals("Ben", asked.requests.single().fromName)
-            runBlocking { anna.server.send(myId, anna.social.answerRequest(asked.requests.single().requestId, accept = true)!!) }
+            runBlocking { anna.server.send(fakeServer.idOf(benEmail), anna.social.answerRequest(asked.requests.single().requestId, accept = true)!!) }
             scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             settle()
             // Not runBlocking: the app may be in the middle of a sync of its own, which needs this very thread to go on.
             container.launch { container.refreshFriends(force = true) }
             waitFor { runBlocking { container.social.requests.first() }.singleOrNull()?.status == LendStatus.ACCEPTED }
             // Once it has arrived, the server is told and drops its copy.
-            waitFor { fakeServer.waitingFor(myId) == 0 }
+            waitFor { fakeServer.waitingFor(benEmail) == 0 }
         } finally {
             anna.close()
         }
@@ -811,8 +818,8 @@ class AppFlowTest {
         runBlocking {
             container.settings.setProfileName("Ben")
             anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
-            anna.server.connect()
-            container.server.connect()
+            anna.join()
+            container.server.signUp(benEmail, benPassword)
         }
         try {
             start()
@@ -824,7 +831,7 @@ class AppFlowTest {
             tap("friendCodeAdd")
             waitForTag("friendCodeProblem")
             waitForText("Diesen Code hat niemand")
-            retype("friendCodeField", anna.settings.let { runBlocking { it.current() } }.friendCode.lowercase())
+            retype("friendCodeField", runBlocking { anna.settings.current() }.friendCode.lowercase())
             tap("friendCodeAdd")
             // The friend row appears first, the mark that it came through the server a moment later.
             waitFor { runBlocking { container.social.friends.first() }.singleOrNull()?.friend?.online == true }
@@ -833,6 +840,76 @@ class AppFlowTest {
             assertTrue(friend.friend.online)
             assertEquals(1, friend.bookCount)
             waitFor { org.robolectric.shadows.ShadowToast.getTextOfLatestToast() == "Du und Anna seid jetzt befreundet" }
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun signingInGoesWrongInPlainWordsAndRightWithoutFuss() {
+        useServer()
+        fakeServer.confirmEmail = true
+        start()
+        tap("tabFriends")
+        // A new account on a server that wants the address confirmed: say so, sign nobody in.
+        type("accountEmail", benEmail)
+        type("accountPassword", benPassword)
+        tap("signUp")
+        waitForTag("accountNotice")
+        waitForText("Öffne den Link in der Mail")
+        assertTrue(!runBlocking { container.settings.current() }.signedIn)
+        // Signing in before that link was opened.
+        tap("signIn")
+        waitForTag("accountProblem")
+        waitForText("Bestätige zuerst deine Adresse")
+        // The link was opened. A wrong password first, then the right one.
+        fakeServer.confirm(benEmail)
+        retype("accountPassword", "falsches-passwort")
+        tap("signIn")
+        waitForText("E-Mail oder Passwort stimmt nicht.")
+        retype("accountPassword", benPassword)
+        tap("signIn")
+        waitForTag("onlineCard")
+        waitFor { runBlocking { container.settings.current() }.signedIn }
+        // Asking for a new password needs nothing but the address.
+        waitFor { fakeServer.calls["signup"] == 1 }
+    }
+
+    @Test fun anAccountWithBooksMeetsADeviceWithBooks() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen"))
+            anna.join()
+        }
+        try {
+            start()
+            tap("tabFriends")
+            type("accountEmail", anna.email)
+            type("accountPassword", anna.password)
+            tap("signIn")
+            // They were never the same library, so the app does not guess.
+            waitForTag("chooseLibrary")
+            waitForText("Auf deinem Konto liegen 2 Bücher, auf diesem Gerät 10.")
+            shot("86_which_library")
+            assertEquals(10, books().size)
+            tap("chooseAccount")
+            waitFor { books().size == 2 }
+            assertEquals(setOf("Emma", "Persuasion"), books().map { it.title }.toSet())
+            // The name of the account came along, and signing out is in the settings.
+            waitFor { runBlocking { container.settings.current() }.profileName == "Anna" }
+            tap("tabLibrary")
+            tap("openSettings")
+            scrollTo("signOut")
+            waitForText("Angemeldet als ${anna.email}")
+            // The two settings that only made things harder are gone.
+            assertTrue(compose.onAllNodesWithTag("googleKey").fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithTag("ownServer").fetchSemanticsNodes().isEmpty())
+            tap("signOut")
+            waitFor { !runBlocking { container.settings.current() }.signedIn }
+            // Signed out, the books are still here.
+            assertEquals(2, books().size)
         } finally {
             anna.close()
         }

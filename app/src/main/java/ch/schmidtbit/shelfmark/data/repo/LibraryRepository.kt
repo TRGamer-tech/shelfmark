@@ -18,6 +18,7 @@ import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
 import ch.schmidtbit.shelfmark.data.model.withStatus
 import ch.schmidtbit.shelfmark.util.Dates
+import ch.schmidtbit.shelfmark.util.Ids
 import kotlinx.coroutines.flow.Flow
 
 /** Everything about the user's own books, custom lists and quotes. */
@@ -44,7 +45,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
 
     suspend fun addBook(book: Book, shelfIds: Collection<Long> = emptyList()): Long = db.withTransaction {
         val now = System.currentTimeMillis()
-        val id = db.books().insert(book.copy(id = 0, addedAt = now, updatedAt = now))
+        val id = db.books().insert(book.copy(id = Ids.next(), addedAt = now, updatedAt = now))
         shelfIds.forEach { db.shelves().link(BookShelf(id, it)) }
         id
     }
@@ -80,7 +81,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
 
     suspend fun createShelf(name: String): Long {
         val position = (db.shelves().all().maxOfOrNull { it.position } ?: -1) + 1
-        return db.shelves().insert(Shelf(name = name.trim(), position = position))
+        return db.shelves().insert(Shelf(id = Ids.next(), name = name.trim(), position = position))
     }
 
     suspend fun renameShelf(shelf: Shelf, name: String) = db.shelves().update(shelf.copy(name = name.trim()))
@@ -93,7 +94,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
     suspend fun getQuote(id: Long): Quote? = db.quotes().get(id)
 
     suspend fun saveQuote(quote: Quote): Long =
-        if (quote.id == 0L) db.quotes().insert(quote) else quote.id.also { db.quotes().update(quote) }
+        if (quote.id == 0L) db.quotes().insert(quote.copy(id = Ids.next())) else quote.id.also { db.quotes().update(quote) }
 
     suspend fun deleteQuote(id: Long) = db.quotes().delete(id)
 
@@ -102,7 +103,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
      * an unstarted book counts as being read, and reaching the last page finishes it.
      */
     suspend fun logSession(session: ReadingSession) = db.withTransaction {
-        db.sessions().insert(session.copy(id = 0))
+        db.sessions().insert(session.copy(id = Ids.next()))
         val book = db.books().get(session.bookId) ?: return@withTransaction
         val today = Dates.today()
         var updated = book
@@ -119,22 +120,22 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
     suspend fun deleteSession(id: Long) = db.sessions().delete(id)
 
     suspend fun saveNote(note: Note): Long =
-        if (note.id == 0L) db.notes().insert(note) else note.id.also { db.notes().update(note) }
+        if (note.id == 0L) db.notes().insert(note.copy(id = Ids.next())) else note.id.also { db.notes().update(note) }
 
     suspend fun deleteNote(id: Long) = db.notes().delete(id)
 
     suspend fun saveGoal(goal: Goal): Long =
-        if (goal.id == 0L) db.goals().insert(goal) else goal.id.also { db.goals().update(goal) }
+        if (goal.id == 0L) db.goals().insert(goal.copy(id = Ids.next())) else goal.id.also { db.goals().update(goal) }
 
     suspend fun deleteGoal(id: Long) = db.goals().delete(id)
 
     suspend fun savePurchase(purchase: Purchase): Long =
-        if (purchase.id == 0L) db.purchases().insert(purchase) else purchase.id.also { db.purchases().update(purchase) }
+        if (purchase.id == 0L) db.purchases().insert(purchase.copy(id = Ids.next())) else purchase.id.also { db.purchases().update(purchase) }
 
     suspend fun deletePurchase(id: Long) = db.purchases().delete(id)
 
     suspend fun addOrnament(shelfKey: String, kind: OrnamentKind, position: Int): Long =
-        db.ornaments().insert(Ornament(shelfKey = shelfKey, kind = kind, position = position.coerceAtLeast(0)))
+        db.ornaments().insert(Ornament(id = Ids.next(), shelfKey = shelfKey, kind = kind, position = position.coerceAtLeast(0)))
 
     suspend fun moveOrnament(ornament: Ornament, position: Int) = db.ornaments().update(ornament.copy(position = position.coerceAtLeast(0)))
 
@@ -160,7 +161,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
             val match = library.firstOrNull { CsvImporter.sameBook(it, planned.book) }
             val bookId = if (match == null) {
                 added++
-                db.books().insert(planned.book.copy(id = 0, updatedAt = System.currentTimeMillis())).also { library += planned.book.copy(id = it) }
+                db.books().insert(planned.book.copy(id = Ids.next(), updatedAt = System.currentTimeMillis())).also { library += planned.book.copy(id = it) }
             } else {
                 val filled = CsvImporter.fillGaps(match, planned.book)
                 if (filled != match) {

@@ -53,9 +53,17 @@ is accepted in any case and with any punctuation.
 same document as a backup of the app, the class `BackupPayload` in
 `app/src/main/java/ch/schmidtbit/shelfmark/data/share/SharePayloads.kt`, whose parts are
 the classes in `data/model/Models.kt`: `books`, `shelves`, `links`, `quotes`, `sessions`,
-`notes`, `goals`, `purchases`, `ornaments`, `requests`, and `prefs` (name, what friends may
-see, reading speed, theme). Unknown fields must be kept when a document is read and written
-back, so that an older client does not drop what a newer one added.
+`notes`, `goals`, `purchases`, `ornaments`, `requests`, and `prefs`. Fields that have their
+default value are left out by the app, so a reader fills in the defaults. The website keeps
+fields it does not know when it writes a document back. The app does not, so a new field
+is taught to the app first.
+
+`prefs` is everything that makes the shelf look the way its owner left it, so that it looks
+the same on every device: `profileName`, `shareStatus` and `shareRatings` (what friends may
+see), `minutesPerPage`, `theme` (a theme key, `system`, or `custom:<id>`), `customThemes`,
+`viewMode` (`COVERS`, `SPINES` or `LIST`), `sort` (`ADDED`, `TITLE`, `AUTHOR` or `RATING`)
+and `motion` (the lively shelf on or off). Ornaments and lists are part of the library
+itself.
 
 Saving works by revision:
 
@@ -73,6 +81,23 @@ counts up from a range of its own, below 9e14.
 Days (`startedOn`, `finishedOn`, `day`, `lentSince`, goal days) are days since 1970-01-01
 in local time (`LocalDate.toEpochDay`). Moments (`addedAt`, `createdAt`, `startedAt`,
 `updatedAt`) are milliseconds since 1970.
+
+## Cover photos
+
+A cover that was photographed is uploaded, so that it has an address every device and
+every friend can show. Afterwards it is an ordinary `coverUrl`.
+
+- Upload: `POST /storage/v1/object/shelfmark-covers/<user id>/<file name>` with `apikey`,
+  `Authorization: Bearer <access token>`, `Content-Type: image/jpeg` (or png, webp),
+  `x-upsert: true`, and the picture as the body. At most 2 MB, so clients scale a photo
+  down first (the app: 1000 pixels on the longer side, JPEG).
+- Its address: `/storage/v1/object/public/shelfmark-covers/<user id>/<file name>`. It needs
+  no sign-in, but nobody can guess it.
+- Remove: `DELETE /storage/v1/object/shelfmark-covers/<user id>/<file name>`.
+
+Everybody can write below their own user id only. In a book, `coverPath` is the name of the
+picture's file on the phone that took it (it means nothing anywhere else), and `coverUrl`
+is what everybody shows.
 
 ## What friends get
 

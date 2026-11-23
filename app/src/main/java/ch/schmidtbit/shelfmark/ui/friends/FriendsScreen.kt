@@ -84,7 +84,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
     var askName by remember { mutableStateOf(false) }
     var shareAfterName by remember { mutableStateOf(false) }
     // The card for the server only shows where there is a server to talk to.
-    val hasServer = container.server.hasBuiltIn || (settings.serverUrl.isNotBlank() && settings.serverKey.isNotBlank())
+    val hasServer = container.server.available
 
     val openFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) importer.open(uri) }
 
@@ -107,7 +107,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("friends"), contentPadding = PaddingValues(bottom = 32.dp)) {
             // Always the first item, even when empty: an item that appears above the top
             // later would stay out of sight, because the list holds on to what it shows.
-            item(key = "online") { if (hasServer) OnlineCard(settings) }
+            item(key = "online") { if (hasServer) AccountCard(settings) }
             item(key = "share") {
                 SectionCard(stringResource(R.string.friends_share_title)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -132,7 +132,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
                     // Once connected to the server, the file is the way for friends who are not.
                     val shareByFile: @Composable (@Composable RowScope.() -> Unit) -> Unit = { content ->
                         val click = { if (settings.profileName.isBlank()) { shareAfterName = true; askName = true } else shareLibrary() }
-                        if (settings.online) OutlinedButton(onClick = click, modifier = Modifier.fillMaxWidth().testTag("shareLibrary"), content = content)
+                        if (settings.signedIn) OutlinedButton(onClick = click, modifier = Modifier.fillMaxWidth().testTag("shareLibrary"), content = content)
                         else Button(onClick = click, modifier = Modifier.fillMaxWidth().testTag("shareLibrary"), content = content)
                     }
                     shareByFile {
@@ -141,7 +141,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
                         Text(stringResource(R.string.friends_share_button))
                     }
                     Text(
-                        stringResource(if (settings.online) R.string.friends_share_explain_online else R.string.friends_share_explain),
+                        stringResource(if (settings.signedIn) R.string.friends_share_explain_online else R.string.friends_share_explain),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),

@@ -31,6 +31,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -40,6 +46,7 @@ import java.util.concurrent.TimeUnit
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 /** Hand-rolled dependency container. One instance lives in [ShelfmarkApp]. */
+@OptIn(FlowPreview::class)
 class AppContainer(
     context: Context,
     val database: AppDatabase = AppDatabase.create(context),
@@ -74,7 +81,8 @@ class AppContainer(
             BookLookup(
                 listOf(
                     OpenLibraryApi(fetcher),
-                    GoogleBooksApi(fetcher) { settings.current().googleBooksKey },
+                    // Without a key of its own Google answers some of the time. The other catalogues cover the rest.
+                    GoogleBooksApi(fetcher) { "" },
                     ITunesApi(fetcher),
                     LobidApi(fetcher),
                     SruCatalogue.dnb(fetcher),
@@ -85,8 +93,20 @@ class AppContainer(
         }
     }
 
-    /** Friends through the server. Does nothing until a server is set up and the user connects. */
-    val server = ServerSync(database, settings, social, serverConfig, serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) })
+    /** The account: one library on every device and on the website, and friends. Does nothing until somebody signs in. */
+    val server = ServerSync(
+        db = database,
+        settings = settings,
+        social = social,
+        backup = backup,
+        covers = covers,
+        config = serverConfig,
+        poster = serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) },
+        baseFile = java.io.File(appContext.filesDir, "vault_base.json"),
+    )
+
+    /** What was last asked of the user about an account and a device that both hold books. */
+    val choice = MutableStateFlow<SyncResult.Choose?>(null)
 
     val coverFinder: CoverFinder by lazy { CoverFinder(lookup, coverProbeOverride ?: OkHttpImageProbe(httpClient)) }
 
@@ -98,6 +118,27 @@ class AppContainer(
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
+    init {
+        // A change to the library goes to the account a few seconds after the last one, so that
+        // the website and other devices see it without anybody pressing a button.
+        if (serverConfig != null) {
+            scope.launch {
+                merge(
+                    database.invalidationTracker.createFlow("books", "shelves", "book_shelf", "quotes", "sessions", "notes", "goals", "purchases", "ornaments", "lend_requests", emitInitialState = false).map { },
+                    settings.settings.map { listOf(it.profileName, it.shareStatus, it.shareRatings, it.minutesPerPage, it.theme, it.customThemes, it.viewMode, it.sort, it.motion) }.distinctUntilChanged().drop(1).map { },
+                ).debounce(4_000).collect {
+                    if (settings.current().signedIn) remember(server.sync())
+                }
+            }
+        }
+    }
+
+    /** Keeps a question the sync could not answer by itself, for the screen to ask. */
+    fun remember(result: SyncResult): SyncResult {
+        if (result is SyncResult.Choose) choice.value = result
+        return result
+    }
+
     private var lastRefresh = 0L
 
     /**
@@ -108,7 +149,7 @@ class AppContainer(
         val now = android.os.SystemClock.elapsedRealtime()
         if (!force && lastRefresh != 0L && now - lastRefresh < 120_000) return SyncResult.Off
         lastRefresh = now
-        return server.dailyCheck()
+        return remember(server.dailyCheck())
     }
 
     /** How far the search for missing covers has come: (books checked, books to check), or null when idle. */

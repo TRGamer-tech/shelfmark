@@ -94,6 +94,7 @@ import ch.schmidtbit.shelfmark.ui.library.LibraryViewModel
 import ch.schmidtbit.shelfmark.ui.lists.ListsScreen
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import ch.schmidtbit.shelfmark.work.Notifier
+import ch.schmidtbit.shelfmark.ui.friends.ChooseLibraryDialog
 import ch.schmidtbit.shelfmark.ui.nav.BookRoute
 import ch.schmidtbit.shelfmark.ui.nav.CalendarRoute
 import ch.schmidtbit.shelfmark.ui.nav.MilestonesRoute
@@ -283,6 +284,15 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     }
 
     ImportDialogs(nav)
+
+    // Signing in on a device that already has books, with an account that has books too.
+    val choice by container.choice.collectAsState()
+    choice?.let { open ->
+        ChooseLibraryDialog(open) { keep ->
+            container.choice.value = null
+            if (keep != null) container.launch { container.remember(container.server.choose(keep)) }
+        }
+    }
 
     // Every time the app comes to the front it looks whether friends wrote.
     LifecycleResumeEffect(Unit) {

@@ -8,6 +8,7 @@ import ch.schmidtbit.shelfmark.data.importer.LegacyImporter
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
+import ch.schmidtbit.shelfmark.data.share.VaultPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -23,19 +24,27 @@ import java.util.zip.ZipOutputStream
  */
 class BackupManager(private val db: AppDatabase, private val covers: CoverStore) {
 
+    /**
+     * The whole library as one document, in a fixed order, so that the same library
+     * always gives the same document. [prefs] are the settings that belong to the person.
+     */
+    suspend fun snapshot(prefs: VaultPrefs? = null, at: Long = System.currentTimeMillis()): BackupPayload = BackupPayload(
+        exportedAt = at,
+        books = db.books().all().sortedBy { it.id },
+        shelves = db.shelves().all().sortedBy { it.id },
+        links = db.shelves().allLinks().sortedWith(compareBy({ it.bookId }, { it.shelfId })),
+        quotes = db.quotes().all().sortedBy { it.id },
+        sessions = db.sessions().all().sortedBy { it.id },
+        notes = db.notes().all().sortedBy { it.id },
+        goals = db.goals().all().sortedBy { it.id },
+        purchases = db.purchases().all().sortedBy { it.id },
+        ornaments = db.ornaments().all().sortedBy { it.id },
+        requests = db.social().allRequests(),
+        prefs = prefs,
+    )
+
     suspend fun export(out: OutputStream) = withContext(Dispatchers.IO) {
-        val payload = BackupPayload(
-            exportedAt = System.currentTimeMillis(),
-            books = db.books().all(),
-            shelves = db.shelves().all(),
-            links = db.shelves().allLinks(),
-            quotes = db.quotes().all(),
-            sessions = db.sessions().all(),
-            notes = db.notes().all(),
-            goals = db.goals().all(),
-            purchases = db.purchases().all(),
-            ornaments = db.ornaments().all(),
-        )
+        val payload = snapshot()
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry(JSON_NAME))
             zip.write(ShareCodec.encode(Envelope(type = Envelope.TYPE_BACKUP, backup = payload)).toByteArray())
@@ -79,8 +88,17 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
         backup.books.size
     }
 
-    suspend fun restore(backup: BackupPayload) {
+    /**
+     * Replaces the library with [backup]. With [withRequests] the borrow requests are
+     * replaced too: that is for a library coming from the account, where they are part of
+     * it. A backup file from some time ago should not bring old requests back.
+     */
+    suspend fun restore(backup: BackupPayload, withRequests: Boolean = false) {
         db.withTransaction {
+            if (withRequests) {
+                db.social().clearRequests()
+                backup.requests.forEach { db.social().upsertRequest(it) }
+            }
             // Deleting the books cascades to their quotes, sessions, notes and list memberships.
             db.books().clear()
             db.shelves().clear()

@@ -478,6 +478,43 @@ end
 $$;
 
 -- ---------------------------------------------------------------------------------
+-- Cover photos
+-- ---------------------------------------------------------------------------------
+
+-- A cover somebody photographed has to be a picture with an address, so that the website,
+-- another phone and friends can show it. The pictures go into a bucket of Supabase
+-- Storage. Everybody may write below a folder named after their own user id and nowhere
+-- else. Reading needs no sign-in, but it needs the full address, which nobody can guess.
+do $$
+begin
+    -- A plain PostgreSQL used for development has no storage, and nothing to set up.
+    if exists (select 1 from pg_namespace where nspname = 'storage') then
+        insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+        values ('shelfmark-covers', 'shelfmark-covers', true, 2097152, array['image/jpeg', 'image/png', 'image/webp'])
+        on conflict (id) do update
+            set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+        drop policy if exists "Shelfmark covers: see my own" on storage.objects;
+        create policy "Shelfmark covers: see my own" on storage.objects for select to authenticated
+            using (bucket_id = 'shelfmark-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+        drop policy if exists "Shelfmark covers: add my own" on storage.objects;
+        create policy "Shelfmark covers: add my own" on storage.objects for insert to authenticated
+            with check (bucket_id = 'shelfmark-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+        drop policy if exists "Shelfmark covers: replace my own" on storage.objects;
+        create policy "Shelfmark covers: replace my own" on storage.objects for update to authenticated
+            using (bucket_id = 'shelfmark-covers' and (storage.foldername(name))[1] = auth.uid()::text)
+            with check (bucket_id = 'shelfmark-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+        drop policy if exists "Shelfmark covers: remove my own" on storage.objects;
+        create policy "Shelfmark covers: remove my own" on storage.objects for delete to authenticated
+            using (bucket_id = 'shelfmark-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+    end if;
+end
+$$;
+
+-- ---------------------------------------------------------------------------------
 -- Who may call what
 -- ---------------------------------------------------------------------------------
 

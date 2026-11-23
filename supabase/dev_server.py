@@ -5,6 +5,8 @@ It speaks the two parts of Supabase that the apps use, on top of a local Postgre
 
   * Sign-in (/auth/v1/...): sign up, sign in with e-mail and password, refresh, sign out,
     password reset. Users live in the table auth.users of the local database.
+  * Storage for cover photos (/storage/v1/object/shelfmark-covers/...): upload, the public
+    address, remove. Pictures are kept in memory and are gone when this server stops.
   * The Data API for functions (POST /rest/v1/rpc/<function>): the JSON body becomes
     named arguments, the function runs as "authenticated" for a signed-in caller and as
     "anon" otherwise, its result comes back as JSON, and an exception raised in SQL
@@ -34,6 +36,8 @@ import psycopg2
 import psycopg2.extras
 
 DEFAULT_KEY = "sb_publishable_local_development"
+BUCKET = "shelfmark-covers"
+PICTURES = {"image/jpeg", "image/png", "image/webp"}
 SIGNING_KEY = b"shelfmark-development-only"
 
 
@@ -69,6 +73,7 @@ def hash_password(password):
 
 def make_handler(dsn, key, token_seconds, confirm_email):
     refresh_tokens = {}
+    pictures = {}
 
     def user_json(row):
         stamp = row[3].isoformat() if row[3] else None
@@ -93,15 +98,17 @@ def make_handler(dsn, key, token_seconds, confirm_email):
         def log_message(self, *args):
             pass
 
-        def reply(self, status, body=None):
-            data = b"" if body is None else json.dumps(body).encode("utf-8")
+        def reply(self, status, body=None, raw=None, content_type=None):
+            data = raw if raw is not None else b"" if body is None else json.dumps(body).encode("utf-8")
             self.send_response(status)
             # A website on another address may call this server, as it may call Supabase.
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers", self.headers.get("Access-Control-Request-Headers") or "*")
             self.send_header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS")
             self.send_header("Access-Control-Max-Age", "3600")
-            if body is not None:
+            if raw is not None:
+                self.send_header("Content-Type", content_type or "application/octet-stream")
+            elif body is not None:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -131,8 +138,50 @@ def make_handler(dsn, key, token_seconds, confirm_email):
         def do_OPTIONS(self):
             self.reply(200)
 
+        def storage(self, method, path):
+            """Cover photos. Everybody writes below a folder named after their own user id, reading needs only the address."""
+            public = re.fullmatch(r"/storage/v1/object/public/([^/]+)/(.+)", path)
+            if public and method == "GET":
+                picture = pictures.get(public.group(2)) if public.group(1) == BUCKET else None
+                if picture is None:
+                    return self.reply(400, {"statusCode": "404", "error": "not_found", "message": "Object not found"})
+                return self.reply(200, raw=picture[1], content_type=picture[0])
+            match = re.fullmatch(r"/storage/v1/object/([^/]+)/(.+)", path)
+            if not match:
+                return self.reply(404, {"message": "not found"})
+            if match.group(1) != BUCKET:
+                return self.reply(400, {"statusCode": "404", "error": "Bucket not found", "message": "Bucket not found"})
+            claims = self.caller()
+            name = match.group(2)
+            if not claims or name.split("/")[0] != claims["sub"]:
+                return self.reply(400, {"statusCode": "403", "error": "Unauthorized", "message": "new row violates row-level security policy"})
+            if method == "DELETE":
+                pictures.pop(name, None)
+                return self.reply(200, {"message": "Successfully deleted"})
+            length = int(self.headers.get("Content-Length") or 0)
+            kind = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if kind not in PICTURES:
+                return self.reply(400, {"statusCode": "415", "error": "invalid_mime_type", "message": "mime type " + kind + " is not supported"})
+            if length > 2097152:
+                return self.reply(400, {"statusCode": "413", "error": "Payload too large", "message": "The object exceeded the maximum allowed size"})
+            if name in pictures and self.headers.get("x-upsert") != "true":
+                return self.reply(400, {"statusCode": "409", "error": "Duplicate", "message": "The resource already exists"})
+            pictures[name] = (kind, self.rfile.read(length))
+            return self.reply(200, {"Key": BUCKET + "/" + name, "Id": str(uuid.uuid4())})
+
+        def do_DELETE(self):
+            path = urlparse(self.path).path
+            if self.headers.get("apikey") != key:
+                return self.reply(401, {"message": "No API key found in request"})
+            return self.storage("DELETE", path)
+
+        def do_PUT(self):
+            return self.do_POST()
+
         def do_GET(self):
             path = urlparse(self.path).path
+            if path.startswith("/storage/v1/object/public/"):
+                return self.storage("GET", path)
             if self.headers.get("apikey") != key:
                 return self.reply(401, {"message": "No API key found in request"})
             if path == "/auth/v1/user":
@@ -154,6 +203,8 @@ def make_handler(dsn, key, token_seconds, confirm_email):
             path = parsed.path
             if self.headers.get("apikey") != key:
                 return self.reply(401, {"message": "Invalid API key", "hint": "Double check your Supabase `anon` or `service_role` API key."})
+            if path.startswith("/storage/v1/"):
+                return self.storage("POST", path)
             try:
                 body = self.body()
             except ValueError as error:

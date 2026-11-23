@@ -96,6 +96,7 @@ class ContractSamplesTest {
         prefs = VaultPrefs(
             profileName = "Anna", shareStatus = true, shareRatings = false, minutesPerPage = 2f, theme = "custom:moor",
             customThemes = listOf(CustomTheme("moor", "Moor", 0xFF101510.toInt(), 0xFF1C241C.toInt(), 0xFF7BC47F.toInt(), 0xFFE8F0E8.toInt())),
+            viewMode = "SPINES", sort = "TITLE", motion = false,
         ),
     )
 

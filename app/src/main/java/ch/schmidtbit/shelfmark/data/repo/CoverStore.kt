@@ -13,8 +13,8 @@ import java.util.UUID
 import kotlin.math.max
 
 /** Stores covers the user photographed or picked, scaled down, inside the app's private files. */
-class CoverStore(private val context: Context) {
-    val dir: File
+open class CoverStore(private val context: Context) {
+    open val dir: File
         get() = File(context.filesDir, "covers").apply { mkdirs() }
 
     fun file(name: String): File = File(dir, name)

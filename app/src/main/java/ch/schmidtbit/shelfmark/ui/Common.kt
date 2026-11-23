@@ -82,10 +82,13 @@ fun Book.coverModel(): Any? {
     }
 }
 
-fun coverModelOf(coverDir: File, book: Book): Any? = when {
-    book.coverPath.isNotBlank() -> File(coverDir, book.coverPath)
-    book.coverUrl.isNotBlank() -> book.coverUrl
-    else -> null
+/**
+ * What to show as the cover. A photo taken on this phone is a file here. On every other
+ * device that file does not exist, and the photo comes from its address like any cover.
+ */
+fun coverModelOf(coverDir: File, book: Book): Any? {
+    val photo = book.coverPath.takeIf { it.isNotBlank() }?.let { File(coverDir, it) }?.takeIf { it.exists() }
+    return photo ?: book.coverUrl.takeIf { it.isNotBlank() }
 }
 
 /** 4.5 is shown as "4.5", 4.0 as "4". */

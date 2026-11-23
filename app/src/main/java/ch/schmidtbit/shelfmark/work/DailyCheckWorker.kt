@@ -26,7 +26,8 @@ class DailyCheckWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 Result.success()
             }
             is SyncResult.Failed -> if (result.reason == ServerSync.NETWORK) Result.retry() else Result.success()
-            SyncResult.Off -> Result.success()
+            // A question for the user is asked when the app is open, not from the background.
+            is SyncResult.Choose, SyncResult.Off -> Result.success()
         }
     }
 
