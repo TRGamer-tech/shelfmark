@@ -53,6 +53,9 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.widget.Toast
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.rounded.Cloud
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.FriendWithCount
 import ch.schmidtbit.shelfmark.data.model.LendRequest
@@ -80,6 +83,8 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
     val requests by container.social.requests.collectAsStateWithLifecycle(initialValue = emptyList())
     var askName by remember { mutableStateOf(false) }
     var shareAfterName by remember { mutableStateOf(false) }
+    // The card for the server only shows where there is a server to talk to.
+    val hasServer = container.server.hasBuiltIn || (settings.serverUrl.isNotBlank() && settings.serverKey.isNotBlank())
 
     val openFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) importer.open(uri) }
 
@@ -99,7 +104,10 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_friends), style = MaterialTheme.typography.headlineSmall) }) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 32.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("friends"), contentPadding = PaddingValues(bottom = 32.dp)) {
+            // Always the first item, even when empty: an item that appears above the top
+            // later would stay out of sight, because the list holds on to what it shows.
+            item(key = "online") { if (hasServer) OnlineCard(settings) }
             item(key = "share") {
                 SectionCard(stringResource(R.string.friends_share_title)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -121,16 +129,19 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
                         container.launch { container.settings.setShareOptions(settings.shareStatus, it) }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { if (settings.profileName.isBlank()) { shareAfterName = true; askName = true } else shareLibrary() },
-                        modifier = Modifier.fillMaxWidth().testTag("shareLibrary"),
-                    ) {
+                    // Once connected to the server, the file is the way for friends who are not.
+                    val shareByFile: @Composable (@Composable RowScope.() -> Unit) -> Unit = { content ->
+                        val click = { if (settings.profileName.isBlank()) { shareAfterName = true; askName = true } else shareLibrary() }
+                        if (settings.online) OutlinedButton(onClick = click, modifier = Modifier.fillMaxWidth().testTag("shareLibrary"), content = content)
+                        else Button(onClick = click, modifier = Modifier.fillMaxWidth().testTag("shareLibrary"), content = content)
+                    }
+                    shareByFile {
                         Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.friends_share_button))
                     }
                     Text(
-                        stringResource(R.string.friends_share_explain),
+                        stringResource(if (settings.online) R.string.friends_share_explain_online else R.string.friends_share_explain),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
@@ -181,7 +192,15 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
                 }
             }
             items(friends, key = { it.friend.id }) { friend ->
-                FriendCard(friend, onClick = { onOpenFriend(friend.friend.id) }, onRemove = { container.launch { container.social.deleteFriend(friend.friend.id) } })
+                FriendCard(
+                    friend,
+                    onClick = { onOpenFriend(friend.friend.id) },
+                    onRemove = {
+                        container.launch {
+                            if (!container.server.removeFriend(friend.friend.id)) Toast.makeText(context, R.string.server_error_network, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                )
             }
         }
     }
@@ -198,7 +217,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
 }
 
 @Composable
-private fun ToggleRow(title: String, hint: String, checked: Boolean, tag: String, onChange: (Boolean) -> Unit) {
+fun ToggleRow(title: String, hint: String, checked: Boolean, tag: String, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
@@ -241,10 +260,18 @@ private fun FriendCard(item: FriendWithCount, onClick: () -> Unit, onRemove: () 
             Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(item.friend.name, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.friend.name, style = MaterialTheme.typography.titleMedium)
+                    if (item.friend.online) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Rounded.Cloud, contentDescription = stringResource(R.string.server_friend_online), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp).testTag("friendOnline"))
+                    }
+                }
                 Text(
-                    pluralStringResource(R.plurals.book_count, item.bookCount, item.bookCount) + " · " +
-                        stringResource(R.string.friends_shared_on, DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(item.friend.sharedAt))),
+                    pluralStringResource(R.plurals.book_count, item.bookCount, item.bookCount) +
+                        // A friend through the server is always up to date, a date says nothing there.
+                        if (item.friend.online || item.friend.sharedAt <= 0) "" else " · " +
+                            stringResource(R.string.friends_shared_on, DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(item.friend.sharedAt))),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

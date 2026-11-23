@@ -2,6 +2,7 @@ package ch.schmidtbit.shelfmark.ui
 
 import android.content.Context
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,6 +14,7 @@ import ch.schmidtbit.shelfmark.data.importer.ImportPlan
 import ch.schmidtbit.shelfmark.data.importer.LegacyImporter
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
+import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
@@ -109,17 +111,48 @@ class ImportController(private val container: AppContainer, private val context:
         ShareFiles.send(context, uri, subject, message, context.getString(R.string.share_chooser))
     }
 
-    /** Answers a borrow request and hands the answer file to the share sheet. */
+    /**
+     * Gets [envelope] to a friend: through the server when the friend is connected there,
+     * otherwise as a file through the share sheet.
+     */
+    fun deliver(peerId: String, envelope: Envelope, baseName: String, subject: String, message: String) {
+        container.launch { deliverNow(peerId, envelope, baseName, subject, message) }
+    }
+
+    private suspend fun deliverNow(peerId: String, envelope: Envelope, baseName: String, subject: String, message: String) {
+        if (container.server.canReach(peerId)) {
+            val sent = container.server.send(peerId, envelope)
+            Toast.makeText(context, context.getString(if (sent) R.string.server_sent else R.string.server_queued), Toast.LENGTH_LONG).show()
+        } else {
+            share(envelope, baseName, subject, message)
+        }
+    }
+
+    /** Answers a borrow request and gets the answer to the friend who asked. */
     fun answer(requestId: String, accept: Boolean) {
         container.launch {
             val envelope = container.social.answerRequest(requestId, accept) ?: return@launch
             val title = envelope.answer?.bookTitle.orEmpty()
-            share(
+            deliverNow(
+                envelope.answer?.toId.orEmpty(),
                 envelope,
                 baseName = context.getString(R.string.share_answer_file, title),
                 subject = context.getString(R.string.share_answer_subject, title),
                 message = context.getString(if (accept) R.string.share_answer_yes else R.string.share_answer_no, title),
             )
+        }
+    }
+
+    /**
+     * Looks whether friends wrote. With the app open, a new request or answer is shown
+     * right away, the same way as when its file is opened.
+     */
+    fun refresh(force: Boolean = false) {
+        container.launch {
+            val news = container.refreshFriends(force) as? SyncResult.Done ?: return@launch
+            if (outcome != null) return@launch
+            val first: ImportResult? = news.requests.firstOrNull() ?: news.answers.firstOrNull()
+            if (first != null) outcome = ImportOutcome.Done(first)
         }
     }
 }

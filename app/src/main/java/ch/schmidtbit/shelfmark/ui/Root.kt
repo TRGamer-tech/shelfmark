@@ -84,6 +84,8 @@ import ch.schmidtbit.shelfmark.ui.friends.RequestsScreen
 import ch.schmidtbit.shelfmark.ui.library.LibraryScreen
 import ch.schmidtbit.shelfmark.ui.library.LibraryViewModel
 import ch.schmidtbit.shelfmark.ui.lists.ListsScreen
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import ch.schmidtbit.shelfmark.work.Notifier
 import ch.schmidtbit.shelfmark.ui.nav.BookRoute
 import ch.schmidtbit.shelfmark.ui.nav.CalendarRoute
 import ch.schmidtbit.shelfmark.ui.nav.MilestonesRoute
@@ -265,6 +267,12 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
 
     ImportDialogs(nav)
 
+    // Every time the app comes to the front it looks whether friends wrote.
+    LifecycleResumeEffect(Unit) {
+        importer.refresh()
+        onPauseOrDispose { }
+    }
+
     // Files and text that other apps hand to Shelfmark. The work runs in the app scope:
     // clearing the slot restarts this effect, and that must not cancel a running import.
     val intent by incoming.collectAsState()
@@ -276,6 +284,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             nav.navigate(QuoteRoute())
         }
         when (received.action) {
+            Notifier.ACTION_OPEN_REQUESTS -> nav.navigate(RequestsRoute)
             Intent.ACTION_VIEW -> received.data?.let(importer::open)
             Intent.ACTION_SEND -> {
                 val stream = IntentCompat.getParcelableExtra(received, Intent.EXTRA_STREAM, Uri::class.java)

@@ -89,7 +89,8 @@ class FakeServer : HttpPoster {
     private fun refuse(reason: String): Nothing = throw Refusal(reason)
     private class Refusal(val reason: String) : Exception()
 
-    private fun newCode(): String = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".let { a -> (++codes).toString(32).padStart(10, '2').map { a[it.digitToInt(32)] }.joinToString("") }
+    /** Looks random, but is the same in every run. */
+    private fun newCode(): String = java.util.Random(7L + ++codes).let { random -> (1..10).map { "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[random.nextInt(32)] }.joinToString("") }
 
     override suspend fun post(url: String, headers: Map<String, String>, body: String): HttpAnswer {
         if (offline) throw IOException("no connection")

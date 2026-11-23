@@ -245,7 +245,8 @@ private fun FriendBookSheet(friend: Friend, book: FriendBook, request: LendReque
                         onClick = {
                             container.launch {
                                 val envelope = container.social.createRequest(book, note)
-                                importer.share(
+                                importer.deliver(
+                                    book.friendId,
                                     envelope,
                                     baseName = context.getString(R.string.share_request_file, book.title),
                                     subject = context.getString(R.string.share_request_subject, book.title),

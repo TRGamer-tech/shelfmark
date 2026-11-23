@@ -42,6 +42,16 @@ object ShareFiles {
         context.startActivity(chooser)
     }
 
+    /** Opens the share sheet with nothing but [text], e.g. a friend code. */
+    fun sendText(context: Context, text: String, chooserTitle: String) {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+        val self = context.packageManager.getLaunchIntentForPackage(context.packageName)?.component
+        val chooser = Intent.createChooser(send, chooserTitle)
+        if (self != null) chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(self))
+        if (context !is Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    }
+
     /** Reads an incoming file. Returns null if it cannot be read or is unreasonably large. */
     fun readBytes(context: Context, uri: Uri): ByteArray? = runCatching {
         context.contentResolver.openInputStream(uri)?.use { input ->

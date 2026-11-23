@@ -34,6 +34,9 @@ import ch.schmidtbit.shelfmark.data.remote.BookLookup
 import ch.schmidtbit.shelfmark.data.remote.BookSource
 import ch.schmidtbit.shelfmark.data.remote.ImageProbe
 import ch.schmidtbit.shelfmark.data.remote.RemoteBook
+import ch.schmidtbit.shelfmark.data.repo.SyncResult
+import ch.schmidtbit.shelfmark.data.server.ServerConfig
+import ch.schmidtbit.shelfmark.work.Notifier
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
@@ -99,6 +102,26 @@ class AppFlowTest {
     private lateinit var container: AppContainer
     private var scenario: ActivityScenario<MainActivity>? = null
 
+    private val fakeServer = FakeServer()
+    private val serverConfig = ServerConfig("https://example.supabase.co", "sb_publishable_test")
+
+    /** Rebuilds the app's container with a server to talk to. Call before [start]. */
+    private fun useServer() {
+        container.database.close()
+        container = AppContainer(
+            context = app,
+            database = AppDatabase.inMemory(app),
+            lookupOverride = BookLookup(listOf(FakeCatalogue)),
+            settingsStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "online.preferences_pb") },
+            coverProbeOverride = ImageProbe { false },
+            serverConfig = serverConfig,
+            serverPoster = fakeServer,
+        )
+        app.container = container
+        // Asking for the permission would open a system dialog that nobody answers here.
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     @Before fun setUp() {
         FakeCatalogue.queries.clear()
         // FileProvider remembers the cache directory of the first test in a static map,
@@ -113,6 +136,8 @@ class AppFlowTest {
             settingsStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "ui.preferences_pb") },
             // No picture is ever "found" online, so adding a book does not start to download anything.
             coverProbeOverride = ImageProbe { false },
+            // No server unless a test asks for one with useServer().
+            serverConfig = null,
         )
         app.container = container
         // The clock is advanced by hand in waitFor, so an endless animation (a blinking
@@ -704,5 +729,131 @@ class AppFlowTest {
         assertEquals("9780441172719", book("Dune").isbn)
         assertEquals(ReadingStatus.WISHLIST, book("Der Vorleser").status)
         assertEquals(setOf("favorites", "sci-fi"), runBlocking { container.library.shelves.first() }.map { it.name }.toSet())
+    }
+
+    @Test fun friendsFindEachOtherThroughTheServer() {
+        useServer()
+        runBlocking {
+            container.settings.setProfileName("Ben")
+            container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+        }
+        // Asked before the app runs: once it does, saving a setting from here would block
+        // the very thread the app needs to save its own.
+        val myId = runBlocking { container.settings.ensureUserId() }
+        // Anna is on another phone, connected to the same server.
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", status = ReadingStatus.READ, rating = 4.5f, review = "Ganz wunderbar.", lendable = true))
+            anna.server.connect()
+        }
+        try {
+            start()
+            // Opening the app checks in with the server, connected or not.
+            waitFor { fakeServer.calls["shelfmark_ping"] == 1 }
+            assertTrue(!fakeServer.knows(myId))
+
+            tap("tabFriends")
+            waitForTag("onlineCard")
+            waitForText("Einmal verbinden")
+            shot("83_friends_offer")
+            tap("connectOnline")
+            waitForTag("friendCode")
+            // The code shows as soon as the server knows me. The first exchange runs a moment longer.
+            waitFor { !container.server.status.value.running && runBlocking { container.settings.current() }.lastSyncAt > 0 }
+            val myCode = runBlocking { container.settings.current() }.friendCode
+            assertEquals(10, myCode.length)
+            waitForText(myCode.chunked(5).joinToString("-"))
+            assertTrue(fakeServer.knows(myId))
+            shot("84_friends_connected")
+
+            // Anna types in my code. I do nothing but look again.
+            assertEquals("Ben", runBlocking { anna.server.addFriend(myCode) }.getOrThrow())
+            tap("syncNow")
+            waitFor { runBlocking { container.social.friends.first() }.firstOrNull()?.friend?.online == true }
+            scrollListTo("friends", "friendCard")
+            // The little cloud is part of the card, which reads as one thing to a screen reader.
+            waitFor { compose.onAllNodesWithTag("friendOnline", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+            waitForText("Anna")
+            shot("85_friend_online")
+
+            // Her shelf is there, and asking for a book needs no messenger.
+            tap("friendCard")
+            waitForText("Ausleihbar")
+            openBook("Emma")
+            waitForTag("friendBookSheet")
+            waitForText("Ganz wunderbar.")
+            clearShared()
+            tap("askToBorrow")
+            waitFor { fakeServer.waitingFor(anna.id) == 1 }
+            assertTrue(File(app.cacheDir, "shared").listFiles().isNullOrEmpty())
+            waitFor { org.robolectric.shadows.ShadowToast.getTextOfLatestToast() == "Gesendet" }
+
+            // Anna says yes on her phone, and the answer shows up here by itself.
+            val asked = runBlocking { anna.server.sync() } as SyncResult.Done
+            assertEquals("Ben", asked.requests.single().fromName)
+            runBlocking { anna.server.send(myId, anna.social.answerRequest(asked.requests.single().requestId, accept = true)!!) }
+            scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            settle()
+            // Not runBlocking: the app may be in the middle of a sync of its own, which needs this very thread to go on.
+            container.launch { container.refreshFriends(force = true) }
+            waitFor { runBlocking { container.social.requests.first() }.singleOrNull()?.status == LendStatus.ACCEPTED }
+            // Once it has arrived, the server is told and drops its copy.
+            waitFor { fakeServer.waitingFor(myId) == 0 }
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun aFriendIsAddedByCode() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            container.settings.setProfileName("Ben")
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.server.connect()
+            container.server.connect()
+        }
+        try {
+            start()
+            tap("tabFriends")
+            scrollTo("addFriend")
+            tap("addFriend")
+            // A code nobody has is answered in plain words, and the dialog stays.
+            type("friendCodeField", "zzzzz-zzzzz")
+            tap("friendCodeAdd")
+            waitForTag("friendCodeProblem")
+            waitForText("Diesen Code hat niemand")
+            retype("friendCodeField", anna.settings.let { runBlocking { it.current() } }.friendCode.lowercase())
+            tap("friendCodeAdd")
+            // The friend row appears first, the mark that it came through the server a moment later.
+            waitFor { runBlocking { container.social.friends.first() }.singleOrNull()?.friend?.online == true }
+            val friend = runBlocking { container.social.friends.first() }.single()
+            assertEquals("Anna", friend.friend.name)
+            assertTrue(friend.friend.online)
+            assertEquals(1, friend.bookCount)
+            waitFor { org.robolectric.shadows.ShadowToast.getTextOfLatestToast() == "Du und Anna seid jetzt befreundet" }
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun aRequestThatArrivesInTheBackgroundIsAnnounced() {
+        val manager = app.getSystemService(android.app.NotificationManager::class.java)
+        val news = SyncResult.Done(
+            requests = listOf(ImportResult.RequestReceived("r1", "Anna", "Dune")),
+            answers = listOf(ImportResult.AnswerReceived(true, "Clara", "Emma")),
+        )
+        // Without the permission nothing is shown, and nothing breaks.
+        assertEquals(0, Notifier.announce(app, news))
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        assertEquals(2, Notifier.announce(app, news))
+        val shown = shadowOf(manager).allNotifications.map { shadowOf(it).contentTitle.toString() to shadowOf(it).contentText.toString() }.toSet()
+        assertEquals(setOf("Anna möchte ein Buch ausleihen" to "Dune", "Clara hat Ja gesagt" to "Emma"), shown)
+        assertEquals(0, Notifier.announce(app, SyncResult.Done()))
+
+        // Tapping the notification leads to the requests.
+        start(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_REQUESTS))
+        waitForText("Noch keine Ausleih-Anfragen")
     }
 }

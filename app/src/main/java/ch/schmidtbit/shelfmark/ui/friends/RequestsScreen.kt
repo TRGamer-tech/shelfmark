@@ -81,7 +81,8 @@ fun RequestsScreen(onBack: () -> Unit) {
                     onAction = {
                         container.launch {
                             val envelope = container.social.requestEnvelope(request.id) ?: return@launch
-                            importer.share(
+                            importer.deliver(
+                                request.peerId,
                                 envelope,
                                 baseName = context.getString(R.string.share_request_file, request.bookTitle),
                                 subject = context.getString(R.string.share_request_subject, request.bookTitle),

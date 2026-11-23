@@ -20,6 +20,7 @@ import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import ch.schmidtbit.shelfmark.data.repo.CoverStore
 import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
 import ch.schmidtbit.shelfmark.data.repo.ServerSync
+import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.server.HttpPoster
 import ch.schmidtbit.shelfmark.data.server.OkHttpPoster
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
@@ -96,6 +97,19 @@ class AppContainer(
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
+
+    private var lastRefresh = 0L
+
+    /**
+     * Looks for news from friends and does the daily check-in. Called whenever the app comes
+     * to the front, so it holds back when it ran a moment ago, unless [force] is set.
+     */
+    suspend fun refreshFriends(force: Boolean = false): SyncResult {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && lastRefresh != 0L && now - lastRefresh < 120_000) return SyncResult.Off
+        lastRefresh = now
+        return server.dailyCheck()
+    }
 
     /** How far the search for missing covers has come: (books checked, books to check), or null when idle. */
     val coverJob = MutableStateFlow<Pair<Int, Int>?>(null)

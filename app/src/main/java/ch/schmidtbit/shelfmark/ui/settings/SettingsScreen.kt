@@ -50,6 +50,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.schmidtbit.shelfmark.BuildConfig
+import ch.schmidtbit.shelfmark.ui.friends.DisconnectDialog
+import ch.schmidtbit.shelfmark.ui.friends.ToggleRow
+import ch.schmidtbit.shelfmark.work.DailyCheckWorker
+import androidx.compose.foundation.layout.Row
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.Settings
@@ -109,6 +113,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ThemePicker(settings.theme, settings.customThemes, onEdit = { editingTheme = it; themeEditorOpen = true }) { key -> container.launch { container.settings.setTheme(key) } }
                 TextButton(onClick = { editingTheme = null; themeEditorOpen = true }, modifier = Modifier.testTag("newTheme")) { Text(stringResource(R.string.theme_new)) }
             }
+            SectionCard(stringResource(R.string.settings_motion)) {
+                ToggleRow(stringResource(R.string.settings_motion_switch), stringResource(R.string.settings_motion_hint), settings.motion, "motion") {
+                    container.launch { container.settings.setMotion(it) }
+                }
+            }
             SectionCard(stringResource(R.string.settings_speed)) {
                 Text(stringResource(R.string.settings_speed_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
@@ -126,6 +135,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     container.settings.setGoogleBooksKey(it)
                 }
             }
+            ServerSection(settings)
             SectionCard(stringResource(R.string.settings_backup)) {
                 Text(stringResource(R.string.settings_backup_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
@@ -176,6 +186,66 @@ private fun ThemeEditorHost(open: Boolean, theme: CustomTheme?, onClose: () -> U
         },
         onDelete = theme?.let { existing -> { onClose(); container.launch { container.settings.deleteCustomTheme(existing.id) } } },
     )
+}
+
+/** Which server the app talks to for friends, and the way out of it. */
+@Composable
+private fun ServerSection(settings: Settings) {
+    val container = LocalContainer.current
+    val context = LocalContext.current
+    var own by remember { mutableStateOf(false) }
+    var url by remember(settings.serverUrl) { mutableStateOf(settings.serverUrl) }
+    var key by remember(settings.serverKey) { mutableStateOf(settings.serverKey) }
+    var leaving by remember { mutableStateOf(false) }
+    val custom = settings.serverUrl.isNotBlank() && settings.serverKey.isNotBlank()
+    SectionCard(stringResource(R.string.settings_server), Modifier.testTag("serverSection")) {
+        Text(
+            when {
+                custom -> stringResource(R.string.settings_server_custom, settings.serverUrl.removePrefix("https://").removePrefix("http://"))
+                container.server.hasBuiltIn -> stringResource(R.string.settings_server_builtin)
+                else -> stringResource(R.string.settings_server_none)
+            },
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        if (custom || container.server.hasBuiltIn) {
+            Text(stringResource(R.string.settings_server_daily), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (settings.online) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = { leaving = true }, modifier = Modifier.fillMaxWidth().testTag("disconnectServer")) { Text(stringResource(R.string.server_disconnect)) }
+        }
+        TextButton(onClick = { own = !own }, modifier = Modifier.testTag("ownServer")) { Text(stringResource(R.string.settings_server_own)) }
+        if (own) {
+            Text(stringResource(R.string.settings_server_own_text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(url, { url = it.trim() }, label = { Text(stringResource(R.string.settings_server_url)) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("serverUrl"))
+            OutlinedTextField(key, { key = it.trim() }, label = { Text(stringResource(R.string.settings_server_key)) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("serverKey"))
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = (url.isBlank() && key.isBlank()) || (url.startsWith("http") && key.isNotBlank()),
+                    onClick = {
+                        own = false
+                        container.launch {
+                            // The profile on the server that is left behind is removed first.
+                            if (settings.online) container.server.disconnect()
+                            container.settings.setServer(url, key)
+                            if (url.isNotBlank()) runCatching { DailyCheckWorker.schedule(context) }
+                        }
+                    },
+                    modifier = Modifier.testTag("serverSave"),
+                ) { Text(stringResource(R.string.action_save)) }
+                if (custom) {
+                    OutlinedButton(onClick = {
+                        own = false
+                        container.launch {
+                            if (settings.online) container.server.disconnect()
+                            container.settings.setServer("", "")
+                        }
+                    }) { Text(stringResource(R.string.settings_server_reset)) }
+                }
+            }
+        }
+    }
+    if (leaving) DisconnectDialog(onDismiss = { leaving = false })
 }
 
 @Composable
