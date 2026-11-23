@@ -1,11 +1,11 @@
-# Builds the app and publishes both APKs as a GitHub release.
+# Builds the app and publishes the debug APK as a GitHub release.
 #
 # Two ways to start it:
 #   - Actions > Release > Run workflow (on main). The version is read from
 #     app/build.gradle.kts, the tag v<versionName> is created with the release.
 #   - Pushing a tag like v1.2.0. It has to match versionName.
 #
-# Both APKs are signed with the project's own key, which lives in two repository
+# The APK is signed with the project's own key, which lives in two repository
 # secrets (Settings > Secrets and variables > Actions) and nowhere in the repository:
 #
 #   SHELFMARK_KEYSTORE_BASE64    the keystore file, base64 encoded
@@ -36,8 +36,6 @@ jobs:
 
       - name: Version
         id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           NAME="$(sed -n 's/^ *versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
           if [ -z "$NAME" ]; then
@@ -51,7 +49,9 @@ jobs:
           fi
           # A version is published once. Building other code under the same number would
           # leave people with two different apps that both call themselves the same.
-          EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2> /dev/null || true)"
+          # Asked from git itself: no output means there is no such tag yet. For an annotated
+          # tag the second line names the commit it points to.
+          EXISTING="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f 1)"
           if [ -n "$EXISTING" ] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
             echo "::error::$TAG exists already and points to another commit. Raise versionName and versionCode in app/build.gradle.kts first."
             exit 1
@@ -82,17 +82,21 @@ jobs:
 
       - name: Android SDK
         run: |
+          # The runner's SDK tools can be older than the platform this app is built against,
+          # so they update themselves first. Nothing here may stop the run: with the licences
+          # accepted, the build fetches whatever is still missing by itself.
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
-          # With the licences accepted the build fetches what is still missing by itself,
-          # so a hiccup here is no reason to stop.
+          "$SDKMANAGER" "cmdline-tools;latest" > /dev/null || true
+          SDKMANAGER="$(ls -d "$ANDROID_HOME"/cmdline-tools/latest*/bin/sdkmanager | sort -V | tail -n 1)"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-37.2" "build-tools;37.0.0" || echo "::notice::sdkmanager could not preinstall the SDK packages, the build will fetch them."
 
       - name: Build
         env:
           SHELFMARK_KEYSTORE_FILE: ${{ runner.temp }}/shelfmark.jks
           SHELFMARK_KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
-        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
+        run: ./gradlew --no-daemon :app:assembleDebug
 
       - name: Publish
         env:
@@ -101,8 +105,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.name }}
         run: |
           mkdir -p dist
+          # Only the debug build is published for now. The optimised build
+          # (:app:assembleRelease) joins it once the app is ready for a real release.
           cp app/build/outputs/apk/debug/app-debug.apk "dist/Shelfmark-$VERSION-debug.apk"
-          cp app/build/outputs/apk/release/app-release.apk "dist/Shelfmark-$VERSION.apk"
           # Refuse to publish anything that does not carry the project's signature.
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
           for apk in dist/*.apk; do
