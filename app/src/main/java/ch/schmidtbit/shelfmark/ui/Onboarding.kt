@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,17 +39,33 @@ import androidx.compose.ui.unit.dp
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.SampleBooks
 import ch.schmidtbit.shelfmark.data.repo.Settings
+import ch.schmidtbit.shelfmark.data.repo.SyncResult
+import ch.schmidtbit.shelfmark.ui.friends.AccountForm
 import ch.schmidtbit.shelfmark.ui.settings.SpeedChips
 import ch.schmidtbit.shelfmark.ui.settings.ThemePicker
 import ch.schmidtbit.shelfmark.util.Dates
 
-/** Three short pages on first start: who you are, how it should look, how to begin. */
+/**
+ * Three short pages on first start: the account, who you are and how it should look, how
+ * to begin. Somebody who signs in to an account that is lived in already has answered the
+ * other two long ago, on another device or on the website, and goes straight to the shelf.
+ */
 @Composable
 fun Onboarding(settings: Settings) {
     val container = LocalContainer.current
     val importer = LocalImporter.current
     var page by rememberSaveable { mutableIntStateOf(0) }
-    var name by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf(settings.profileName) }
+    // A build without a server has no accounts to offer.
+    val accounts = container.server.available
+    // The name of the account arrives with the sign-in. What was typed here already stays.
+    LaunchedEffect(settings.profileName) { if (name.isBlank()) name = settings.profileName }
+
+    fun signedIn(result: SyncResult) = container.launch {
+        val livedIn = container.library.allBooks().isNotEmpty() || container.settings.current().profileName.isNotBlank()
+        // "Which library counts?" is asked on the main screen.
+        if (livedIn || result is SyncResult.Choose) container.settings.setOnboarded() else page = 1
+    }
     val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             importer.open(uri)
@@ -76,17 +93,31 @@ fun Onboarding(settings: Settings) {
                 Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displaySmall)
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.onboarding_tagline), style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(28.dp))
+                if (accounts) {
+                    Spacer(Modifier.height(24.dp))
+                    if (settings.signedIn) {
+                        Text(stringResource(R.string.account_signed_in_as, settings.accountEmail), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.testTag("onboardingSignedIn"))
+                    } else {
+                        Text(stringResource(R.string.onboarding_account), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(12.dp))
+                        AccountForm(onSignedIn = { signedIn(it) })
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { page = 1 }, modifier = Modifier.testTag("onboardingNoAccount")) { Text(stringResource(R.string.onboarding_no_account)) }
+                        Text(stringResource(R.string.onboarding_no_account_hint), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+            }
+            1 -> {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(40) },
                     label = { Text(stringResource(R.string.settings_profile_name)) },
                     supportingText = { Text(stringResource(R.string.settings_profile_hint)) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("onboardingName"),
                 )
-            }
-            1 -> {
+                Spacer(Modifier.height(24.dp))
                 Text(stringResource(R.string.onboarding_look), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(20.dp))
                 ThemePicker(settings.theme, settings.customThemes) { key -> container.launch { container.settings.setTheme(key) } }
@@ -110,7 +141,9 @@ fun Onboarding(settings: Settings) {
       }
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = { page-- }, enabled = page > 0) { Text(stringResource(R.string.action_back)) }
-            if (page < 2) Button(onClick = { page++ }, modifier = Modifier.testTag("onboardingNext")) { Text(stringResource(R.string.action_next)) }
+            // On the first page the way on is to sign in, or to say that it should go without.
+            val choosing = page == 0 && accounts && !settings.signedIn
+            if (page < 2 && !choosing) Button(onClick = { page++ }, modifier = Modifier.testTag("onboardingNext")) { Text(stringResource(R.string.action_next)) }
         }
     }
 }

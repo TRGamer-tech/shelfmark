@@ -98,9 +98,10 @@ fun displayCode(code: String): String = code.chunked(5).joinToString("-")
 /**
  * E-mail and password, to sign in or to make an account. One account is what puts the same
  * library on every phone and on the website, and what friends are connected to.
+ * [onSignedIn] hears about it once somebody is in, with what the first exchange brought.
  */
 @Composable
-fun AccountForm() {
+fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
     val container = LocalContainer.current
     val context = LocalContext.current
     var email by rememberSaveable { mutableStateOf("") }
@@ -123,6 +124,7 @@ fun AccountForm() {
                 if (Build.VERSION.SDK_INT >= 33 && !Notifier.allowed(context)) {
                     runCatching { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
                 }
+                onSignedIn?.invoke(result)
             }
         }
     }

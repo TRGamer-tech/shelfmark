@@ -915,6 +915,90 @@ class AppFlowTest {
         }
     }
 
+    @Test fun theFirstStartAsksForAnAccountAndANewOneGoesOnToTheRest() {
+        useServer()
+        start(onboarded = false)
+        waitForTag("onboarding")
+        // The way on is to sign in, or to say that it should go without.
+        waitForTag("accountEmail")
+        waitForText("Ohne Konto weiter")
+        assertTrue(compose.onAllNodesWithTag("onboardingNext").fetchSemanticsNodes().isEmpty())
+        shot("04_onboarding_account")
+        type("accountEmail", benEmail)
+        type("accountPassword", benPassword)
+        tap("signUp")
+        // A new account has nothing in it yet: name and looks come next.
+        waitForTag("onboardingName")
+        waitFor { runBlocking { container.settings.current() }.signedIn }
+        assertTrue(fakeServer.hasAccount(benEmail))
+        assertTrue(!runBlocking { container.settings.current() }.onboarded)
+        type("onboardingName", "Ben")
+        waitForText("Wie soll es aussehen?")
+        tap("onboardingNext")
+        tap("startEmpty")
+        waitForText("Dein Regal ist noch leer")
+        val settings = runBlocking { container.settings.current() }
+        assertTrue(settings.onboarded)
+        assertEquals(benEmail, settings.accountEmail)
+        assertEquals("Ben", settings.profileName)
+        // The account knows the library of this phone, and its owner by name.
+        waitFor(20_000) { fakeServer.revisionOf(benEmail) > 0 && fakeServer.knows(benEmail) }
+    }
+
+    @Test fun signingInOnTheFirstStartBringsTheLibraryAndSkipsTheRest() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen"))
+            anna.settings.setTheme("ember")
+            anna.join()
+        }
+        try {
+            start(onboarded = false)
+            waitForTag("onboarding")
+            type("accountEmail", anna.email)
+            type("accountPassword", anna.password)
+            tap("signIn")
+            // Name, looks and books are on the account already. Nothing more to ask.
+            waitFor { runBlocking { container.settings.current() }.onboarded }
+            waitFor { books().size == 2 }
+            waitForTag("greeting")
+            waitForText("Emma")
+            val settings = runBlocking { container.settings.current() }
+            assertEquals("Anna", settings.profileName)
+            assertEquals("ember", settings.theme)
+            assertEquals(anna.email, settings.accountEmail)
+            assertTrue(compose.onAllNodesWithTag("chooseLibrary").fetchSemanticsNodes().isEmpty())
+            shot("05_onboarding_signed_in_shelf")
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun theFirstStartAlsoGoesWithoutAnAccount() {
+        useServer()
+        start(onboarded = false)
+        waitForTag("onboarding")
+        tap("onboardingNoAccount")
+        waitForTag("onboardingName")
+        // Back on the first page the choice is still open.
+        tapText("Zurück")
+        waitForTag("accountEmail")
+        tap("onboardingNoAccount")
+        waitForText("Wie soll es aussehen?")
+        tap("onboardingNext")
+        tap("startSamples")
+        waitFor { books().size == 10 }
+        waitFor { runBlocking { container.settings.current() }.onboarded }
+        val settings = runBlocking { container.settings.current() }
+        assertTrue(!settings.signedIn)
+        assertEquals(0, fakeServer.calls["signup"] ?: 0)
+        // The account is still on offer, where it always was.
+        tap("tabFriends")
+        waitForTag("accountCard")
+    }
+
     @Test fun aRequestThatArrivesInTheBackgroundIsAnnounced() {
         val manager = app.getSystemService(android.app.NotificationManager::class.java)
         val news = SyncResult.Done(

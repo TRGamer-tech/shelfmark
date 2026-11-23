@@ -263,12 +263,15 @@
     <string name="notify_answer_yes">%1$s hat Ja gesagt</string>
     <string name="notify_channel">Freunde</string>
     <string name="notify_request_title">%1$s möchte ein Buch ausleihen</string>
+    <string name="onboarding_account">Melde dich an, und deine Bibliothek ist auf jedem Gerät und auf der Website dieselbe. Noch kein Konto? Gib eine E-Mail-Adresse und ein Passwort ein, und erstelle eines.</string>
     <string name="onboarding_look">Wie soll es aussehen?</string>
+    <string name="onboarding_no_account">Ohne Konto weiter</string>
+    <string name="onboarding_no_account_hint">Dann bleibt alles auf diesem Gerät. Anmelden kannst du dich später, in den Einstellungen.</string>
     <string name="onboarding_start">Wie möchtest du starten?</string>
     <string name="onboarding_start_empty">Mit leerem Regal starten</string>
     <string name="onboarding_start_import">Backup importieren</string>
     <string name="onboarding_start_samples">Mit Beispielbüchern umsehen</string>
-    <string name="onboarding_tagline">Deine Bücher, deine Regale, deine Zitate. Ohne Konto, alles bleibt auf deinem Gerät.</string>
+    <string name="onboarding_tagline">Deine Bücher, deine Regale, deine Zitate.</string>
     <string name="ornament_add">Etwas aufs Regal stellen</string>
     <string name="ornament_at_start">Am Anfang des Regals</string>
     <string name="ornament_bookend">Buchstütze</string>

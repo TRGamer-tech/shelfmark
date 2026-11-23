@@ -264,12 +264,15 @@
     <string name="notify_answer_yes">%1$s said yes</string>
     <string name="notify_channel">Friends</string>
     <string name="notify_request_title">%1$s would like to borrow a book</string>
+    <string name="onboarding_account">Sign in, and your library is the same on every phone and on the website. No account yet? Enter an e-mail address and a password, and create one.</string>
     <string name="onboarding_look">How should it look?</string>
+    <string name="onboarding_no_account">Continue without an account</string>
+    <string name="onboarding_no_account_hint">Everything then stays on this device. You can sign in later, in the settings.</string>
     <string name="onboarding_start">How do you want to start?</string>
     <string name="onboarding_start_empty">Start with an empty shelf</string>
     <string name="onboarding_start_import">Import a backup</string>
     <string name="onboarding_start_samples">Look around with sample books</string>
-    <string name="onboarding_tagline">Your books, your shelves, your quotes. No account, everything stays on your phone.</string>
+    <string name="onboarding_tagline">Your books, your shelves, your quotes.</string>
     <string name="ornament_add">Put something on the shelf</string>
     <string name="ornament_at_start">At the start of the shelf</string>
     <string name="ornament_bookend">Bookend</string>

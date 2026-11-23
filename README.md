@@ -1,9 +1,10 @@
 # Shelfmark
 
 A personal library and reading tracker that tries to feel like a real bookshelf: an Android
-app, and a website that shows the same shelf in a browser. No ads. An account is optional:
-without one your books simply stay on your phone. The interface is available in English and
-German.
+app, and a website that shows the same shelf in a browser. No ads. The app asks you to sign
+in when it is first opened, because one account is what puts the same shelf on every device.
+It also works without one: then your books simply stay on your phone. The interface is
+available in English and German.
 
 - `app/`: the Android app (Kotlin, Jetpack Compose). It can import the library file of the
   older desktop Shelfmark.
@@ -17,7 +18,7 @@ German.
   <img src="docs/screenshots/95_shelf_ember_theme.png" width="23%" alt="Dark theme">
 </p>
 <p>
-  <img src="docs/screenshots/85_friend_online.png" width="23%" alt="Friends through the server">
+  <img src="docs/screenshots/04_onboarding_account.png" width="23%" alt="First start: sign in or create an account">
   <img src="docs/screenshots/97_calendar_day.png" width="23%" alt="Reading calendar">
   <img src="docs/screenshots/98_recap_month.png" width="23%" alt="Monthly recap">
   <img src="docs/screenshots/100_milestones.png" width="23%" alt="Milestones">
@@ -76,15 +77,19 @@ German.
 
 **One library, everywhere**
 
-- Sign in with e-mail and password, and your library is kept in step with your account: a
-  change made on the website or on another phone arrives by itself, a change made here goes
-  there a few seconds later.
+- Sign in with e-mail and password, right when the app is first opened or later in the
+  settings, and your library is kept in step with your account: a change made on the website
+  or on another phone arrives by itself, a change made here goes there a few seconds later.
+- Signing in on a new phone brings the whole library with it, name and looks included, so
+  there is nothing to set up twice.
 - The shelf looks the same on every device: lists, ornaments, the theme and your own themes,
   the view, the sort order and the movement switch belong to the account. A cover you
   photographed is uploaded, so it shows everywhere too.
 - When two devices changed things while the other was not looking, both sets of changes are
   kept, book by book.
-- The same library in a browser, on the website, with the same sign-in.
+- The same library in a browser, on the website, with the same sign-in. The website does
+  what the app does, except for the two things that need the camera of a phone: scanning a
+  barcode and reading a quote off a page.
 
 **Friends**
 
@@ -128,8 +133,9 @@ the three parts is written down in [`supabase/README.md`](supabase/README.md).
    a new account has to open a link in a mail first, and the mail service that comes with
    Supabase sends very few mails, and only to members of your own Supabase organisation.
    The apps cope with either setting.
-4. **Authentication > URL Configuration**: set **Site URL** to the address of the website.
-   The link in a "forgot the password" mail leads there.
+4. **Authentication > URL Configuration**: set **Site URL** to the address of the website,
+   and add `https://<your site>/reset` under **Redirect URLs**. The link in a "forgot the
+   password" mail leads there.
 5. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
    the **publishable key** (the public one, `sb_publishable_...`, never the secret one), and
    give both to the app and to the website, see [Build](#build) and [The website](#the-website).
@@ -185,7 +191,10 @@ else.
    sets them for you (older setups get `NEXT_PUBLIC_SUPABASE_ANON_KEY` instead, which works
    as well).
 4. Deploy. Then put the address Vercel gave the site (`https://<name>.vercel.app`, or your own
-   domain) into Supabase as the **Site URL** (step 4 above).
+   domain) into Supabase as the **Site URL**, and the same address followed by `/reset` as a
+   **Redirect URL** (step 4 above).
+5. Optional: add that address to this repository as the secret `SHELFMARK_WEBSITE_URL`, and
+   the app shows a link to the website in its settings from the next release on.
 
 Every push to `main` deploys the website again. The scheduled daily check is set up by
 `web/vercel.json` and needs nothing from you.
