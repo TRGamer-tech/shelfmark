@@ -1,8 +1,12 @@
 # Builds the app and publishes the debug APK as a GitHub release.
 #
-# Two ways to start it:
-#   - Actions > Release > Run workflow (on main). The version is read from
-#     app/build.gradle.kts, the tag v<versionName> is created with the release.
+# It runs by itself whenever something is merged into main. The version is read from
+# app/build.gradle.kts, and the tag v<versionName> is created together with the release.
+# A version is published once: a merge that does not raise versionName (a change to the
+# documentation, say) builds nothing and says so.
+#
+# It can also be started by hand:
+#   - Actions > Release > Run workflow (on main).
 #   - Pushing a tag like v1.2.0. It has to match versionName.
 #
 # The APK is signed with the project's own key, which lives in two repository
@@ -25,6 +29,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -61,19 +66,28 @@ jobs:
           # tag the second line names the commit it points to.
           EXISTING="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f 1)"
           if [ -n "$EXISTING" ] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
+            if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
+              # An ordinary merge that left the version alone. Nothing to do, and nothing wrong.
+              echo "::notice::$TAG is published already, so this merge builds nothing. Raise versionName and versionCode in app/build.gradle.kts for a new release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::error::$TAG exists already and points to another commit. Raise versionName and versionCode in app/build.gradle.kts first."
             exit 1
           fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Building $TAG from $GITHUB_SHA"
 
       - uses: actions/setup-java@v5
+        if: steps.version.outputs.release == 'true'
         with:
           distribution: temurin
           java-version: 21
 
       - name: Signing key
+        if: steps.version.outputs.release == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.SHELFMARK_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
@@ -89,6 +103,7 @@ jobs:
           fi
 
       - name: Android SDK
+        if: steps.version.outputs.release == 'true'
         run: |
           # The runner's SDK tools can be older than the platform this app is built against,
           # so they update themselves first. Nothing here may stop the run: with the licences
@@ -101,6 +116,7 @@ jobs:
           "$SDKMANAGER" "platforms;android-37.2" "build-tools;37.0.0" || echo "::notice::sdkmanager could not preinstall the SDK packages, the build will fetch them."
 
       - name: Build
+        if: steps.version.outputs.release == 'true'
         env:
           SHELFMARK_KEYSTORE_FILE: ${{ runner.temp }}/shelfmark.jks
           SHELFMARK_KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
@@ -113,6 +129,7 @@ jobs:
           ./gradlew --no-daemon :app:assembleDebug
 
       - name: Publish
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}

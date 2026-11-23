@@ -192,11 +192,13 @@ or set `SHELFMARK_KEYSTORE_FILE` and `SHELFMARK_KEYSTORE_PASSWORD` in the enviro
 either, both builds are signed with the debug key of your machine: they work, but only update
 each other. Keep the keystore and the properties file private. They are listed in `.gitignore`.
 
-**Releases.** Raise `versionName` and `versionCode` in `app/build.gradle.kts`, then start the
-release workflow: **Actions > Release > Run workflow** on `main`. It builds the debug APK,
-creates the tag `v<versionName>` and publishes a GitHub release with the APK attached. Pushing
-such a tag yourself starts it too. It reads four repository secrets (Settings > Secrets and
-variables > Actions):
+**Releases.** Merging into `main` publishes a release by itself: the release workflow builds
+the debug APK, creates the tag `v<versionName>` and attaches the APK to a GitHub release. A
+version is published once, so raise `versionName` and `versionCode` in `app/build.gradle.kts`
+with every change to the app. A merge that leaves the version alone (documentation, say)
+builds nothing and says so in its run. The workflow can also be started by hand (**Actions >
+Release > Run workflow** on `main`) or by pushing such a tag. It reads four repository secrets
+(Settings > Secrets and variables > Actions):
 
 | Secret | What it is |
 | --- | --- |
