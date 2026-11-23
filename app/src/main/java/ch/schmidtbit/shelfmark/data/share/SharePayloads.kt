@@ -160,6 +160,12 @@ object ShareCodec {
 
     fun decodeElement(element: JsonElement): Envelope? = decode(element.toString())
 
+    /** The library as the document an account keeps on the server. Fields that have their default value are left out. */
+    fun encodeVault(payload: BackupPayload): JsonElement = json.encodeToJsonElement(BackupPayload.serializer(), payload)
+
+    /** Reads a vault document, also one written by a newer app or by the website. Null when it is not one. */
+    fun decodeVault(element: JsonElement): BackupPayload? = runCatching { json.decodeFromJsonElement(BackupPayload.serializer(), element) }.getOrNull()
+
     /** Returns null for anything that is not a Shelfmark file. */
     fun decode(text: String): Envelope? {
         val trimmed = text.trim().removePrefix("﻿")
