@@ -435,6 +435,29 @@ class PortedFeaturesTest {
         assertEquals(3, library.allBooks().size)
     }
 
+    @Test fun aBookTheFileNamesTwiceIsOneBookWithEverythingBothRowsKnow() = runBlocking {
+        val knownId = library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+        val csv = "title,author,pages,isbn,publisher\n" +
+            "Dune,Frank Herbert,896,,\n" +
+            "Dune,Frank Herbert,,9780441172719,Ace\n" +
+            "Momo,Michael Ende,304,,\n" +
+            "Momo,Michael Ende,,9783522202558,\n"
+        val plan = CsvImporter.parse(csv, UTC)!!
+        assertEquals(4, plan.books.size)
+        // One new book, and three rows about books that are known by then.
+        assertEquals(1 to 3, library.previewImport(plan))
+        // One book added, one completed: books are counted, not rows.
+        assertEquals(1 to 1, library.importBooks(plan))
+        val books = library.allBooks()
+        assertEquals(2, books.size)
+        val dune = books.first { it.id == knownId }
+        // What the first row added is still there after the second one.
+        assertEquals(896, dune.pageCount)
+        assertEquals("9780441172719", dune.isbn)
+        assertEquals("Ace", dune.publisher)
+        assertEquals(0 to 4, library.previewImport(plan))
+    }
+
     @Test fun aZipOfTablesIsSearchedForTheBooks() = runBlocking {
         val zip = ByteArrayOutputStream().also { bytes ->
             ZipOutputStream(bytes).use { out ->

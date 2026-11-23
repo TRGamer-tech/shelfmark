@@ -143,9 +143,16 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
 
     /** Counts how many books of [plan] are new and how many are in the library already. */
     suspend fun previewImport(plan: ImportPlan): Pair<Int, Int> {
-        val existing = db.books().all()
-        val known = plan.books.count { planned -> existing.any { CsvImporter.sameBook(it, planned.book) } }
-        return (plan.books.size - known) to known
+        // A book the file lists twice is new once, and known the second time.
+        val seen = db.books().all().toMutableList()
+        var fresh = 0
+        plan.books.forEach { planned ->
+            if (seen.none { CsvImporter.sameBook(it, planned.book) }) {
+                fresh++
+                seen += planned.book
+            }
+        }
+        return fresh to (plan.books.size - fresh)
     }
 
     /**
@@ -155,18 +162,25 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
     suspend fun importBooks(plan: ImportPlan): Pair<Int, Int> = db.withTransaction {
         val library = db.books().all().toMutableList()
         val lists = db.shelves().all().associate { it.name.lowercase() to it.id }.toMutableMap()
-        var added = 0
-        var completed = 0
+        val added = HashSet<Long>()
+        val completed = HashSet<Long>()
         plan.books.forEach { planned ->
-            val match = library.firstOrNull { CsvImporter.sameBook(it, planned.book) }
-            val bookId = if (match == null) {
-                added++
-                db.books().insert(planned.book.copy(id = Ids.next(), updatedAt = System.currentTimeMillis())).also { library += planned.book.copy(id = it) }
+            val at = library.indexOfFirst { CsvImporter.sameBook(it, planned.book) }
+            val bookId = if (at < 0) {
+                db.books().insert(planned.book.copy(id = Ids.next(), updatedAt = System.currentTimeMillis())).also {
+                    library += planned.book.copy(id = it)
+                    added += it
+                }
             } else {
+                val match = library[at]
                 val filled = CsvImporter.fillGaps(match, planned.book)
                 if (filled != match) {
-                    completed++
+                    // "Completed" are books that were here before, not ones this file just brought.
+                    if (match.id !in added) completed += match.id
                     db.books().update(filled.copy(updatedAt = System.currentTimeMillis()))
+                    // A file can name the same book twice. The second row goes on from here,
+                    // not from the book as it was before the first one.
+                    library[at] = filled
                 }
                 match.id
             }
@@ -175,7 +189,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
                 db.shelves().link(BookShelf(bookId, listId))
             }
         }
-        added to completed
+        added.size to completed.size
     }
 
     /** Books that have neither an online cover nor one of their own. */
