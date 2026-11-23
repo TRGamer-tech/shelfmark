@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.SampleBooks
@@ -872,6 +873,33 @@ class AppFlowTest {
         waitFor { runBlocking { container.settings.current() }.signedIn }
         // Asking for a new password needs nothing but the address.
         waitFor { fakeServer.calls["signup"] == 1 }
+    }
+
+    @Test fun comingBackFromTheConfirmationMailSignsInWithoutAnotherTap() {
+        useServer()
+        fakeServer.confirmEmail = true
+        start()
+        tap("tabFriends")
+        type("accountEmail", benEmail)
+        type("accountPassword", benPassword)
+        tap("signUp")
+        waitForTag("accountNotice")
+        waitForText("komm dann hierher zurück")
+        // Away to the mail and back, but the link was not opened yet: nothing happens, and nothing is complained about.
+        scenario!!.moveToState(Lifecycle.State.STARTED)
+        scenario!!.moveToState(Lifecycle.State.RESUMED)
+        waitFor { (fakeServer.calls["token"] ?: 0) >= 1 }
+        settle()
+        assertTrue(!runBlocking { container.settings.current() }.signedIn)
+        assertTrue(compose.onAllNodesWithTag("accountProblem").fetchSemanticsNodes().isEmpty())
+        waitForTag("accountNotice")
+        // The link was opened. Coming back is all it takes.
+        fakeServer.confirm(benEmail)
+        scenario!!.moveToState(Lifecycle.State.STARTED)
+        scenario!!.moveToState(Lifecycle.State.RESUMED)
+        waitFor { runBlocking { container.settings.current() }.signedIn }
+        waitForTag("onlineCard")
+        assertEquals(benEmail, runBlocking { container.settings.current() }.accountEmail)
     }
 
     @Test fun anAccountWithBooksMeetsADeviceWithBooks() {

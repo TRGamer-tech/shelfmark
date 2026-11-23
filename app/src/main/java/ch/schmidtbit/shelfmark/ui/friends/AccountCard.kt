@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.repo.Keep
@@ -109,15 +111,23 @@ fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
     var busy by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<Int?>(null) }
+    // A new account whose owner still has to open the link in the confirmation mail.
+    var awaitingConfirmation by rememberSaveable { mutableStateOf(false) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    fun finish(result: SyncResult?) {
+    /** [quiet] is the try the app makes by itself: it says nothing when it was too early. */
+    fun finish(result: SyncResult?, quiet: Boolean = false) {
         busy = false
         when (result) {
             // A new account that has to confirm its address first.
-            null -> notice = R.string.account_confirm_email
-            is SyncResult.Failed -> problem = result.reason
+            null -> {
+                notice = R.string.account_confirm_email
+                awaitingConfirmation = true
+            }
+            is SyncResult.Failed -> if (!quiet) problem = result.reason
             else -> {
+                awaitingConfirmation = false
+                notice = null
                 container.remember(result)
                 password = ""
                 // A request from a friend should not have to wait until the app is opened.
@@ -134,6 +144,17 @@ fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
         problem = null
         notice = null
         container.launch { finish(if (create) container.server.signUp(email, password) else container.server.signIn(email, password)) }
+    }
+
+    // Back from the mail or the browser, where the link was opened: nobody should have to
+    // guess that "Sign in" is the next thing to tap. The app tries it by itself.
+    val waiting by rememberUpdatedState(awaitingConfirmation && !busy && password.isNotEmpty())
+    LifecycleResumeEffect(Unit) {
+        if (waiting) {
+            busy = true
+            container.launch { finish(container.server.signIn(email, password), quiet = true) }
+        }
+        onPauseOrDispose { }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

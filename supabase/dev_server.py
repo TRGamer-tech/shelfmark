@@ -297,8 +297,16 @@ def make_handler(dsn, key, token_seconds, confirm_email):
                                                          f"&expires_at={session['expires_at']}&refresh_token={session['refresh_token']}&token_type=bearer&type=recovery"})
                     if path == "/auth/v1/dev/confirm":
                         # Not part of Supabase: stands in for clicking the link in the confirmation mail.
-                        cursor.execute("update auth.users set confirmed = true where email = %s", (email,))
-                        return self.reply(200, {})
+                        # With "redirect_to" it also says where that click ends up: Supabase confirms the
+                        # address and then sends the browser on, with a sign-in of the kind "signup".
+                        cursor.execute("update auth.users set confirmed = true where email = %s returning id, email, confirmed, created_at", (email,))
+                        row = cursor.fetchone()
+                        target = str(body.get("redirect_to", "")).split("#")[0]
+                        if row is None or not target:
+                            return self.reply(200, {})
+                        session = session_json(row)
+                        return self.reply(200, {"link": f"{target}#access_token={session['access_token']}&expires_in={session['expires_in']}"
+                                                         f"&expires_at={session['expires_at']}&refresh_token={session['refresh_token']}&token_type=bearer&type=signup"})
             finally:
                 connection.close()
             return self.reply(404, {"message": "not found"})

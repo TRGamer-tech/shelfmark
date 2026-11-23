@@ -134,3 +134,10 @@ python3 supabase/dev_server.py --dsn "dbname=shelfmark_dev" --port 54330
 `auth.uid()`), and must never be run on a real project. `dev_server.py` answers the
 sign-in calls and the function calls the way Supabase does, including a mode in which new
 accounts have to confirm their e-mail address (`--confirm-email`).
+
+No mail is sent by it. Two calls that Supabase does not have stand in for the links in the
+mails: `POST /auth/v1/dev/confirm` and `POST /auth/v1/dev/recovery`, each with
+`{"email", "redirect_to"}`, answer with the address such a link ends up at once Supabase
+has checked it: the page named in `redirect_to`, with a sign-in of the kind `signup` or
+`recovery` behind the `#`. A client has to take that sign-in and tell the person what
+happened, on whatever page it arrives.

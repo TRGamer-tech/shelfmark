@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="account_confirm_email">Almost there: open the link in the mail that was just sent to you, then sign in here.</string>
+    <string name="account_confirm_email">Almost there: open the link in the mail that was just sent to you, then come back here. The app signs you in when you are back.</string>
     <string name="account_delete">Delete account</string>
     <string name="account_delete_confirm">Delete for good</string>
     <string name="account_delete_text">Your account, your library on the server, what you share and your connections to friends are deleted for good. The books on this phone stay.</string>

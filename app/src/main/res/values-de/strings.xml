@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="account_confirm_email">Fast geschafft: Öffne den Link in der Mail, die dir eben geschickt wurde, und melde dich dann hier an.</string>
+    <string name="account_confirm_email">Fast geschafft: Öffne den Link in der Mail, die dir eben geschickt wurde, und komm dann hierher zurück. Die App meldet dich an, sobald du wieder da bist.</string>
     <string name="account_delete">Konto löschen</string>
     <string name="account_delete_confirm">Endgültig löschen</string>
     <string name="account_delete_text">Dein Konto, deine Bibliothek auf dem Server, was du teilst und deine Verbindungen zu Freunden werden endgültig gelöscht. Die Bücher auf diesem Gerät bleiben.</string>
