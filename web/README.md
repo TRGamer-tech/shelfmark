@@ -11,19 +11,34 @@ It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependen
 
 ## How it is built
 
-- The front page (`/`, and `/de` in German) is drawn by the server and reads without
-  scripts. Everything of the library is drawn in the browser after signing in. Those
-  pages are static, and the server only answers the book search (`/api/books/...`), the
-  download link (`/download`) and the daily check (`/api/keepalive`).
+- The front page (`/`, and `/de` in German), the imprint and the privacy notice are
+  drawn by the server and read without scripts. Everything of the library is drawn in
+  the browser after signing in. Those pages are static, and the server only answers the
+  book search (`/api/books/...`), the download link (`/download`) and the daily check
+  (`/api/keepalive`).
 - The address of the site itself serves two pages: the front page for a visitor and the
   shelf for somebody who is signed in. A small script in the head decides which, before
   the first paint, from whether this browser remembers a sign-in (`src/lib/visitor.ts`),
   so that nobody sees the front page flash by on the way to their shelf.
   `src/components/Providers.tsx` then keeps the two apart.
 - The pages before the sign-in (`src/components/landing/`, `FrontDesk.tsx`,
-  `src/app/front.css`) look the same for everybody: the app's Cocoa theme as the room
-  and its Paper theme for what is read or filled in. The two shelves on the front page
-  are the shelves of the library (`Shelves.tsx`), not pictures of them.
+  `Confirmed.tsx`, `src/components/legal/`, `src/app/front.css`) look the same for
+  everybody: the app's Cocoa theme as the room and its Paper theme for what is read or
+  filled in. The two shelves on the front page are the shelves of the library
+  (`Shelves.tsx`), not pictures of them.
+- The link of a mail is understood wherever it lands (`src/lib/supabase/links.ts`,
+  `src/components/auth.tsx`). The site reads what stands behind the `#` itself, wipes it
+  from the address by replacing the entry in the history, and only then takes the
+  sign-in, so that neither a reload nor the Back button plays a link again. The link of a
+  confirmation mail, and any link that does not work any more, ends on `/confirmed`.
+- The imprint (`/imprint`, `/de/impressum`) and the privacy notice (`/privacy`,
+  `/de/datenschutz`) take their words from `src/i18n/legal.ts`. Whoever runs the site is
+  named in one file, `src/lib/operator.ts`: an e-mail address, and a name and a postal
+  address that are shown once they are filled in. The privacy notice says only what the
+  code does, and tests hold some of it against the code (which entries the site keeps in
+  the browser, that no cookie is set, which catalogues are asked). Whoever changes what
+  is stored or sent changes the sentence about it, in both languages, and the date in
+  `src/lib/legal.ts`.
 - `src/lib` holds the logic, free of React and tested by itself: the library document and
   its defaults (`model.ts`), every change a reader can make (`mutations.ts`), saving by
   revision with the conflict path (`sync.ts`), what friends get (`share.ts`, `social.ts`),
@@ -89,9 +104,11 @@ originals when those are there), `buildLibrary` against the two library samples 
 byte, the status rules, statistics, calendar, recap and milestones (the cases of the
 app's Kotlin tests), ISBNs, the catalogue parsers against recorded answers, saving with
 conflicts against a server in memory, what another cover does to a book and the requests
-for uploaded pictures, what the address says after every kind of mail link, the script
-that decides between front page and shelf, picking the newest release of the app, the
-words, numbers and colours of the front page, the reading timer, and the texts. The
+for uploaded pictures, what the address says after every kind of mail link and where
+each kind leads, the script that decides between front page and shelf, picking the newest
+release of the app, the words, numbers and colours of the front page, the imprint and the
+privacy notice (who is named on them, and what they say about the code), the reading
+timer, and the texts. The
 importer of lists from other apps is tested with the cases of
 the app's Kotlin test on the same two files (`test/fixtures/goodreads_export.csv` and
 `storygraph_export.csv`, copies of the app's test fixtures that are compared with the
@@ -129,13 +146,18 @@ that file to prove that the app understands what the website writes.
   this is that activity. Every browser that opens the site says hello once a day as well.
 - In the Supabase project: run `supabase/schema.sql`, and under Authentication, URL
   configuration, set the site URL to the address of the website and allow
-  `https://<your site>/reset` as a redirect, so that the link in a "forgot password" mail
-  leads to the page that sets the new password. A mail asked for in the Android app names
-  no page and leads to the site URL itself, which takes the reader to that page as well.
-- The link in a confirmation mail leads to the site URL too. The site takes the sign-in
-  that comes with it: the reader lands on their shelf with a notice that the address is
-  confirmed, worded also for somebody who signed up in the Android app. A link that is
-  too old or was used before leads to the sign-in page, which says what to do.
+  `https://<your site>/**` as a redirect. The site names two pages for the links in its
+  mails to lead to: `/confirmed` for a confirmation mail and `/reset` for a "forgot
+  password" mail. The site URL must be an address anybody can open, not one that Vercel
+  protects with a login of its own.
+- `/confirmed` says what the link of a confirmation mail did: the address is confirmed
+  and this device is signed in, or it is confirmed and the way on is to sign in. The same
+  words serve somebody who made the account in the Android app. A link that is too old
+  or was used before lands there as well and is told what that usually means. A mail that
+  names no page, as older versions of the app send them, leads to the site URL itself,
+  and the site takes the reader on to `/confirmed` or `/reset` from there.
+- `src/lib/operator.ts` says who runs the site. The imprint and the privacy notice show
+  the e-mail address alone until a name and a postal address are filled in there.
 - `/download` redirects to the newest `.apk` among the releases of the project on
   GitHub, pre-releases included, and to the list of releases when GitHub cannot be
   asked. The front page names the version and size from the same answer, which is kept

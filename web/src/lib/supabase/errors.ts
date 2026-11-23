@@ -47,7 +47,10 @@ export function authProblem(error: AuthFailure): { key: string; detail: string }
   if (is("user_already_exists", "email_exists") || /already registered/i.test(message)) return { key: "account_error_exists", detail: code };
   if (is("weak_password", "same_password") || /password should be/i.test(message)) return { key: "account_error_weak", detail: code };
   if (is("validation_failed", "email_address_invalid") || /validate email|invalid format/i.test(message)) return { key: "account_error_email", detail: code };
-  if (is("over_request_rate_limit", "over_email_send_rate_limit") || error.status === 429) return { key: "account_error_rate", detail: code };
+  // Not the reader's doing: the mail service of the server has sent all it may for the hour, or does not write to this address.
+  if (is("over_email_send_rate_limit") || /email rate limit/i.test(message)) return { key: "account_error_mail_limit", detail: code };
+  if (is("email_address_not_authorized") || /address not authorized/i.test(message)) return { key: "account_error_mail_refused", detail: code };
+  if (is("over_request_rate_limit") || error.status === 429) return { key: "account_error_rate", detail: code };
   if (is("signup_disabled", "email_provider_disabled")) return { key: "account_error_closed", detail: code };
   if (is("session_not_found", "session_expired", "refresh_token_not_found", "bad_jwt") || error.name === "AuthSessionMissingError") return { key: "account_error_signed_out", detail: code };
   if (error.name === "AuthRetryableFetchError" || error.status === 0 || looksOffline(message)) return { key: "server_error_network", detail: "network" };

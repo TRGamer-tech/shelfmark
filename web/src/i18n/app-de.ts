@@ -2,7 +2,7 @@
 // change the app's strings.xml and run the script again.
 
 export const strings: Record<string, string> = {
-  account_confirm_email: "Fast geschafft: Öffne den Link in der Mail, die dir eben geschickt wurde, und melde dich dann hier an.",
+  account_confirm_email: "Fast geschafft: Öffne den Link in der Mail, die dir eben geschickt wurde, und komm dann hierher zurück. Die App meldet dich an, sobald du wieder da bist.",
   account_delete: "Konto löschen",
   account_delete_confirm: "Endgültig löschen",
   account_delete_text: "Dein Konto, deine Bibliothek auf dem Server, was du teilst und deine Verbindungen zu Freunden werden endgültig gelöscht. Die Bücher auf diesem Gerät bleiben.",
@@ -11,6 +11,8 @@ export const strings: Record<string, string> = {
   account_error_credentials: "E-Mail oder Passwort stimmt nicht.",
   account_error_email: "Das ist keine E-Mail-Adresse.",
   account_error_exists: "Für diese Adresse gibt es schon ein Konto. Melde dich stattdessen an.",
+  account_error_mail_limit: "Der Server kann im Moment keine Bestätigungsmails mehr verschicken. Das liegt nicht an dir. Bitte versuche es in einer Stunde nochmals.",
+  account_error_mail_refused: "Der Server konnte keine Bestätigungsmail an diese Adresse schicken. Bitte versuche es später nochmals.",
   account_error_rate: "Zu viele Versuche. Bitte warte einen Moment.",
   account_error_signed_out: "Du bist nicht mehr angemeldet. Bitte melde dich nochmals an.",
   account_error_unconfirmed: "Bestätige zuerst deine Adresse: Öffne den Link in der Mail, die du bekommen hast.",
@@ -20,6 +22,7 @@ export const strings: Record<string, string> = {
   account_open_website: "Website öffnen",
   account_password: "Passwort (mindestens 6 Zeichen)",
   account_pitch: "Mit einem Konto ist deine Bibliothek auf jedem Gerät und auf der Website dieselbe, und Freunde sind nur einen Code entfernt. Ohne Konto bleibt alles auf diesem Gerät, wie bisher.",
+  account_privacy_hint: "Ein Konto speichert deine E-Mail-Adresse und deine Bibliothek auf dem Server.",
   account_reset_sent: "Eine Mail mit einem Link für ein neues Passwort ist unterwegs.",
   account_sign_in: "Anmelden",
   account_sign_out: "Abmelden",
@@ -226,6 +229,8 @@ export const strings: Record<string, string> = {
   import_request_title: "Ausleih-Anfrage",
   import_unknown_request: "Diese Antwort gehört zu einer Anfrage, die nicht von diesem Gerät gesendet wurde.",
   import_unreadable: "Die Datei konnte nicht gelesen werden.",
+  legal_imprint: "Impressum",
+  legal_privacy: "Datenschutz",
   library_empty_action: "Erstes Buch hinzufügen",
   library_empty_text: "Scanne einen Barcode, suche nach Titel oder Autor oder erfasse ein Buch von Hand.",
   library_empty_title: "Dein Regal ist noch leer",

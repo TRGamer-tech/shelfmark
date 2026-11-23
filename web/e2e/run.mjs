@@ -91,11 +91,13 @@ const shot = (page, name, options = {}) => page.screenshot({ path: `${SHOTS}${na
  */
 async function watchForFrontPage(page) {
   await page.addInitScript(() => {
-    window.__frontPage = { frames: 0, shown: 0 };
+    window.__frontPage = { frames: 0, shown: 0, signIn: 0 };
     const look = () => {
       const landing = document.querySelector('[data-testid="landing"]');
       window.__frontPage.frames++;
       if (landing && getComputedStyle(landing).display !== "none") window.__frontPage.shown++;
+      // The sign-in page must not flash by either, on the way to the page a link of a mail leads to.
+      if (document.querySelector('[data-testid="login-form"]')) window.__frontPage.signIn++;
       requestAnimationFrame(look);
     };
     requestAnimationFrame(look);
@@ -103,6 +105,12 @@ async function watchForFrontPage(page) {
 }
 
 const frontPageSeen = (page) => page.evaluate(() => window.__frontPage);
+
+/** What Supabase puts behind the address when the link of a mail is too old or was used before. */
+const USED_UP = "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired";
+
+/** A call to the stand-in for Supabase, as the Android app or a mail program would make it. */
+const post = (base, path, body) => fetch(`${base}${path}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 const FRONT_LINK_FAILED =
   "This link does not work any more: it is too old, or it was used before. If your address is confirmed already, sign in. If signing in tells you to confirm your address, you can have the mail sent again from there. For a new password, choose “Forgot the password?”.";
@@ -1860,97 +1868,344 @@ async function main() {
   );
 
   await test(
-    "the link in the confirmation mail signs in, says that the address is confirmed, and no other link ends in silence",
+    "the link in a confirmation mail leads to a page of its own that says what happened, and Back does not play it again",
     async () => {
-      const post = (base, path, body) => fetch(`${base}${path}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const context = await newContext();
       // This browser talks to a server on which new accounts have to confirm their address.
       await context.route(`${SERVER}/**`, (route) => route.continue({ url: route.request().url().replace(`:${SERVER_PORT}/`, `:${CONFIRM_PORT}/`) }));
       const fay = account("Fay");
       const first = await context.newPage();
+      // Signing up names the confirmation page as the place the link in the mail is to lead to.
+      const asked = first.waitForRequest((request) => request.url().includes("/auth/v1/signup") && request.method() === "POST");
       await signUp(first, fay);
+      equal(new URL((await asked).url()).searchParams.get("redirect_to"), `${WEB}/confirmed`, "where the confirmation mail is to lead");
       await first.getByTestId("confirm-notice").waitFor();
+      // So does "send the mail again".
+      const resent = first.waitForRequest((request) => request.url().includes("/auth/v1/resend") && request.method() === "POST");
+      await first.getByTestId("confirm-notice").getByRole("button", { name: "Send the mail again" }).click();
+      equal(new URL((await resent).url()).searchParams.get("redirect_to"), `${WEB}/confirmed`, "where the mail that is sent again is to lead");
 
-      // The click in the mail: Supabase confirms the address and sends the browser to the
-      // address of the site itself, with a sign-in behind the "#". The stand-in hands out that address.
-      const { link } = await (await post(CONFIRM_SERVER, "/auth/v1/dev/confirm", { email: fay.email, redirect_to: `${WEB}/` })).json();
-      assert(link.startsWith(`${WEB}/#access_token=`) && link.endsWith("&type=signup"), `where the click in the mail leads: ${link.slice(0, 48)}`);
+      // The click in the mail: Supabase confirms the address and sends the browser to that page,
+      // with a sign-in behind the "#". The stand-in hands out that address.
+      const { link } = await (await post(CONFIRM_SERVER, "/auth/v1/dev/confirm", { email: fay.email, redirect_to: `${WEB}/confirmed` })).json();
+      assert(link.startsWith(`${WEB}/confirmed#access_token=`) && link.endsWith("&type=signup"), `where the click in the mail leads: ${link.slice(0, 56)}`);
       const mail = await context.newPage();
       await watchForFrontPage(mail);
+      // The reader was somewhere else before the click.
+      await mail.goto(`${WEB}/imprint`);
+      await mail.getByTestId("legal-imprint").waitFor();
+      const before = await mail.evaluate(() => history.length);
       await mail.goto(link);
-      const notice = mail.getByTestId("confirmed-notice");
-      await notice.waitFor();
-      const words = await notice.innerText();
-      assert(words.includes("Your e-mail address is confirmed"), `the notice says what happened: ${words}`);
-      assert(words.includes("You are signed in, and this is your shelf."), "and where the reader is now");
-      // The same notice has to serve somebody who signed up in the Android app and opened the mail on the phone.
-      assert(words.includes("Android app") && words.includes("Go back to the app") && words.includes("“Sign in”"), "and what to do when the account was made in the app");
+      const card = mail.getByTestId("confirmed-card");
+      await card.waitFor();
+      equal(await card.getAttribute("data-state"), "confirmed-in", "what the slip is about");
+      equal(await mail.locator("h1").innerText(), "Your e-mail address is confirmed", "the headline");
+      const words = await card.innerText();
+      assert(words.includes(`You are signed in on this device, as ${fay.email}.`), `the slip says that this device is signed in: ${words}`);
+      // The same page has to serve somebody who signed up in the Android app and opened the mail wherever it arrived.
+      assert(words.includes("Did you create your account in the Android app?"), "the slip speaks to those who came from the app");
+      assert(words.includes("Go back to the app. It signs you in by itself when you return. If it does not, tap “Sign in” there."), "and says what to do there");
+      equal(await mail.getByTestId("confirmed-open").innerText(), "Open my shelf", "the one thing to do");
+      equal(await mail.getByTestId("confirmed-sign-in").count(), 0, "sign-in buttons for somebody who is signed in");
+      equal(await mail.locator(".receipt .btn-filled").count(), 1, "primary actions on the slip");
+      equal(mail.url(), `${WEB}/confirmed`, "nothing of the link stays in the address");
+      equal(await mail.evaluate(() => history.length), before + 1, "entries in the history after the click in the mail");
+      const seen = await frontPageSeen(mail);
+      assert(seen.frames > 3, "the page was watched from its first frame");
+      equal(seen.shown, 0, "frames in which the front page could be seen on the way");
+      equal(seen.signIn, 0, "frames in which the sign-in page could be seen on the way");
+      equal(await mail.evaluate(() => document.documentElement.dataset.world), "front", "the look of the page");
+      equal(await mail.title(), "Your e-mail address is confirmed - Shelfmark", "the title of the page");
+      deepAudit(await audit(mail), "confirmation page");
+      await mail.waitForTimeout(400);
+      await shot(mail, "confirmed-page");
+
+      // Back leads to where the reader was before the click, not into the link again.
+      await mail.goBack();
+      await mail.getByTestId("legal-imprint").waitFor();
+      equal(mail.url(), `${WEB}/imprint`, "where Back leads");
+      // Forward again there is the page without its link: signed in, and nothing left to confirm.
+      await mail.goForward();
+      await card.waitFor();
+      equal(mail.url(), `${WEB}/confirmed`, "the address going forward again");
+      equal(await card.getAttribute("data-state"), "plain-in", "the slip without a link, signed in");
+      equal(await mail.locator("h1").innerText(), "You are signed in", "its headline");
+      assert((await card.innerText()).includes(`This device is signed in as ${fay.email}. There is nothing left to confirm.`), "what it says");
+      equal(await mail.getByTestId("confirmed-app").count(), 0, "words about the app when no link was opened");
+
+      // "Open my shelf" opens it, without the front page on the way. The shelf has no notice of its own any more.
+      await mail.getByTestId("confirmed-open").click();
       await mail.getByTestId("empty-library").waitFor();
-      equal(mail.url(), `${WEB}/`, "the sign-in does not stay in the address");
-      equal((await frontPageSeen(mail)).shown, 0, "frames in which the front page could be seen on the way in");
-      equal(await mail.getByTestId("login-form").count(), 0, "sign-in forms the confirmed reader is left in front of");
+      equal(mail.url(), `${WEB}/`, "where the shelf is");
+      assert(!(await mail.title()).includes("confirm"), `the title of the shelf says nothing of a confirmation: ${await mail.title()}`);
+      equal((await frontPageSeen(mail)).shown, 0, "frames in which the front page could be seen on the way to the shelf");
+      equal(await mail.getByTestId("confirmed-notice").count(), 0, "confirmation notices on the shelf");
       // The name given when signing up is put into the new library.
       await untilVault(fay, (v) => v.prefs?.profileName === "Fay", "the name given at sign-up");
-      deepAudit(await audit(mail), "shelf with the confirmation notice");
-      await mail.waitForTimeout(500);
-      await shot(mail, "confirmed");
-      await mail.getByTestId("confirmed-ok").click();
-      await notice.waitFor({ state: "detached" });
-      await mail.reload();
-      await mail.getByTestId("empty-library").waitFor();
-      equal(await notice.count(), 0, "the notice after it was put away");
 
-      // The link clicked a second time. Supabase then says it is used up. Whoever is signed in stays on their shelf and is told.
-      const usedUp = "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired";
-      const again = await context.newPage();
-      await again.goto(`${WEB}/${usedUp}`);
-      await again.getByTestId("empty-library").waitFor();
-      await again.getByText("That link was used before or is too old. You are signed in all the same.").waitFor();
+      // The link clicked a second time. Supabase then says it is used up. Whoever is signed in is told so, and that they are.
+      const twice = await context.newPage();
+      await watchForFrontPage(twice);
+      await twice.goto(`${WEB}/confirmed${USED_UP}`);
+      const second = twice.getByTestId("confirmed-card");
+      await second.waitFor();
+      equal(await second.getAttribute("data-state"), "stale-in", "the slip after a used link, signed in");
+      equal(await twice.locator("h1").innerText(), "This link does not work any more", "its headline");
+      assert((await second.innerText()).includes(`It was used before, or it is too old. You are signed in on this device all the same, as ${fay.email}.`), "what it says");
+      equal(await twice.getByTestId("confirmed-open").count(), 1, "the way to the shelf");
+      equal(twice.url(), `${WEB}/confirmed`, "the address after a used link");
+      equal((await frontPageSeen(twice)).signIn, 0, "frames in which the sign-in page could be seen");
       await context.close();
+    },
+    null,
+  );
 
-      // The same used-up link in a browser where nobody is signed in: the sign-in page, with words that say what to do.
+  await test(
+    "a confirmation link that lands on the address of the site itself is taken on to the confirmation page, here in German on a phone",
+    async () => {
+      // An account made in the Android app: no browser has seen the website for it. Older versions
+      // of the app name no page for the mail to lead to, so Supabase sends the click to the site itself.
+      const hana = account("Hana");
+      const made = await post(CONFIRM_SERVER, "/auth/v1/signup", { email: hana.email, password: hana.password });
+      equal(made.status, 200, "Hana's account");
+      assert(!("access_token" in (await made.json())), "nobody is signed in before the address is confirmed");
+      const { link } = await (await post(CONFIRM_SERVER, "/auth/v1/dev/confirm", { email: hana.email, redirect_to: `${WEB}/` })).json();
+      assert(link.startsWith(`${WEB}/#access_token=`) && link.endsWith("&type=signup"), `where the click in the mail leads: ${link.slice(0, 48)}`);
+
+      const context = await newContext({ viewport: PHONE, locale: "de-CH" });
+      await context.route(`${SERVER}/**`, (route) => route.continue({ url: route.request().url().replace(`:${SERVER_PORT}/`, `:${CONFIRM_PORT}/`) }));
+      const mail = await context.newPage();
+      await watchForFrontPage(mail);
+      await mail.goto(`${WEB}/de/datenschutz`);
+      await mail.getByTestId("legal-privacy").waitFor();
+      const before = await mail.evaluate(() => history.length);
+      await mail.goto(link);
+      const card = mail.getByTestId("confirmed-card");
+      await card.waitFor();
+      equal(mail.url(), `${WEB}/confirmed`, "the address the reader ends up at");
+      equal(await card.getAttribute("data-state"), "confirmed-in", "what the slip is about");
+      equal(await mail.locator("h1").innerText(), "Deine E-Mail-Adresse ist bestätigt", "the headline, in the language of the browser");
+      const words = await card.innerText();
+      assert(words.includes(`Du bist auf diesem Gerät angemeldet, als ${hana.email}.`), `the slip says that this device is signed in: ${words}`);
+      assert(words.includes("Hast du dein Konto in der Android-App erstellt?") && words.includes("Geh zurück in die App. Sie meldet dich von selbst an, sobald du zurückkommst. Falls nicht, tippe dort auf «Anmelden»."), "and what to do in the app");
+      equal(await mail.getByTestId("confirmed-open").innerText(), "Mein Regal öffnen", "the one thing to do");
+      equal(await mail.evaluate(() => document.documentElement.lang), "de", "the language the page says it is in");
+      const seen = await frontPageSeen(mail);
+      assert(seen.frames > 3, "the page was watched from its first frame");
+      equal(seen.shown, 0, "frames in which the front page could be seen on the way");
+      equal(seen.signIn, 0, "frames in which the sign-in page could be seen on the way");
+      // The entry of the link was replaced, twice over: by the clean address, then by the confirmation page.
+      equal(await mail.evaluate(() => history.length), before + 1, "entries in the history after the click in the mail");
+      deepAudit(await audit(mail), "confirmation page on a phone, in German");
+      await mail.waitForTimeout(400);
+      await shot(mail, "confirmed-page-phone-de");
+      // The other language is one tap away, as on the sign-in page.
+      await mail.getByTestId("lang-en").click();
+      equal(await mail.locator("h1").innerText(), "Your e-mail address is confirmed", "the headline in English");
+      await mail.getByTestId("lang-de").click();
+      // Back leads to where the reader was before the click, not into the link again.
+      await mail.goBack();
+      await mail.getByTestId("legal-privacy").waitFor();
+      equal(mail.url(), `${WEB}/de/datenschutz`, "where Back leads");
+      // A reload of the confirmation page finds no link either.
+      await mail.goto(`${WEB}/confirmed`);
+      await card.waitFor();
+      equal(await card.getAttribute("data-state"), "plain-in", "the slip after the link is gone");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "confirmed without a sign-in, a link that is used up, and the confirmation page opened by itself: each says what to do",
+    async () => {
+      const made = (type) => `#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=${type}`;
+      // An account whose address is confirmed, to sign in with further down.
+      const ida = account("Ida");
+      equal((await post(SERVER, "/auth/v1/signup", { email: ida.email, password: ida.password })).status, 200, "Ida's account");
+
+      // A confirmation link whose sign-in does not take. Supabase only hands such a link out
+      // once the address is confirmed, so the page says so, and the way on is to sign in.
+      const cold = await newContext();
+      const lost = await cold.newPage();
+      await watchForFrontPage(lost);
+      await lost.goto(`${WEB}/confirmed${made("signup")}`);
+      const lostCard = lost.getByTestId("confirmed-card");
+      await lostCard.waitFor();
+      equal(await lostCard.getAttribute("data-state"), "confirmed-out", "the slip after a confirmation without a sign-in");
+      equal(await lost.locator("h1").innerText(), "Your e-mail address is confirmed", "the same headline");
+      const lostWords = await lostCard.innerText();
+      assert(lostWords.includes("You can sign in now, with your e-mail address and your password."), `what it says: ${lostWords}`);
+      assert(lostWords.includes("Did you create your account in the Android app?") && lostWords.includes("Go back to the app."), "the same words about the app");
+      equal(await lost.getByTestId("confirmed-sign-in").innerText(), "Sign in", "the one thing to do");
+      equal(await lost.getByTestId("confirmed-open").count(), 0, "ways to a shelf for somebody who is not signed in");
+      equal(lost.url(), `${WEB}/confirmed`, "nothing of the link stays in the address");
+      equal((await frontPageSeen(lost)).signIn, 0, "frames in which the sign-in page could be seen");
+      // The same link on the address of the site itself.
+      const lostAtRoot = await cold.newPage();
+      await watchForFrontPage(lostAtRoot);
+      await lostAtRoot.goto(`${WEB}/${made("signup")}`);
+      await lostAtRoot.getByTestId("confirmed-card").waitFor();
+      equal(lostAtRoot.url(), `${WEB}/confirmed`, "where it is taken on to");
+      equal(await lostAtRoot.getByTestId("confirmed-card").getAttribute("data-state"), "confirmed-out", "the slip");
+      const lostSeen = await frontPageSeen(lostAtRoot);
+      equal(lostSeen.shown, 0, "frames in which the front page could be seen on the way");
+      equal(lostSeen.signIn, 0, "frames in which the sign-in page could be seen on the way");
+      // "Sign in" leads to the sign-in page, which has nothing to add.
+      await lostAtRoot.getByTestId("confirmed-sign-in").click();
+      await lostAtRoot.getByTestId("login-form").waitFor();
+      equal(lostAtRoot.url(), `${WEB}/login`, "where the button leads");
+      equal(await lostAtRoot.getByTestId("login-notice").count(), 0, "notices on the sign-in page after the confirmation page said it all");
+      await cold.close();
+
+      // A link that does not work any more, in a browser where nobody is signed in.
       const elsewhere = await newContext();
       const stale = await elsewhere.newPage();
       await watchForFrontPage(stale);
-      await stale.goto(`${WEB}/${usedUp}`);
-      await stale.getByTestId("login-form").waitFor();
-      equal(await stale.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "what the sign-in page says after a stale link");
-      equal((await frontPageSeen(stale)).shown, 0, "frames in which the front page could be seen on the way to the sign-in page");
-      // "Sign in if the address is confirmed already": it is, so that works right there.
-      await stale.getByTestId("email").fill(fay.email);
-      await stale.getByTestId("password").fill(fay.password);
-      await stale.getByTestId("submit").click();
-      await stale.getByTestId("empty-library").waitFor();
-      equal(await stale.getByTestId("confirmed-notice").count(), 0, "confirmation notices after an ordinary sign-in");
+      await stale.goto(`${WEB}/confirmed${USED_UP}`);
+      const staleCard = stale.getByTestId("confirmed-card");
+      await staleCard.waitFor();
+      equal(await staleCard.getAttribute("data-state"), "stale-out", "the slip after a link that is used up");
+      equal(await stale.locator("h1").innerText(), "This link does not work any more", "the headline");
+      const staleWords = await staleCard.innerText();
+      // What that usually means: it was used already, and then the address is confirmed.
+      assert(staleWords.includes("Most of the time that means it was used already. Some mail programs open the links in a mail before you do, to check them. Your address is confirmed then, and you can sign in."), `what it usually means: ${staleWords}`);
+      // And how to have the mail sent again.
+      assert(staleWords.includes("If signing in tells you to confirm your address first, the link had grown too old instead. The sign-in page then offers to send the mail again."), "how to get the mail again");
+      assert(staleWords.includes("Were you after a new password? Choose “Forgot the password?” on the sign-in page for a fresh mail."), "and what to do when the link was one for a password");
+      assert(!staleWords.includes("Your e-mail address is confirmed"), "no claim that this address is confirmed");
+      equal(await stale.getByTestId("confirmed-sign-in").innerText(), "Sign in", "the one thing to do");
+      equal(await stale.locator(".receipt .btn-filled").count(), 1, "primary actions on the slip");
+      equal(await stale.locator(".receipt-stamp").count(), 0, "stamps on a slip that confirms nothing");
+      equal(stale.url(), `${WEB}/confirmed`, "nothing of the link stays in the address");
+      equal(await stale.title(), "This link does not work any more - Shelfmark", "the title of the page");
+      deepAudit(await audit(stale), "confirmation page after a stale link");
+      await stale.waitForTimeout(400);
+      await shot(stale, "confirmed-stale");
+
+      // The same on the address of the site itself, where a mail from an older app leads. Nobody sees the front page or the sign-in page on the way.
+      const staleAtRoot = await elsewhere.newPage();
+      await watchForFrontPage(staleAtRoot);
+      await staleAtRoot.goto(`${WEB}/privacy`);
+      await staleAtRoot.getByTestId("legal-privacy").waitFor();
+      await staleAtRoot.goto(`${WEB}/${USED_UP}`);
+      await staleAtRoot.getByTestId("confirmed-card").waitFor();
+      equal(staleAtRoot.url(), `${WEB}/confirmed`, "where a stale link on the address of the site is taken on to");
+      equal(await staleAtRoot.getByTestId("confirmed-card").getAttribute("data-state"), "stale-out", "the slip");
+      const staleSeen = await frontPageSeen(staleAtRoot);
+      assert(staleSeen.frames > 3, "the page was watched from its first frame");
+      equal(staleSeen.shown, 0, "frames in which the front page could be seen on the way");
+      equal(staleSeen.signIn, 0, "frames in which the sign-in page could be seen on the way");
+      await staleAtRoot.goBack();
+      await staleAtRoot.getByTestId("legal-privacy").waitFor();
+      equal(staleAtRoot.url(), `${WEB}/privacy`, "where Back leads after a stale link");
+      // Some versions of the server say it behind the "?" as well. Nothing of that stays either.
+      await staleAtRoot.goto(`${WEB}/?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired${USED_UP}`);
+      await staleAtRoot.getByTestId("confirmed-card").waitFor();
+      equal(staleAtRoot.url(), `${WEB}/confirmed`, "the address after a failure that was said twice");
+      // "The address is confirmed then, and you can sign in": it is, so that works.
+      await staleAtRoot.getByTestId("confirmed-sign-in").click();
+      await staleAtRoot.getByTestId("login-form").waitFor();
+      equal(await staleAtRoot.getByTestId("login-notice").count(), 0, "notices on the sign-in page");
+      await staleAtRoot.getByTestId("email").fill(ida.email);
+      await staleAtRoot.getByTestId("password").fill(ida.password);
+      await staleAtRoot.getByTestId("submit").click();
+      await staleAtRoot.getByTestId("empty-library").waitFor();
+      equal(await staleAtRoot.getByTestId("confirmed-notice").count(), 0, "confirmation notices after an ordinary sign-in");
+
+      // Opened without any link, by somebody who is signed in: it says so and offers the shelf.
+      const direct = await elsewhere.newPage();
+      await direct.goto(`${WEB}/confirmed`);
+      const directCard = direct.getByTestId("confirmed-card");
+      await directCard.waitFor();
+      equal(await directCard.getAttribute("data-state"), "plain-in", "the slip without a link, signed in");
+      equal(await direct.locator("h1").innerText(), "You are signed in", "its headline");
+      assert((await directCard.innerText()).includes(`This device is signed in as ${ida.email}.`), "who is signed in");
+      await direct.getByTestId("confirmed-open").click();
+      await direct.getByTestId("empty-library").waitFor();
       await elsewhere.close();
 
-      // A confirmation link whose sign-in does not take: the address is confirmed all the same, and the page says so.
+      // Opened without any link, by a visitor: a few neutral words and the way to sign in.
+      const nobody = await newContext();
+      const visitor = await nobody.newPage();
+      await watchForFrontPage(visitor);
+      await visitor.goto(`${WEB}/confirmed`);
+      const plainCard = visitor.getByTestId("confirmed-card");
+      await plainCard.waitFor();
+      equal(await plainCard.getAttribute("data-state"), "plain-out", "the slip without a link, signed out");
+      equal(await visitor.locator("h1").innerText(), "Confirming your e-mail address", "its headline");
+      assert((await plainCard.innerText()).includes("The link in the confirmation mail leads to this page. Opened without it, there is nothing to confirm here. If you have an account already, sign in."), "what it says");
+      equal(await visitor.getByTestId("confirmed-app").count(), 0, "words about the app when no link was opened");
+      equal(await visitor.locator(".receipt-stamp").count(), 0, "stamps on a slip that confirms nothing");
+      equal(visitor.url(), `${WEB}/confirmed`, "a visitor is not sent away from it");
+      equal((await frontPageSeen(visitor)).signIn, 0, "frames in which the sign-in page could be seen");
+      deepAudit(await audit(visitor), "confirmation page opened by itself");
+      await visitor.getByTestId("confirmed-sign-in").click();
+      await visitor.getByTestId("login-form").waitFor();
+      await nobody.close();
+
+      // A link that was simply too old: the address is not confirmed, the sign-in is refused, and
+      // the sign-in page offers to send the mail again, as the confirmation page said it would.
+      const waiting = await newContext();
+      await waiting.route(`${SERVER}/**`, (route) => route.continue({ url: route.request().url().replace(`:${SERVER_PORT}/`, `:${CONFIRM_PORT}/`) }));
+      const jo = account("Jo");
+      equal((await post(CONFIRM_SERVER, "/auth/v1/signup", { email: jo.email, password: jo.password })).status, 200, "Jo's account");
+      const late = await waiting.newPage();
+      await late.goto(`${WEB}/${USED_UP}`);
+      await late.getByTestId("confirmed-sign-in").click();
+      await late.getByTestId("email").fill(jo.email);
+      await late.getByTestId("password").fill(jo.password);
+      await late.getByTestId("submit").click();
+      const offer = late.getByTestId("confirm-notice");
+      await offer.waitFor();
+      assert((await offer.innerText()).includes("Confirm your e-mail address"), "the sign-in page says that the address is not confirmed");
+      const resent = late.waitForRequest((request) => request.url().includes("/auth/v1/resend") && request.method() === "POST");
+      await offer.getByRole("button", { name: "Send the mail again" }).click();
+      const resend = await resent;
+      equal(JSON.parse(resend.postData()).email, jo.email, "whose mail is sent again");
+      equal(new URL(resend.url()).searchParams.get("redirect_to"), `${WEB}/confirmed`, "where that mail is to lead");
+      await waiting.close();
+    },
+    null,
+  );
+
+  await test(
+    "the other links a mail can carry keep their ways, and none of them ends in silence",
+    async () => {
       const made = (type) => `#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=${type}`;
+      const kim = account("Kim");
+      equal((await post(SERVER, "/auth/v1/signup", { email: kim.email, password: kim.password })).status, 200, "Kim's account");
+      // Links whose sign-in does not take: the sign-in page says what became of them.
       const cold = await newContext();
-      const lost = await cold.newPage();
-      await lost.goto(`${WEB}/${made("signup")}`);
-      await lost.getByTestId("login-form").waitFor();
-      equal(await lost.getByTestId("login-notice").innerText(), "Your e-mail address is confirmed. Sign in now, here or in the Android app.", "a confirmation without a sign-in");
-      // The other kinds a mail can carry. None of them ends without a word.
       const change = await cold.newPage();
+      await watchForFrontPage(change);
       await change.goto(`${WEB}/${made("email_change")}`);
       equal(await change.getByTestId("login-notice").innerText(), "Your new e-mail address is confirmed. Sign in with it.", "a change of address without a sign-in");
+      equal((await frontPageSeen(change)).shown, 0, "frames in which the front page could be seen on the way to the sign-in page");
+      equal(change.url(), `${WEB}/login`, "nothing of the link stays in the address");
       const half = await cold.newPage();
       await half.goto(`${WEB}/#message=Confirmation+link+accepted.+Please+proceed+to+confirm+link+sent+to+the+other+email`);
       equal(await half.getByTestId("login-notice").innerText(), "That link was accepted. One step is left: open the link in the mail that went to your other address.", "the first half of a change of address");
       const magic = await cold.newPage();
       await magic.goto(`${WEB}/${made("magiclink")}`);
       equal(await magic.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "a sign-in link that did not work");
+      equal(await magic.getByTestId("confirmed-card").count(), 0, "confirmation pages for a link that confirms nothing");
       await cold.close();
 
-      // The same kinds with a sign-in that does take, as the stand-in hands them out for Fay.
-      const working = async (type) => (await (await post(SERVER, "/auth/v1/dev/recovery", { email: fay.email, redirect_to: `${WEB}/` })).json()).link.replace("type=recovery", `type=${type}`);
+      // The same kinds with a sign-in that does take, as the stand-in hands them out for Kim.
+      const working = async (type) => (await (await post(SERVER, "/auth/v1/dev/recovery", { email: kim.email, redirect_to: `${WEB}/` })).json()).link.replace("type=recovery", `type=${type}`);
       const warm = await newContext();
       const signedIn = await warm.newPage();
+      await signedIn.goto(`${WEB}/imprint`);
       await signedIn.goto(await working("magiclink"));
       await signedIn.getByTestId("empty-library").waitFor();
       await signedIn.getByText("You are signed in.", { exact: true }).waitFor();
-      equal(await signedIn.getByTestId("confirmed-notice").count(), 0, "confirmation notices after a plain sign-in link");
+      equal(signedIn.url(), `${WEB}/`, "the sign-in does not stay in the address");
+      equal(await signedIn.getByTestId("confirmed-card").count(), 0, "confirmation pages after a plain sign-in link");
+      // No link of any kind is played again by the Back button.
+      await signedIn.goBack();
+      await signedIn.getByTestId("legal-imprint").waitFor();
+      equal(signedIn.url(), `${WEB}/imprint`, "where Back leads after a sign-in link");
       await warm.close();
       const moved = await newContext();
       const newAddress = await moved.newPage();
@@ -1964,6 +2219,251 @@ async function main() {
       await guest.getByTestId("new-password").waitFor();
       assert(guest.url().startsWith(`${WEB}/reset`), `where an invitation leads: ${guest.url()}`);
       await invited.close();
+    },
+    null,
+  );
+
+  await test(
+    "the imprint and the privacy notice: plain pages in two languages that name who answers and talk to nobody",
+    async () => {
+      // What the server sends, before any script runs: the whole text.
+      const drawn = {
+        "/imprint": [
+          "<title>Imprint - Shelfmark</title>",
+          "private, non-commercial project and open source under the MIT licence",
+          'href="https://github.com/TRGamer-tech/shelfmark"',
+          'href="mailto:martin@schmidtbit.ch"',
+          "Whoever is named under Contact answers for what this website says.",
+          "Open Library, Google Books, Apple Books, lobid, the German National Library, K10plus and swisscovery",
+          "can be incomplete or wrong",
+          'href="/privacy"',
+        ],
+        "/privacy": [
+          "<title>Privacy notice - Shelfmark</title>",
+          "As of 23 November 2026",
+          'href="mailto:martin@schmidtbit.ch"',
+          "Vercel (Vercel Inc., USA)",
+          "Shelfmark itself sets no cookies.",
+          "Supabase (Supabase Inc., USA)",
+          "to 7 catalogues: Open Library, Google Books, Apple Books, lobid, the German National Library, K10plus and swisscovery",
+          "GitHub (GitHub Inc., USA)",
+          "According to Google, ML Kit sends usage and diagnostic figures about itself to Google.",
+          "Federal Data Protection and Information Commissioner (FDPIC)",
+          "General Data Protection Regulation of the EU (GDPR)",
+          'href="/imprint"',
+        ],
+        "/de/impressum": ["<title>Impressum - Shelfmark</title>", "privates, nicht kommerzielles Projekt und Open Source unter der MIT-Lizenz", 'href="mailto:martin@schmidtbit.ch"', "Deutsche Nationalbibliothek", 'href="/de/datenschutz"'],
+        "/de/datenschutz": [
+          "<title>Datenschutzerklärung - Shelfmark</title>",
+          "Stand: 23. November 2026",
+          "Shelfmark selbst setzt keine Cookies.",
+          "an 7 Kataloge: Open Library, Google Books, Apple Books, lobid, Deutsche Nationalbibliothek, K10plus und swisscovery",
+          "Laut Google sendet das ML Kit Nutzungs- und Diagnosezahlen über sich selbst an Google.",
+          "Eidgenössischen Datenschutz- und Öffentlichkeitsbeauftragten (EDÖB)",
+          "Datenschutz-Grundverordnung der EU (DSGVO)",
+          'href="/de/impressum"',
+        ],
+      };
+      for (const base of [WEB, PLAIN]) {
+        for (const [path, parts] of Object.entries(drawn)) {
+          const answer = await fetch(`${base}${path}`);
+          equal(answer.status, 200, `the answer of the server for ${base}${path}`);
+          const html = (await answer.text()).replaceAll("&#x27;", "'");
+          for (const part of parts) assert(html.includes(part), `${base}${path} as the server sends it holds: ${part}`);
+          // Name and postal address are not filled in yet, so none is shown, and none is made up.
+          assert(!html.includes('data-testid="operator-line"'), `${path} shows no name or postal address`);
+          equal(answer.headers.get("set-cookie"), null, `cookies the server sets with ${path}`);
+        }
+      }
+      // Each page names its other language to search engines.
+      const english = await (await fetch(`${WEB}/privacy`)).text();
+      assert(/<link rel="alternate" hrefLang="de" href="[^"]*\/de\/datenschutz"/i.test(english), "the German notice is named as the other language");
+
+      // Somebody opens the privacy notice from a link, in a browser that has never seen the site.
+      const context = await newContext();
+      const page = await context.newPage();
+      const asked = [];
+      page.on("request", (request) => asked.push(request.url()));
+      await page.goto(`${WEB}/privacy`);
+      await page.getByTestId("legal-privacy").waitFor();
+      equal(await page.locator("h1").innerText(), "Privacy notice", "the headline");
+      equal(await page.getByTestId("as-of").innerText(), "As of 23 November 2026", "the day the notice is from");
+      equal(await page.getByTestId("operator").innerText(), "E-mail: martin@schmidtbit.ch", "who answers, as far as it is filled in");
+      equal(await page.evaluate(() => document.documentElement.lang), "en", "the language the page says it is in");
+      equal(await page.evaluate(() => document.documentElement.dataset.world), "front", "the look of the page");
+      // It is organised by the reader's questions, and each of them is a way into the text.
+      const questions = await page.locator(".legal-contents a").allInnerTexts();
+      equal(questions.length, 11, "questions the notice answers");
+      equal(questions.join(" | "), (await page.locator(".sheet h2").allInnerTexts()).join(" | "), "the list of questions is the list of sections");
+      for (const question of ["What happens when I just look at this website?", "What does the website keep in my browser?", "What do friends see?", "What about the Android app?", "How long is it kept, and how do I delete it?", "What are my rights?"]) {
+        assert(questions.includes(question), `the notice answers: ${question}`);
+      }
+      deepAudit(await audit(page), "privacy notice");
+      await page.waitForTimeout(300);
+      await shot(page, "privacy", { fullPage: true, animations: "disabled" });
+      await page.getByRole("link", { name: "What do friends see?" }).click();
+      equal(page.url(), `${WEB}/privacy#friends`, "where a question leads");
+      const topOf = () => page.locator("#friends").evaluate((section) => section.getBoundingClientRect().top);
+      await until(async () => (await topOf()) >= 0 && (await topOf()) < 200, "the answer comes to the top of the window");
+      // The page is what it says: it talks to nobody but the site, and leaves nothing behind.
+      await page.waitForTimeout(600);
+      const elsewhere = asked.filter((url) => !url.startsWith(`${WEB}/`));
+      equal(elsewhere.join(" "), "", "requests the privacy notice sent anywhere but to the site");
+      equal(await page.evaluate(() => Object.keys(localStorage).join(" ") + Object.keys(sessionStorage).join(" ")), "", "what reading the notice leaves in the browser");
+      equal((await context.cookies()).length, 0, "cookies after reading the notice");
+
+      // The language switch leads to the same page in the other language, and remembers the choice.
+      await page.getByTestId("front-lang-de").click();
+      await page.getByTestId("legal-privacy").waitFor();
+      equal(page.url(), `${WEB}/de/datenschutz`, "the address of the German notice");
+      equal((await page.locator("h1").innerText()).replaceAll(String.fromCharCode(0xad), ""), "Datenschutzerklärung", "its headline");
+      equal(await page.getByTestId("as-of").innerText(), "Stand: 23. November 2026", "the day, in German");
+      equal(await page.getByTestId("operator").innerText(), "E-Mail: martin@schmidtbit.ch", "who answers");
+      equal(await page.evaluate(() => document.documentElement.lang), "de", "the language the page says it is in");
+      equal(await page.evaluate(() => localStorage.getItem("shelfmark.lang")), "de", "the choice of language is remembered");
+      equal(await page.locator(".legal-contents a").count(), 11, "questions the German notice answers");
+      deepAudit(await audit(page), "privacy notice in German");
+      await page.waitForTimeout(300);
+      await shot(page, "privacy-de", { fullPage: true, animations: "disabled" });
+      // From the notice to the imprint and back, staying in the language.
+      await page.locator(".front-foot").getByTestId("link-imprint").click();
+      await page.getByTestId("legal-imprint").waitFor();
+      equal(page.url(), `${WEB}/de/impressum`, "the address of the German imprint");
+      equal(await page.locator("h1").innerText(), "Impressum", "its headline");
+      await page.getByTestId("front-lang-en").click();
+      await page.getByTestId("legal-imprint").waitFor();
+      equal(page.url(), `${WEB}/imprint`, "the address of the English imprint");
+      equal(await page.locator("h1").innerText(), "Imprint", "its headline");
+      const imprint = await page.locator(".sheet").innerText();
+      for (const part of ["What Shelfmark is", "Contact", "E-mail: martin@schmidtbit.ch", "Who answers for the content", "Book data and covers", "github.com/TRGamer-tech/shelfmark"]) assert(imprint.includes(part), `the imprint holds: ${part}`);
+      equal(await page.getByTestId("operator-line").count(), 0, "lines with a name or a postal address while none is filled in");
+      equal(await page.locator(".legal-contents").count(), 0, "lists of questions on a page that short");
+      deepAudit(await audit(page), "imprint");
+      await page.waitForTimeout(300);
+      await shot(page, "imprint");
+      await page.getByRole("link", { name: "privacy notice" }).click();
+      await page.getByTestId("legal-privacy").waitFor();
+      equal(page.url(), `${WEB}/privacy`, "the imprint leads to the notice");
+      // The name at the top leads out to the front page.
+      await page.getByRole("link", { name: "Shelfmark", exact: true }).click();
+      await page.getByTestId("landing").waitFor();
+      equal((await context.cookies()).length, 0, "cookies after all of this");
+      await context.close();
+
+      // On a phone, in both languages: nothing is wider than the window, the long German word included.
+      const phone = await newContext({ viewport: PHONE });
+      const small = await phone.newPage();
+      for (const path of ["/privacy", "/de/datenschutz", "/imprint", "/de/impressum"]) {
+        await small.goto(`${WEB}${path}`);
+        await small.locator(".sheet").waitFor();
+        deepAudit(await audit(small), `${path} on a phone`);
+      }
+      await small.goto(`${WEB}/de/datenschutz`);
+      await small.waitForTimeout(300);
+      await shot(small, "privacy-de-phone");
+      await phone.close();
+
+      // Without scripts the text is all there, in the look of the page.
+      const plain = await browser.newContext({ viewport: DESKTOP, javaScriptEnabled: false });
+      const still = await plain.newPage();
+      await still.goto(`${WEB}/de/datenschutz`);
+      assert(await still.locator(".sheet h2").first().isVisible(), "the text can be read without scripts");
+      equal(await still.locator(".sheet section").count(), 11, "sections of the notice without scripts");
+      equal(await still.locator(".legal").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(42, 29, 23)", "the dark wood of the room, without scripts");
+      equal(await still.locator(".legal").getAttribute("lang"), "de", "the language of the text is said without scripts as well");
+      await plain.close();
+    },
+    null,
+  );
+
+  await test(
+    "the imprint and the privacy notice are one step away from the front page, the sign-in page, the sign-up form, the settings and every page before the sign-in",
+    async () => {
+      const context = await newContext();
+      const page = await context.newPage();
+      const footOf = async (scope) => [await page.locator(scope).getByTestId("link-imprint").getAttribute("href"), await page.locator(scope).getByTestId("link-privacy").getAttribute("href")].join(" ");
+      // The foot of the front page, in each language.
+      await page.goto(`${WEB}/`);
+      await page.getByTestId("landing").waitFor();
+      equal(await footOf(".front-foot"), "/imprint /privacy", "the foot of the front page");
+      equal(await page.locator(".front-foot").getByTestId("link-imprint").innerText(), "Imprint", "the word for the imprint");
+      equal(await page.locator(".front-foot").getByTestId("link-privacy").innerText(), "Privacy", "the word for the privacy notice");
+      await page.goto(`${WEB}/de`);
+      await page.getByTestId("landing").waitFor();
+      equal(await footOf(".front-foot"), "/de/impressum /de/datenschutz", "the foot of the German front page");
+      equal(await page.locator(".front-foot").getByTestId("link-privacy").innerText(), "Datenschutz", "the German word for the privacy notice");
+      await page.locator(".front-foot").getByTestId("link-imprint").click();
+      await page.getByTestId("legal-imprint").waitFor();
+      equal(page.url(), `${WEB}/de/impressum`, "where the foot of the German front page leads");
+
+      // The foot of the sign-in page, of the page for a new password, of the confirmation page and of a page that does not exist.
+      await page.goto(`${WEB}/login?lang=en`);
+      await page.getByTestId("login-form").waitFor();
+      equal(await footOf(".desk-foot"), "/imprint /privacy", "the foot of the sign-in page");
+      for (const [path, mark] of [
+        ["/reset", "reset-box"],
+        ["/confirmed", "confirmed-card"],
+        ["/no/such/page", "not-found"],
+      ]) {
+        await page.goto(`${WEB}${path}`);
+        await page.getByTestId(mark).waitFor();
+        equal(await footOf(".desk-foot"), "/imprint /privacy", `the foot of ${path}`);
+      }
+      await page.goto(`${WEB}/login`);
+      await page.locator(".desk-foot").getByTestId("link-imprint").click();
+      await page.getByTestId("legal-imprint").waitFor();
+      equal(page.url(), `${WEB}/imprint`, "where the foot of the sign-in page leads");
+      await page.goBack();
+      await page.getByTestId("login-form").waitFor();
+
+      // The form for a new account says in one sentence what an account stores, with the way to the notice. No box to tick.
+      equal(await page.getByTestId("signup-privacy").count(), 0, "the sentence is for those who create an account");
+      await page.getByTestId("mode-up").click();
+      const typed = `leo.${stamp}@example.org`;
+      await page.getByTestId("email").fill(typed);
+      await page.getByTestId("password").fill("not-sent-anywhere-1");
+      equal(await page.getByTestId("signup-privacy").innerText(), "Creating an account stores your e-mail address and your library on the server. The privacy notice says what exactly.", "the sentence on the form for a new account");
+      equal(await page.getByTestId("signup-privacy-link").getAttribute("href"), "/privacy", "where its link leads");
+      equal(await page.locator('[data-testid="login-form"] input[type="checkbox"]').count(), 0, "boxes to tick on the form");
+      deepAudit(await audit(page), "form for a new account");
+      await page.waitForTimeout(300);
+      await shot(page, "signup-privacy-line");
+      // The notice opens next to the form, so that what was typed in is still there afterwards.
+      const [notice] = await Promise.all([context.waitForEvent("page"), page.getByTestId("signup-privacy-link").click()]);
+      await notice.getByTestId("legal-privacy").waitFor();
+      equal(notice.url(), `${WEB}/privacy`, "the page the sentence leads to");
+      await notice.close();
+      equal(await page.getByTestId("email").inputValue(), typed, "the address typed in before reading the notice");
+      equal(await page.getByTestId("password").inputValue(), "not-sent-anywhere-1", "the password typed in before reading the notice");
+      // In German the sentence and every link lead to the German pages.
+      await page.getByTestId("lang-de").click();
+      equal(await page.getByTestId("signup-privacy").innerText(), "Mit einem Konto werden deine E-Mail-Adresse und deine Bibliothek auf dem Server gespeichert. Was genau, steht in der Datenschutzerklärung.", "the sentence in German");
+      equal(await page.getByTestId("signup-privacy-link").getAttribute("href"), "/de/datenschutz", "where its link leads in German");
+      equal(await footOf(".desk-foot"), "/de/impressum /de/datenschutz", "the foot of the German sign-in page");
+      equal(await page.locator(".desk-foot").getByTestId("link-imprint").innerText(), "Impressum", "the German word for the imprint");
+      await page.getByTestId("lang-en").click();
+
+      // The settings of the library end with the same two links. From there the name at the top leads back to the shelf.
+      const max = account("Max");
+      equal((await post(SERVER, "/auth/v1/signup", { email: max.email, password: max.password })).status, 200, "Max's account");
+      await signInOnPage(page, max);
+      await page.getByTestId("empty-library").waitFor();
+      await page.goto(`${WEB}/settings`);
+      await page.getByTestId("settings-page").waitFor();
+      equal(await footOf('[data-testid="legal-row"]'), "/imprint /privacy", "the last row of the settings");
+      const lastCard = await page.locator('[data-testid="settings-page"] .card').last().evaluate((card) => card.getBoundingClientRect().bottom);
+      const row = await page.getByTestId("legal-row").evaluate((element) => element.getBoundingClientRect().top);
+      assert(row >= lastCard, "the row stands at the end of the settings");
+      await page.getByTestId("legal-row").getByTestId("link-privacy").click();
+      await page.getByTestId("legal-privacy").waitFor();
+      equal(page.url(), `${WEB}/privacy`, "where the settings lead");
+      await watchForFrontPage(page);
+      await page.getByRole("link", { name: "Shelfmark", exact: true }).click();
+      await page.getByTestId("empty-library").waitFor();
+      equal((await frontPageSeen(page)).shown, 0, "frames in which the front page could be seen on the way back to the shelf");
+      // Signed in and after all of that: still no cookie.
+      equal((await context.cookies()).length, 0, "cookies after signing in and looking around");
+      await context.close();
     },
     null,
   );
@@ -2083,9 +2583,13 @@ async function main() {
       });
       const rootLink = await linkTo(`${WEB}/`);
       assert(rootLink.startsWith(`${WEB}/#access_token=`), `the link of a mail asked for in the app: ${rootLink.slice(0, 50)}`);
+      await fromApp.goto(`${WEB}/imprint`);
+      const entries = await fromApp.evaluate(() => history.length);
       await fromApp.goto(rootLink);
       await fromApp.getByTestId("new-password").waitFor();
       assert(fromApp.url().startsWith(`${WEB}/reset`) && !fromApp.url().includes("access_token"), `where the reader was taken: ${fromApp.url()}`);
+      // The link took one entry in the history and left nothing of itself in it: Back would not play it again.
+      equal(await fromApp.evaluate(() => history.length), entries + 1, "entries in the history after the link of a password mail");
       assert((await fromApp.getByTestId("reset-box").innerText()).includes(erin.email), "whose password is set, coming from the address of the site");
       equal(library.length, 0, "the library is not opened on the way to the new password");
       await fromApp.getByTestId("new-password").fill(second);
@@ -2098,23 +2602,37 @@ async function main() {
 
       await other.close();
 
-      // A link that is too old: Supabase says so behind the "#", and the site passes it on in words.
+      // A link that is too old: Supabase says so behind the "#". On the page for a new password,
+      // where a mail asked for on the website leads, that page says so itself, with a way back.
       const stranger = await newContext();
       const stale = await stranger.newPage();
-      await stale.goto(`${WEB}/#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired`);
+      await stale.goto(`${WEB}/reset${USED_UP}`);
+      await stale.getByTestId("reset-invalid").waitFor();
+      equal(await stale.getByTestId("reset-invalid").innerText(), "This link does not work any more. Ask for a new one.", "an expired link on the page for a new password");
+      equal(stale.url(), `${WEB}/reset`, "nothing of the expired link stays in the address");
+      equal(await stale.getByTestId("confirmed-card").count(), 0, "confirmation pages for a link that was one for a password");
+      // On the address of the site itself, where a mail asked for in the app leads, nobody can tell
+      // what kind of link it was. The page it is taken to says what to do for a password as well.
+      await stale.goto(`${WEB}/${USED_UP}`);
+      await stale.getByTestId("confirmed-card").waitFor();
+      equal(stale.url(), `${WEB}/confirmed`, "where an expired link on the address of the site leads");
+      assert((await stale.getByTestId("confirmed-more").innerText()).includes("Were you after a new password? Choose “Forgot the password?” on the sign-in page for a fresh mail."), "what to do when it was a link for a password");
+      // The sign-in page has nothing to add, then or later.
+      await stale.getByTestId("confirmed-sign-in").click();
       await stale.getByTestId("login-form").waitFor();
-      equal(await stale.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "an expired link");
-      equal(stale.url(), `${WEB}/login`, "where an expired link leads");
-      // It is said once, not on every later visit of the sign-in page.
-      await stale.goto(`${WEB}/login`);
-      await stale.getByTestId("login-form").waitFor();
-      equal(await stale.getByTestId("login-notice").count(), 0, "the notice about the link on a later visit");
+      equal(await stale.getByTestId("login-notice").count(), 0, "notices on the sign-in page after the page that explained the link");
+      await stale.getByTestId("forgot").click();
+      equal(await stale.locator("h1").innerText(), "Forgot the password?", "the way to a fresh mail is where the page said");
       // And a sign-in somebody made up opens nothing.
       const forged = await stranger.newPage();
       await forged.goto(`${WEB}/#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
       await forged.getByTestId("login-form").waitFor();
       equal(await forged.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "a made-up link");
       equal(await forged.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("shelfmark.auth")).length), 0, "a made-up link signs nobody in");
+      // It is said once, not on every later visit of the sign-in page.
+      await forged.goto(`${WEB}/login`);
+      await forged.getByTestId("login-form").waitFor();
+      equal(await forged.getByTestId("login-notice").count(), 0, "the notice about the link on a later visit");
       await forged.goto(`${WEB}/reset#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
       await forged.getByTestId("reset-invalid").waitFor();
       await stranger.close();

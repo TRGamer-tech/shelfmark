@@ -69,10 +69,9 @@ export function SaveState() {
 }
 
 /**
- * Says what the link of a mail did, once, to somebody who arrived through one and is
- * signed in. The confirmation of a new account gets a notice that stays until it is
- * put away: it is the first thing a new reader sees, and it also has to tell those who
- * signed up in the Android app where to go next. The other kinds get a line that passes.
+ * Says what the link of a mail did, once, in a line that passes, to somebody who
+ * arrived through one and is signed in. The confirmation of a new account is not said
+ * here: it has a page of its own (/confirmed).
  */
 function Welcome() {
   const { t } = useI18n();
@@ -80,25 +79,12 @@ function Welcome() {
   const { notify } = useLibrary();
 
   useEffect(() => {
-    if (!welcome || welcome === "signup") return;
+    if (!welcome) return;
     notify(t(welcome === "email_change" ? "web_welcome_email_changed" : welcome === "pending" ? "web_notice_link_pending" : welcome === "failed" ? "web_welcome_link_used" : "web_welcome_signed_in"));
     dismissWelcome();
   }, [welcome, notify, t, dismissWelcome]);
 
-  if (welcome !== "signup") return null;
-  return (
-    <section className="welcome" role="status" aria-labelledby="welcome-title" data-testid="confirmed-notice">
-      <Icon name="done" size={28} className="welcome-icon" />
-      <div className="welcome-words">
-        <h2 id="welcome-title">{t("web_confirmed_title")}</h2>
-        <p>{t("web_confirmed_text")}</p>
-        <p className="muted">{t("web_confirmed_app")}</p>
-      </div>
-      <Button variant="tonal" onClick={dismissWelcome} data-testid="confirmed-ok">
-        {t("web_confirmed_ok")}
-      </Button>
-    </section>
-  );
+  return null;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {

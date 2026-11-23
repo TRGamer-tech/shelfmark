@@ -5,18 +5,21 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useAuth } from "@/components/auth";
-import { FrontDesk } from "@/components/FrontDesk";
+import { FrontDesk, LangButtons } from "@/components/FrontDesk";
 import { useI18n } from "@/components/i18n";
 import { OrnamentView } from "@/components/Ornaments";
 import { ShelfBoard } from "@/components/Shelves";
 import { Button, Chip, Field } from "@/components/ui";
-import { LANGS } from "@/i18n/index";
+import { LEGAL_PATHS } from "@/lib/legal";
 import { authProblem } from "@/lib/supabase/errors";
 
 type Mode = "in" | "up" | "forgot";
 
+/** Where the link of a confirmation mail leads once Supabase has checked it: the page that says what happened. */
+const confirmationPage = () => `${window.location.origin}/confirmed`;
+
 export default function LoginPage() {
-  const { t, lang, setLang } = useI18n();
+  const { t, lang } = useI18n();
   const { client } = useAuth();
   const [mode, setMode] = useState<Mode>("in");
   const [email, setEmail] = useState("");
@@ -37,8 +40,6 @@ export default function LoginPage() {
           return t("web_account_deleted");
         case "login_kept":
           return t("web_account_login_kept");
-        case "confirmed":
-          return t("web_notice_confirmed");
         case "email_changed":
           return t("web_notice_email_changed");
         case "link_pending":
@@ -76,7 +77,7 @@ export default function LoginPage() {
         const { error } = await client.auth.signInWithPassword({ email: address, password });
         if (error) fail(error);
       } else if (mode === "up") {
-        const { data, error } = await client.auth.signUp({ email: address, password, options: { emailRedirectTo: window.location.origin } });
+        const { data, error } = await client.auth.signUp({ email: address, password, options: { emailRedirectTo: confirmationPage() } });
         if (error) fail(error);
         else {
           // The name is put into the library once it exists, which is after the first sign-in.
@@ -110,7 +111,7 @@ export default function LoginPage() {
   const resend = async () => {
     if (!confirming) return;
     setProblem(null);
-    const { error } = await client.auth.resend({ type: "signup", email: confirming, options: { emailRedirectTo: window.location.origin } });
+    const { error } = await client.auth.resend({ type: "signup", email: confirming, options: { emailRedirectTo: confirmationPage() } });
     if (error) fail(error);
     else setNotice(t("web_confirm_resent"));
   };
@@ -121,19 +122,11 @@ export default function LoginPage() {
     setNotice(null);
   };
 
-  // The language sits where the front page has it: at the top, on the right.
-  const languages = (
-    <span className="front-langs" role="group" aria-label={t("settings_language")}>
-      {LANGS.map((code) => (
-        <button key={code} type="button" aria-pressed={lang === code} onClick={() => setLang(code)} lang={code} data-testid={`lang-${code}`}>
-          {t(`web_language_${code}`)}
-        </button>
-      ))}
-    </span>
-  );
+  // One sentence with a link in it: what stands before the link, and what stands after.
+  const [beforeLink, afterLink] = t("web_signup_privacy", "\n").split("\n");
 
   return (
-    <FrontDesk aside={languages}>
+    <FrontDesk aside={<LangButtons />}>
       <div className="entry">
         <div className="entry-words">
           <h1>{t(mode === "up" ? "account_sign_up" : mode === "forgot" ? "account_forgot" : "account_sign_in")}</h1>
@@ -195,6 +188,17 @@ export default function LoginPage() {
             />
           ) : null}
           {mode === "up" ? <Field label={t("web_account_name")} name="name" autoComplete="given-name" value={name} onChange={(event) => setName(event.target.value.slice(0, 60))} hint={t("settings_profile_hint")} data-testid="name" /> : null}
+
+          {mode === "up" ? (
+            <p className="small muted" data-testid="signup-privacy">
+              {beforeLink}
+              {/* In a window of its own, so that what was typed in so far is still there afterwards. */}
+              <a href={LEGAL_PATHS[lang].privacy} target="_blank" rel="noopener" aria-label={`${t("web_signup_privacy_link")} (${t("web_new_window")})`} data-testid="signup-privacy-link">
+                {t("web_signup_privacy_link")}
+              </a>
+              {afterLink}
+            </p>
+          ) : null}
 
           {problem ? (
             <p className="problem" role="alert" data-testid="login-problem">

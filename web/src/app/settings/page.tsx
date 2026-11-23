@@ -7,6 +7,7 @@ import { useAuth } from "@/components/auth";
 import { AutoSaveField } from "@/components/AutoSave";
 import { useI18n } from "@/components/i18n";
 import { ImportCard, ImportFlow } from "@/components/ImportCard";
+import { LegalLinks } from "@/components/LegalLinks";
 import { useLibrary } from "@/components/library";
 import { ThemeEditor } from "@/components/ThemeEditor";
 import { Button, Card, Chip, ConfirmDialog, Dialog, IconButton, PageHead, Switch } from "@/components/ui";
@@ -274,6 +275,10 @@ export default function SettingsPage() {
           {t("web_about_app")}
         </p>
       </Card>
+
+      <p className="legal-row" data-testid="legal-row">
+        <LegalLinks lang={lang} />
+      </p>
 
       {editing ? (
         <ThemeEditor

@@ -10,6 +10,7 @@ import { ORNAMENT_KINDS, SORT_ORDERS, VIEW_MODES } from "@/lib/model";
 import type { Release } from "@/lib/release";
 import { MIN_ANDROID, RELEASES_PAGE, REPOSITORY, sizeLabel } from "@/lib/release";
 import { THEME_PRESETS, isDark } from "@/lib/theme";
+import { LegalLinks } from "../LegalLinks";
 import { HeroShelf } from "./HeroShelf";
 import { LangLink } from "./LangLink";
 import { TwinShelves } from "./TwinShelves";
@@ -196,6 +197,7 @@ export function Landing({ lang, release }: { lang: Lang; release: Release | null
           <a href={REPOSITORY}>{texts.footer.source}</a>
           <a href={RELEASES_PAGE}>{texts.footer.releases}</a>
           <a href={signInHref}>{texts.footer.signIn}</a>
+          <LegalLinks lang={lang} />
           <a href="#top">{texts.footer.top}</a>
         </p>
       </footer>

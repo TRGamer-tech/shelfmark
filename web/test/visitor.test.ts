@@ -74,7 +74,8 @@ test("the link of a mail is on its way in: no front page, and no detour", () => 
   // Exactly where Supabase sends the browser after the click in a confirmation mail.
   const confirmed = arrive({ path: "/", hash: "#access_token=abc&expires_in=3600&refresh_token=r&token_type=bearer&type=signup", speaks: "de-CH" });
   assert.equal(confirmed.visitor, "in");
-  assert.equal(confirmed.world, "app");
+  // Whoever comes through a link is on their way to one of the front pages. The quiet screen wears their colours.
+  assert.equal(confirmed.world, "front");
   // A German reader is not sent to the German page now: the sign-in behind the "#" would be lost on the way.
   assert.equal(confirmed.sentTo, null);
   assert.equal(arrive({ path: "/", hash: "#type=recovery&access_token=abc" }).visitor, "in");
@@ -109,6 +110,30 @@ test("the pages around the sign-in wear the colours of the front page, the libra
   assert.equal(arrive({ path: "/book", stored: SIGNED_IN }).visitor, undefined);
   // On the sign-in page the language is the reader's, as in the library.
   assert.equal(arrive({ path: "/login", speaks: "de-CH" }).lang, "de");
+});
+
+test("the confirmation page wears the colours of the front page, with a link behind it or without", () => {
+  const link = arrive({ path: "/confirmed", hash: "#access_token=abc&expires_in=3600&refresh_token=r&token_type=bearer&type=signup", speaks: "de-CH" });
+  assert.deepEqual(link, { visitor: undefined, world: "front", lang: "de", js: true, sentTo: null });
+  assert.equal(arrive({ path: "/confirmed", hash: "#error=access_denied&error_code=otp_expired" }).world, "front");
+  assert.equal(arrive({ path: "/confirmed" }).world, "front");
+  assert.equal(arrive({ path: "/confirmed", stored: SIGNED_IN }).world, "front");
+  // A link that fails on its way to the shelf of somebody signed in: the page that explains it is a front page.
+  assert.equal(arrive({ path: "/", hash: "#error=access_denied&error_code=otp_expired", stored: SIGNED_IN }).world, "front");
+});
+
+test("the imprint and the privacy notice are in the language of their address, whoever reads them", () => {
+  for (const path of ["/imprint", "/privacy"]) {
+    assert.deepEqual(arrive({ path, speaks: "de-CH" }), { visitor: undefined, world: "front", lang: "en", js: true, sentTo: null });
+    assert.equal(arrive({ path, stored: { ...SIGNED_IN, "shelfmark.lang": "de" } }).lang, "en");
+    assert.equal(arrive({ path, stored: SIGNED_IN }).world, "front");
+  }
+  for (const path of ["/de/impressum", "/de/datenschutz", "/de/datenschutz/"]) {
+    assert.deepEqual(arrive({ path, speaks: "en-GB" }), { visitor: undefined, world: "front", lang: "de", js: true, sentTo: null });
+    assert.equal(arrive({ path, stored: { "shelfmark.lang": "en" } }).lang, "de");
+  }
+  // An address that only looks like one of them is an ordinary page.
+  assert.equal(arrive({ path: "/de/privacy", speaks: "en-GB" }).lang, "en");
 });
 
 test("a browser that will not say what it remembers is treated as a visitor", () => {

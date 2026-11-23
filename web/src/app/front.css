@@ -1,6 +1,7 @@
 /*
  * The pages a visitor sees before signing in: the front page, signing in, a new
- * password, "no such page" and a site without a server.
+ * password, the confirmation of an address, the imprint, the privacy notice, "no such
+ * page" and a site without a server.
  *
  * They look like a lending library at closing time. The room is the app's own Cocoa
  * theme: dark wood that owns the page. Paper (the app's Paper theme) appears only as
@@ -250,7 +251,8 @@ html:not([data-visitor="in"]) .splash-home {
 /* ---- the front page: the shelf ---- */
 
 .landing,
-.desk {
+.desk,
+.legal {
   overflow-x: clip;
 }
 
@@ -1085,6 +1087,259 @@ html:not(.js) .twin-sample {
   .entry {
     grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
     gap: clamp(40px, 7vw, 96px);
+  }
+}
+
+/* The way to the imprint and the privacy notice, small, under whatever the page is about. */
+.desk-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 26px;
+  padding: 0 var(--gutter) 26px;
+  font-size: 0.95rem;
+}
+
+.desk-foot a {
+  color: var(--muted);
+  padding: 6px 2px;
+}
+
+.desk-foot a:hover {
+  color: var(--text);
+}
+
+/* ---- the slip that says what the link of a confirmation mail did ---- */
+
+.receipt {
+  position: relative;
+  width: min(35rem, 100%);
+  padding: clamp(28px, 5vw, 44px) clamp(22px, 4.4vw, 42px) clamp(24px, 4vw, 34px);
+  border-radius: 3px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 24px 50px rgba(0, 0, 0, 0.42);
+}
+
+.receipt h1 {
+  padding-bottom: 14px;
+  /* The ruled line of an index card, as on the cards of the front page. */
+  border-bottom: 2px solid rgba(176, 92, 39, 0.42);
+  font-size: clamp(1.85rem, 4.6vw, 2.6rem);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+
+.receipt-lead {
+  margin-top: 16px;
+  font-size: 1.1rem;
+  /* An e-mail address has no place to break by itself. */
+  overflow-wrap: anywhere;
+}
+
+.receipt-who {
+  font-weight: 700;
+}
+
+.receipt-action {
+  margin-top: 22px;
+}
+
+.receipt-action .btn {
+  min-height: 50px;
+  padding: 10px 30px;
+  font-size: 1.05rem;
+}
+
+.receipt-more {
+  margin-top: 22px;
+}
+
+.receipt-more p + p {
+  margin-top: 10px;
+}
+
+/* For those who made their account in the app: torn off the same slip, below a perforation. */
+.receipt-app {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 2px dashed rgba(43, 39, 35, 0.28);
+}
+
+.receipt-app h2 {
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.receipt-app p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+/* Stamped at the desk, like the day on the slip of the front page, in the green ink of "in order". */
+.receipt-stamp {
+  position: absolute;
+  top: -19px;
+  right: 18px;
+  padding: 6px 12px 5px;
+  border: 2.5px solid var(--good-text);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--good-text);
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  rotate: 4deg;
+}
+
+.receipt-stamp span {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+}
+
+/* ---- the imprint and the privacy notice ---- */
+
+.legal {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse 80% 520px at 50% -60px, rgba(var(--lamp), 0.17), transparent 70%),
+    var(--bg);
+}
+
+.legal-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(28px, 5vw, 72px);
+  padding: clamp(20px, 5vh, 56px) var(--gutter) clamp(56px, 9vh, 104px);
+}
+
+.legal-title h1 {
+  font-size: clamp(2.3rem, 5vw, 4rem);
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+}
+
+.legal-date {
+  margin-top: 16px;
+  color: var(--accent-text);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.legal-lead {
+  margin-top: 12px;
+  max-width: 30em;
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+
+/* The questions the notice answers, as the way into it. */
+.legal-contents {
+  margin-top: clamp(22px, 4vh, 36px);
+  max-width: 30em;
+}
+
+.legal-contents ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.legal-contents li {
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.legal-contents a {
+  display: block;
+  padding: 9px 0;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.legal-contents a:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
+/* The text itself: a sheet of paper on the wood. */
+.sheet {
+  min-width: 0;
+  padding: clamp(6px, 1.4vw, 16px) clamp(20px, 4vw, 54px) clamp(30px, 4vw, 50px);
+  border-radius: 3px;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.42);
+}
+
+.sheet section {
+  padding-top: clamp(22px, 3.2vw, 34px);
+  /* A section reached through the list of questions does not stick to the edge of the window. */
+  scroll-margin-top: 12px;
+}
+
+.sheet section + section {
+  margin-top: clamp(22px, 3.2vw, 34px);
+  border-top: 1px solid rgba(43, 39, 35, 0.22);
+}
+
+.sheet h2 {
+  font-size: clamp(1.4rem, 2.3vw, 1.8rem);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.sheet p,
+.sheet ul,
+.sheet address {
+  margin-top: 12px;
+  max-width: 66ch;
+}
+
+.sheet ul {
+  padding-left: 1.15em;
+}
+
+.sheet li + li {
+  margin-top: 8px;
+}
+
+.sheet a {
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+
+/* Who runs the site: set like the address on a letter. */
+.sheet-operator {
+  display: grid;
+  gap: 2px;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid rgba(176, 92, 39, 0.42);
+  font-style: normal;
+  font-weight: 700;
+}
+
+@media (min-width: 900px) {
+  .legal-main {
+    grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.3fr);
+  }
+}
+
+/* The title and the questions stay in view next to the text, where the window is tall enough to hold them. */
+@media (min-width: 900px) and (min-height: 860px) {
+  .legal-title {
+    position: sticky;
+    top: 28px;
   }
 }
 

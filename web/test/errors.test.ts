@@ -25,6 +25,10 @@ test("problems with signing in name the text the app uses for them", () => {
   assert.equal(authProblem({ code: "weak_password", message: "Password should be at least 6 characters.", status: 422 }).key, "account_error_weak");
   assert.equal(authProblem({ code: "validation_failed", message: "Unable to validate email address: invalid format", status: 400 }).key, "account_error_email");
   assert.equal(authProblem({ status: 429, message: "slow down" }).key, "account_error_rate");
+  // The mail service of the server has sent its few mails for the hour: that is said as what it is.
+  assert.equal(authProblem({ status: 429, code: "over_email_send_rate_limit", message: "email rate limit exceeded" }).key, "account_error_mail_limit");
+  assert.equal(authProblem({ status: 429, message: "Email rate limit exceeded" }).key, "account_error_mail_limit");
+  assert.equal(authProblem({ status: 400, code: "email_address_not_authorized", message: "Email address not authorized" }).key, "account_error_mail_refused");
   assert.equal(authProblem({ code: "signup_disabled", message: "Signups not allowed" }).key, "account_error_closed");
   assert.equal(authProblem({ name: "AuthRetryableFetchError", message: "Failed to fetch", status: 0 }).key, "server_error_network");
   assert.equal(authProblem({ name: "AuthSessionMissingError", message: "Auth session missing!" }).key, "account_error_signed_out");

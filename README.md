@@ -135,14 +135,18 @@ the three parts is written down in [`supabase/README.md`](supabase/README.md).
    switches for signing up at the top of that page (older dashboards have it inside the panel
    of the Email provider). With it on, a new account has to open a link in a mail first, and
    the mail service that comes with Supabase sends very few mails, and only to members of
-   your own Supabase organisation. The apps cope with either setting: with it on, the link
-   in the mail leads to the website, signed in and told so, and the Android app signs in by
-   itself when its owner comes back to it.
+   your own Supabase organisation: after about two sign-ups in an hour nobody can create an
+   account any more, and is told that the server may send no more mails. The apps cope with
+   either setting: with it on, the link in the mail leads to the page `/confirmed` of the
+   website, and the Android app signs in by itself when its owner comes back to it. To keep
+   confirmation on for real use, set up a mail service of your own (see below).
 4. **Authentication > URL Configuration**: set **Site URL** to the address of the website,
    and add `https://<your site>/**` under **Redirect URLs**, once for every address the site
    is reached at (Vercel gives a project more than one). The links in the mails lead there:
-   to the page for a new password, and back to the site after an address was confirmed. An
-   address that is not on the list is replaced by the Site URL.
+   to the page for a new password, and to the page that says an address is confirmed. An
+   address that is not on the list is replaced by the Site URL. Make sure the Site URL is an
+   address everybody can open: the Supabase integration of Vercel can set it to an address
+   of the project that Vercel keeps behind its own login.
 5. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
    the **publishable key** (the public one, `sb_publishable_...`, never the secret one), and
    give both to the app and to the website, see [Build](#build) and [The website](#the-website).
@@ -191,6 +195,13 @@ A visitor who is not signed in gets a front page that says what Shelfmark does, 
 whose books are its features, with the download of the app and the sign-in. Somebody who is
 signed in gets their shelf at the same address. `/download` always leads to the newest APK
 of the [releases](https://github.com/TRGamer-tech/shelfmark/releases).
+
+The site has an imprint and a privacy notice in both languages (`/imprint`, `/privacy`,
+`/de/impressum`, `/de/datenschutz`). The privacy notice says what the code does, so it has
+to change with the code. **If you host Shelfmark yourself, they are yours to answer for:**
+put your own contact into [`web/src/lib/operator.ts`](web/src/lib/operator.ts) (e-mail, and
+name and postal address where the law of your country asks for them), and read the notice
+against your own setup, for example if mails go through a mail service of your own.
 
 <p>
   <img src="docs/screenshots/web_landing.png" width="84%" alt="The front page of the website: a shelf whose books are what Shelfmark does">

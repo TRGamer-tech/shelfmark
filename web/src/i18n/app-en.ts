@@ -2,7 +2,7 @@
 // change the app's strings.xml and run the script again.
 
 export const strings: Record<string, string> = {
-  account_confirm_email: "Almost there: open the link in the mail that was just sent to you, then sign in here.",
+  account_confirm_email: "Almost there: open the link in the mail that was just sent to you, then come back here. The app signs you in when you are back.",
   account_delete: "Delete account",
   account_delete_confirm: "Delete for good",
   account_delete_text: "Your account, your library on the server, what you share and your connections to friends are deleted for good. The books on this phone stay.",
@@ -11,6 +11,8 @@ export const strings: Record<string, string> = {
   account_error_credentials: "E-mail or password is not right.",
   account_error_email: "That is not an e-mail address.",
   account_error_exists: "There is an account for this address already. Sign in instead.",
+  account_error_mail_limit: "The server cannot send any more confirmation mails right now. This is not your fault. Please try again in an hour.",
+  account_error_mail_refused: "The server could not send a confirmation mail to this address. Please try again later.",
   account_error_rate: "Too many attempts. Please wait a moment.",
   account_error_signed_out: "You are no longer signed in. Please sign in again.",
   account_error_unconfirmed: "Confirm your address first: open the link in the mail you got.",
@@ -20,6 +22,7 @@ export const strings: Record<string, string> = {
   account_open_website: "Open the website",
   account_password: "Password (at least 6 characters)",
   account_pitch: "With an account your library is the same on every phone and on the website, and friends are one code away. Without one everything stays on this device, as before.",
+  account_privacy_hint: "An account keeps your e-mail address and your library on the server.",
   account_reset_sent: "A mail with a link for a new password is on its way.",
   account_sign_in: "Sign in",
   account_sign_out: "Sign out",
@@ -226,6 +229,8 @@ export const strings: Record<string, string> = {
   import_request_title: "Borrow request",
   import_unknown_request: "This answer belongs to a request that was not sent from this phone.",
   import_unreadable: "The file could not be read.",
+  legal_imprint: "Imprint",
+  legal_privacy: "Privacy notice",
   library_empty_action: "Add your first book",
   library_empty_text: "Scan a barcode, search by title or author, or type a book in by hand.",
   library_empty_title: "Your shelf is still empty",

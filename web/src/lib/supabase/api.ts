@@ -16,7 +16,10 @@ export function makeClient(config: ServerConfig): SupabaseClient {
   let client = clients.get(id);
   if (!client) {
     client = createClient(config.url, config.key, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: "shelfmark.auth" },
+      // The sign-in behind the link of a mail is taken by the site itself (components/auth.tsx).
+      // Left to the client, the address with the sign-in in it would stay in the history
+      // of the browser, and the Back button would play the link again.
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: "shelfmark.auth" },
     });
     clients.set(id, client);
   }
