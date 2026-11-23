@@ -97,7 +97,10 @@ every friend can show. Afterwards it is an ordinary `coverUrl`.
 
 Everybody can write below their own user id only. In a book, `coverPath` is the name of the
 picture's file on the phone that took it (it means nothing anywhere else), and `coverUrl`
-is what everybody shows.
+is what everybody shows. Whoever gives a book another cover, from a catalogue or by an
+upload of its own, clears `coverPath`: otherwise the phone that still has the old photo
+would go on showing it, and upload it again. A client deletes its pictures before it
+deletes the account, while it is still allowed to.
 
 ## What friends get
 
@@ -108,9 +111,14 @@ the caller's user id, a client ignores a library whose `ownerId` is not the frie
 came from. Reading status, lists, ratings and reviews are only included when
 `prefs.shareStatus` and `prefs.shareRatings` say so.
 
+The name friends see lives in two places, the profile on the server and
+`prefs.profileName` in the vault. The vault is the one that counts: a client that sees them
+differ calls `shelfmark_hello(p_name)` with the name from the vault.
+
 Borrow requests and answers are envelopes of type `lend_request` and `lend_answer`
 (`LendRequestMsg`, `LendAnswerMsg`), sent with `shelfmark_send`. A client ignores a message
-whose `fromId` is not the friend the server says it came from. The requests themselves
+whose `fromId` is not the friend the server says it came from, and an answer that does not
+come from the friend the request went to. The requests themselves
 are kept in the vault (`requests`), so that every device of an account shows them.
 
 ## Trying it without Supabase

@@ -176,7 +176,28 @@ def make_handler(dsn, key, token_seconds, confirm_email):
             return self.storage("DELETE", path)
 
         def do_PUT(self):
-            return self.do_POST()
+            path = urlparse(self.path).path
+            if path != "/auth/v1/user":
+                return self.do_POST()
+            # A signed-in person changing their own password, as the "new password" page does.
+            if self.headers.get("apikey") != key:
+                return self.reply(401, {"message": "No API key found in request"})
+            claims = self.caller()
+            if not claims:
+                return self.reply(401, {"code": 401, "error_code": "bad_jwt", "msg": "invalid JWT"})
+            try:
+                body = self.body()
+            except ValueError as error:
+                return self.reply(400, {"code": 400, "error_code": "bad_json", "msg": str(error)})
+            password = str(body.get("password", ""))
+            if len(password) < 6:
+                return self.reply(422, {"code": 422, "error_code": "weak_password", "msg": "Password should be at least 6 characters."})
+            with psycopg2.connect(dsn) as connection, connection.cursor() as cursor:
+                cursor.execute("update auth.users set encrypted_password = %s where id = %s returning id, email, confirmed, created_at", (hash_password(password), claims["sub"]))
+                row = cursor.fetchone()
+            if row is None:
+                return self.reply(403, {"code": 403, "error_code": "user_not_found", "msg": "User from sub claim in JWT does not exist"})
+            return self.reply(200, user_json(row))
 
         def do_GET(self):
             path = urlparse(self.path).path
@@ -229,6 +250,9 @@ def make_handler(dsn, key, token_seconds, confirm_email):
                             return self.reply(422, {"code": 422, "error_code": "weak_password", "msg": "Password should be at least 6 characters."})
                         cursor.execute("select 1 from auth.users where email = %s", (email,))
                         if cursor.fetchone():
+                            if confirm_email:
+                                # Supabase does not give away who has an account: it answers as if a mail went out.
+                                return self.reply(200, {"id": str(uuid.uuid4()), "aud": "authenticated", "role": "", "email": email, "identities": []})
                             return self.reply(422, {"code": 422, "error_code": "user_already_exists", "msg": "User already registered"})
                         cursor.execute(
                             "insert into auth.users (id, email, encrypted_password, confirmed) values (%s, %s, %s, %s) returning id, email, confirmed, created_at",
@@ -258,6 +282,19 @@ def make_handler(dsn, key, token_seconds, confirm_email):
                         return self.reply(204)
                     if path == "/auth/v1/recover":
                         return self.reply(200, {})
+                    if path == "/auth/v1/resend":
+                        return self.reply(200, {})
+                    if path == "/auth/v1/dev/recovery":
+                        # Not part of Supabase: the address the link in a "forgot the password" mail ends up at,
+                        # after Supabase checked it. The site finds a sign-in of the kind "recovery" in it.
+                        cursor.execute("select id, email, confirmed, created_at from auth.users where email = %s", (email,))
+                        row = cursor.fetchone()
+                        if row is None:
+                            return self.reply(404, {"message": "no such account"})
+                        session = session_json(row)
+                        target = str(body.get("redirect_to", "")).split("#")[0]
+                        return self.reply(200, {"link": f"{target}#access_token={session['access_token']}&expires_in={session['expires_in']}"
+                                                         f"&expires_at={session['expires_at']}&refresh_token={session['refresh_token']}&token_type=bearer&type=recovery"})
                     if path == "/auth/v1/dev/confirm":
                         # Not part of Supabase: stands in for clicking the link in the confirmation mail.
                         cursor.execute("update auth.users set confirmed = true where email = %s", (email,))

@@ -97,7 +97,8 @@ class SocialRepository(private val db: AppDatabase, private val settings: Settin
             return ImportResult.RequestReceived(msg.requestId, msg.fromName, msg.bookTitle)
         }
         envelope.answer?.let { msg ->
-            val request = db.social().getRequest(msg.requestId)?.takeIf { !it.incoming }
+            // Only the friend who was asked can answer. Knowing the number of a request is not enough.
+            val request = db.social().getRequest(msg.requestId)?.takeIf { !it.incoming && it.peerId == msg.fromId }
                 ?: return ImportResult.Rejected(RejectReason.UNKNOWN_REQUEST)
             db.social().upsertRequest(
                 request.copy(
