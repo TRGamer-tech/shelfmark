@@ -18,6 +18,7 @@
     <string name="account_open_website">Website öffnen</string>
     <string name="account_password">Passwort (mindestens 6 Zeichen)</string>
     <string name="account_pitch">Mit einem Konto ist deine Bibliothek auf jedem Gerät und auf der Website dieselbe, und Freunde sind nur einen Code entfernt. Ohne Konto bleibt alles auf diesem Gerät, wie bisher.</string>
+    <string name="account_privacy_hint">Ein Konto speichert deine E-Mail-Adresse und deine Bibliothek auf dem Server.</string>
     <string name="account_reset_sent">Eine Mail mit einem Link für ein neues Passwort ist unterwegs.</string>
     <string name="account_sign_in">Anmelden</string>
     <string name="account_sign_out">Abmelden</string>
@@ -223,6 +224,8 @@
     <string name="import_request_title">Ausleih-Anfrage</string>
     <string name="import_unknown_request">Diese Antwort gehört zu einer Anfrage, die nicht von diesem Gerät gesendet wurde.</string>
     <string name="import_unreadable">Die Datei konnte nicht gelesen werden.</string>
+    <string name="legal_imprint">Impressum</string>
+    <string name="legal_privacy">Datenschutz</string>
     <string name="library_empty_action">Erstes Buch hinzufügen</string>
     <string name="library_empty_text">Scanne einen Barcode, suche nach Titel oder Autor oder erfasse ein Buch von Hand.</string>
     <string name="library_empty_title">Dein Regal ist noch leer</string>

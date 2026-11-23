@@ -18,6 +18,7 @@
     <string name="account_open_website">Open the website</string>
     <string name="account_password">Password (at least 6 characters)</string>
     <string name="account_pitch">With an account your library is the same on every phone and on the website, and friends are one code away. Without one everything stays on this device, as before.</string>
+    <string name="account_privacy_hint">An account keeps your e-mail address and your library on the server.</string>
     <string name="account_reset_sent">A mail with a link for a new password is on its way.</string>
     <string name="account_sign_in">Sign in</string>
     <string name="account_sign_out">Sign out</string>
@@ -224,6 +225,8 @@
     <string name="import_request_title">Borrow request</string>
     <string name="import_unknown_request">This answer belongs to a request that was not sent from this phone.</string>
     <string name="import_unreadable">The file could not be read.</string>
+    <string name="legal_imprint">Imprint</string>
+    <string name="legal_privacy">Privacy notice</string>
     <string name="library_empty_action">Add your first book</string>
     <string name="library_empty_text">Scan a barcode, search by title or author, or type a book in by hand.</string>
     <string name="library_empty_title">Your shelf is still empty</string>

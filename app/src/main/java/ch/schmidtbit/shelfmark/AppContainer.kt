@@ -56,8 +56,13 @@ class AppContainer(
     /** The server this build talks to. Tests pass their own, a real build takes it from the build settings. */
     serverConfig: ServerConfig? = ServerConfig.of(BuildConfig.SERVER_URL, BuildConfig.SERVER_KEY),
     serverPoster: HttpPoster? = null,
+    /** Where the website is published, if the build knows. */
+    websiteUrl: String = BuildConfig.WEBSITE_URL,
 ) {
     private val appContext = context.applicationContext
+
+    /** The address of the website without a slash at the end, or empty. */
+    val website: String = websiteUrl.trim().trimEnd('/').takeIf { it.startsWith("http") }.orEmpty()
 
     val settings = SettingsRepository(settingsStore ?: appContext.dataStore)
     val covers = CoverStore(appContext)
@@ -103,6 +108,7 @@ class AppContainer(
         config = serverConfig,
         poster = serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) },
         baseFile = java.io.File(appContext.filesDir, "vault_base.json"),
+        website = website,
     )
 
     /** What was last asked of the user about an account and a device that both hold books. */

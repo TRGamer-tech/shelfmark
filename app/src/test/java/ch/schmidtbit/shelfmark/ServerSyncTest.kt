@@ -94,6 +94,8 @@ class FakeServer : HttpPoster {
     var time = 1_795_400_000_000L
     var tokenSeconds = 3600L
     val calls = HashMap<String, Int>()
+    /** Where the last sign-up asked the confirmation mail to lead back to, if it named a page. */
+    var returnTo: String? = null
 
     fun knows(email: String): Boolean = users[email.lowercase()]?.let { it.id in profiles } == true
     fun hasAccount(email: String): Boolean = email.lowercase() in users
@@ -168,7 +170,8 @@ class FakeServer : HttpPoster {
         calls[path.substringBefore('?')] = (calls[path.substringBefore('?')] ?: 0) + 1
         val email = text("email").trim().lowercase()
         return when {
-            path == "signup" -> {
+            path.substringBefore('?') == "signup" -> {
+                returnTo = path.substringAfter("redirect_to=", "").takeIf { it.isNotEmpty() }?.let { java.net.URLDecoder.decode(it, "UTF-8") }
                 if ("@" !in email) throw AuthRefusal(400, "validation_failed")
                 if (text("password").length < 6) throw AuthRefusal(422, "weak_password")
                 if (email in users) throw AuthRefusal(422, "user_already_exists")

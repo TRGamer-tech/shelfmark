@@ -255,9 +255,15 @@ class AuthException(val reason: String, val status: Int) : IOException("Sign-in:
 /** Accounts: Supabase Auth with e-mail and password, the few calls of it the app needs. */
 class AuthApi(private val config: ServerConfig, private val poster: HttpPoster, private val now: () -> Long = System::currentTimeMillis) {
 
-    /** Creates an account. Returns the sign-in, or null when the address has to be confirmed by mail first. */
-    suspend fun signUp(email: String, password: String): Session? =
-        session(post("signup", buildJsonObject { put("email", email.trim()); put("password", password) }))
+    /**
+     * Creates an account. Returns the sign-in, or null when the address has to be confirmed by mail first.
+     * [returnTo] is the page the link in that mail leads to once Supabase has checked it. Without
+     * one, Supabase sends people to the address in its own settings, which may be no page of ours.
+     */
+    suspend fun signUp(email: String, password: String, returnTo: String? = null): Session? {
+        val path = if (returnTo.isNullOrBlank()) "signup" else "signup?redirect_to=" + java.net.URLEncoder.encode(returnTo, "UTF-8")
+        return session(post(path, buildJsonObject { put("email", email.trim()); put("password", password) }))
+    }
 
     suspend fun signIn(email: String, password: String): Session =
         session(post("token?grant_type=password", buildJsonObject { put("email", email.trim()); put("password", password) }))

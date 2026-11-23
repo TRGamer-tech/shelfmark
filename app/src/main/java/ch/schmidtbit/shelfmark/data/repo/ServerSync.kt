@@ -81,6 +81,8 @@ class ServerSync(
      * document, comparing two of them and reading pictures takes long enough to be felt.
      */
     private val work: CoroutineDispatcher = Dispatchers.Default,
+    /** The address of the website, without a slash at the end. Empty when the build knows none. */
+    private val website: String = "",
 ) {
     val status = MutableStateFlow(SyncStatus())
     val waiting: Flow<Int> = db.social().observeOutboxCount()
@@ -121,7 +123,8 @@ class ServerSync(
     private suspend fun signUpNow(email: String, password: String): SyncResult? {
         val config = config ?: return SyncResult.Failed(NO_SERVER)
         val session = try {
-            AuthApi(config, poster, now).signUp(email, password) ?: return null
+            // The link in the confirmation mail should end on the page that says "confirmed".
+            AuthApi(config, poster, now).signUp(email, password, website.takeIf { it.startsWith("http") }?.let { "$it/confirmed" }) ?: return null
         } catch (e: AuthException) {
             return SyncResult.Failed(e.reason)
         } catch (e: IOException) {

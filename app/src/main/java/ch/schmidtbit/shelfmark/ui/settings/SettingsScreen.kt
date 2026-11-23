@@ -54,12 +54,12 @@ import ch.schmidtbit.shelfmark.ui.friends.AccountForm
 import ch.schmidtbit.shelfmark.ui.friends.DeleteAccountDialog
 import ch.schmidtbit.shelfmark.ui.friends.ToggleRow
 import androidx.compose.foundation.layout.Row
-import android.content.Intent
-import android.net.Uri
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.Settings
 import ch.schmidtbit.shelfmark.ui.LocalContainer
+import ch.schmidtbit.shelfmark.ui.WebsitePage
+import ch.schmidtbit.shelfmark.ui.openWebsite
 import ch.schmidtbit.shelfmark.ui.LocalImporter
 import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
@@ -203,12 +203,20 @@ private fun AccountSection(settings: Settings) {
                 TextButton(onClick = { deleting = true }, modifier = Modifier.testTag("deleteAccount")) { Text(stringResource(R.string.account_delete)) }
             }
             // The same library in a browser, where the build knows the address of the website.
-            if (BuildConfig.WEBSITE_URL.startsWith("http")) {
+            if (container.website.isNotEmpty()) {
                 val context = LocalContext.current
                 TextButton(
-                    onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.WEBSITE_URL))) } },
+                    onClick = { openWebsite(context, container.website, WebsitePage.HOME) },
                     modifier = Modifier.testTag("openWebsite"),
                 ) { Text(stringResource(R.string.account_open_website)) }
+            }
+        }
+        // What is stored and who answers for it is written down on the website.
+        if (container.website.isNotEmpty()) {
+            val context = LocalContext.current
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { openWebsite(context, container.website, WebsitePage.PRIVACY) }, modifier = Modifier.testTag("openPrivacy")) { Text(stringResource(R.string.legal_privacy)) }
+                TextButton(onClick = { openWebsite(context, container.website, WebsitePage.IMPRINT) }, modifier = Modifier.testTag("openImprint")) { Text(stringResource(R.string.legal_imprint)) }
             }
         }
         Text(stringResource(R.string.settings_server_daily), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))

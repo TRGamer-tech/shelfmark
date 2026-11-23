@@ -118,6 +118,8 @@ class AppFlowTest {
             coverProbeOverride = ImageProbe { false },
             serverConfig = serverConfig,
             serverPoster = fakeServer,
+            // With a slash at the end, as somebody might type it into the build settings.
+            websiteUrl = "https://shelfmark.example/",
         )
         app.container = container
         // Asking for the permission would open a system dialog that nobody answers here.
@@ -885,6 +887,8 @@ class AppFlowTest {
         tap("signUp")
         waitForTag("accountNotice")
         waitForText("komm dann hierher zurück")
+        // The link in the mail leads to the page of the website that says "confirmed".
+        assertEquals("https://shelfmark.example/confirmed", fakeServer.returnTo)
         // Away to the mail and back, but the link was not opened yet: nothing happens, and nothing is complained about.
         scenario!!.moveToState(Lifecycle.State.STARTED)
         scenario!!.moveToState(Lifecycle.State.RESUMED)
@@ -931,6 +935,12 @@ class AppFlowTest {
             tap("openSettings")
             scrollTo("signOut")
             waitForText("Angemeldet als ${anna.email}")
+            // Privacy notice and imprint are one tap away.
+            scrollTo("openImprint")
+            tap("openImprint")
+            waitFor { shadowOf(app).peekNextStartedActivity() != null }
+            assertEquals("https://shelfmark.example/de/impressum", shadowOf(app).nextStartedActivity.dataString)
+            scrollTo("signOut")
             // The two settings that only made things harder are gone.
             assertTrue(compose.onAllNodesWithTag("googleKey").fetchSemanticsNodes().isEmpty())
             assertTrue(compose.onAllNodesWithTag("ownServer").fetchSemanticsNodes().isEmpty())
@@ -952,6 +962,13 @@ class AppFlowTest {
         waitForText("Ohne Konto weiter")
         assertTrue(compose.onAllNodesWithTag("onboardingNext").fetchSemanticsNodes().isEmpty())
         shot("04_onboarding_account")
+        // What an account keeps can be read before there is one, in the reader's language.
+        waitForText("Ein Konto speichert deine E-Mail-Adresse und deine Bibliothek auf dem Server.")
+        tap("accountPrivacy")
+        waitFor { shadowOf(app).peekNextStartedActivity() != null }
+        val opened = shadowOf(app).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, opened.action)
+        assertEquals("https://shelfmark.example/de/datenschutz", opened.dataString)
         type("accountEmail", benEmail)
         type("accountPassword", benPassword)
         tap("signUp")

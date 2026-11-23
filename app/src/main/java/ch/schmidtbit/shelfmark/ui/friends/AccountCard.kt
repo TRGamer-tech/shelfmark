@@ -64,6 +64,8 @@ import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.share.ShareFiles
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.LocalImporter
+import ch.schmidtbit.shelfmark.ui.WebsitePage
+import ch.schmidtbit.shelfmark.ui.openWebsite
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.lists.NameDialog
 import ch.schmidtbit.shelfmark.work.Notifier
@@ -203,6 +205,13 @@ fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
         ) { Text(stringResource(R.string.account_forgot)) }
         AnimatedVisibility(visible = problem != null) {
             Text(serverProblem(problem.orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("accountProblem"))
+        }
+        // Whoever creates an account should be able to read first what is kept, and where.
+        if (container.website.isNotEmpty()) {
+            Text(stringResource(R.string.account_privacy_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { openWebsite(context, container.website, WebsitePage.PRIVACY) }, modifier = Modifier.testTag("accountPrivacy")) {
+                Text(stringResource(R.string.legal_privacy))
+            }
         }
         notice?.let { Text(stringResource(it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("accountNotice")) }
     }
