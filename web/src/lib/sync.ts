@@ -96,11 +96,13 @@ export class VaultStore {
   private take(answer: PullAnswer): void {
     if (answer.payload !== null && answer.payload !== undefined) {
       this.base = looksLikeVault(answer.payload) ? readVault(answer.payload) : emptyVault();
+      this.revision = answer.revision;
     } else if (answer.revision === 0) {
       // An account that never saved anything starts with an empty library.
       this.base = emptyVault();
+      this.revision = 0;
     }
-    this.revision = answer.revision;
+    // A revision without its document is no news: there is nothing to go with the number.
   }
 
   /** The first fetch after signing in. */
@@ -124,10 +126,12 @@ export class VaultStore {
     if (this.status === "loading" || this.status === "failed") return;
     // While a save is on its way it brings the news back by itself.
     if (this.flushing) return;
+    const asked = this.revision;
     try {
-      const answer = await this.api.pull(this.revision);
-      if (this.flushing) return;
-      if (answer.revision !== this.revision || answer.payload) {
+      const answer = await this.api.pull(asked);
+      // A save that started or finished meanwhile knows more than this answer does.
+      if (this.flushing || this.revision !== asked) return;
+      if (answer.revision !== asked) {
         this.take(answer);
         this.publish();
       }

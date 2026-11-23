@@ -11,6 +11,7 @@ import type { IconName } from "./icons";
 import { useI18n } from "./i18n";
 import { useLibrary } from "./library";
 import { Splash } from "./Providers";
+import { TimerLine, useTimedBook } from "./timer";
 import { Button } from "./ui";
 
 interface NavItem {
@@ -72,6 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { signOut } = useAuth();
   const { status, problem, retry, vault } = useLibrary();
   const pathname = usePathname();
+  const timed = useTimedBook() !== null;
 
   if (status === "loading") return <Splash text={t("web_loading")} />;
   if (status === "failed") {
@@ -115,7 +117,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="shell">
+    <div className={timed ? "shell shell-timer" : "shell"}>
       <a className="skip-link" href="#content">
         {t("web_skip")}
       </a>
@@ -125,6 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <div className="sidebar-links">{items.map((item) => link(item, item.href === "/friends" ? waiting : 0))}</div>
         <div className="sidebar-foot">
+          <TimerLine />
           {link(settings)}
           <SaveState />
         </div>
@@ -134,6 +137,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
       <div className="save-float">
         <SaveState />
+      </div>
+      <div className="timer-float">
+        <TimerLine />
       </div>
       <nav className="bottombar" aria-label={t("web_menu")}>
         {items.map((item) => link(item, item.href === "/friends" ? waiting : 0))}

@@ -279,6 +279,12 @@ export async function untilVault(account, check, what, seconds = 12) {
 
 export const results = [];
 
+// "npm run e2e -- --only=timer" runs the tests whose name holds that word and leaves
+// the others out. Only for tests that stand on their own: most of Anna's build on the
+// ones before them.
+const only = process.argv.find((argument) => argument.startsWith("--only="))?.slice("--only=".length) ?? "";
+export let leftOut = 0;
+
 export function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -292,6 +298,10 @@ export function equal(actual, expected, message) {
  * still runs, so that one broken thing does not hide the state of all the others.
  */
 export async function test(name, body, page) {
+  if (only !== "" && !name.includes(only)) {
+    leftOut++;
+    return;
+  }
   const started = Date.now();
   try {
     await body();

@@ -273,16 +273,15 @@ export default function ShelfPage() {
             data-testid="toggle-search"
           />
           <div className="menu-wrap" ref={menuRef}>
-            <IconButton icon="tune" label={t("library_view_options")} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => setMenuOpen(!menuOpen)} data-testid="view-menu" />
+            <IconButton icon="tune" label={t("library_view_options")} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} data-testid="view-menu" />
             {menuOpen ? (
-              <div className="menu" role="menu" aria-label={t("library_view_options")}>
+              <div className="menu" role="group" aria-label={t("library_view_options")}>
                 <div className="menu-heading">{t("library_view")}</div>
                 {VIEW_MODES.map((mode) => (
                   <button
                     key={mode}
                     type="button"
-                    role="menuitemradio"
-                    aria-checked={mode === viewMode}
+                    aria-pressed={mode === viewMode}
                     className="menu-item"
                     onClick={() => {
                       setMenuOpen(false);
@@ -300,8 +299,7 @@ export default function ShelfPage() {
                   <button
                     key={order}
                     type="button"
-                    role="menuitemradio"
-                    aria-checked={order === sort}
+                    aria-pressed={order === sort}
                     className="menu-item"
                     onClick={() => {
                       setMenuOpen(false);

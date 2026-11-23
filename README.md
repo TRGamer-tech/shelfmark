@@ -88,8 +88,10 @@ available in English and German.
 - When two devices changed things while the other was not looking, both sets of changes are
   kept, book by book.
 - The same library in a browser, on the website, with the same sign-in. The website does
-  what the app does, except for the two things that need the camera of a phone: scanning a
-  barcode and reading a quote off a page.
+  what the app does, reading timer and import from other apps included. What it leaves to the
+  phone is what needs a phone: the camera (scanning a barcode, reading a quote off a page),
+  zip backups with the cover photos in them, and notifications. The list is in
+  [`web/README.md`](web/README.md).
 
 **Friends**
 
@@ -179,6 +181,11 @@ else.
 `web/` is the same library in a browser, for the same accounts: a Next.js app made for
 [Vercel](https://vercel.com). How to run and test it locally is in
 [`web/README.md`](web/README.md).
+
+<p>
+  <img src="docs/screenshots/web_shelf.png" width="62%" alt="The shelf on the website, with the spines, the candle and the cat">
+  <img src="docs/screenshots/web_shelf_phone_width.png" width="20%" alt="The same shelf of the same account in a narrow window, dark theme">
+</p>
 
 **Putting it on Vercel**
 

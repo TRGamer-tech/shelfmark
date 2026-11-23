@@ -118,6 +118,30 @@ test("an answer updates the request I sent", () => {
   assert.equal(importMessages(bensVault, [liar], BEN).vault, bensVault);
 });
 
+test("an answer only counts when it comes from the friend the request went to", () => {
+  // Ben asked Anna for a book. Clara is a friend of Ben's too, and knows the id of the request.
+  const mine = outgoing("r-7");
+  const bensVault = addRequest(mine)(emptyVault());
+  const atAnna = { ...mine, incoming: true, peerId: BEN, peerName: "Ben" };
+  // Clara answers under their own name, so the server vouches for the sender. It is still not Clara's to answer.
+  for (const accepted of [true, false]) {
+    const meddling = { id: "m1", from: CLARA, at: 9, payload: writeEnvelope(answerEnvelope(atAnna, accepted, CLARA, "Clara", 4444)) };
+    const result = importMessages(bensVault, [meddling], BEN);
+    assert.equal(result.vault, bensVault);
+    assert.equal(result.vault.requests[0].status, "PENDING");
+    assert.equal(result.answered.length, 0);
+  }
+  // Anna's own answer still gets through afterwards, also in the same batch as Clara's.
+  const clara = { id: "m1", from: CLARA, at: 9, payload: writeEnvelope(answerEnvelope(atAnna, true, CLARA, "Clara", 4444)) };
+  const anna = { id: "m2", from: ANNA, at: 10, payload: writeEnvelope(answerEnvelope(atAnna, false, ANNA, "Anna", 5555)) };
+  const both = importMessages(bensVault, [clara, anna], BEN);
+  assert.equal(both.vault.requests[0].status, "DECLINED");
+  assert.equal(both.vault.requests[0].answeredAt, 5555);
+  // And an answer that was given is not overturned by somebody else later.
+  const later = importMessages(both.vault, [clara], BEN);
+  assert.equal(later.vault, both.vault);
+});
+
 test("saying yes marks my copy as lent, saying no does not", () => {
   const start = { ...annasVault(), requests: [] };
   const withBook = modifyBook(3, (b) => ({ ...b, lentTo: "", lentSince: null }), 1)(start);

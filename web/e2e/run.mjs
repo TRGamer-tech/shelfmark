@@ -3,6 +3,7 @@
 //
 //   npm run e2e                 builds the site, starts everything, runs every test
 //   npm run e2e -- --no-build   reuses the last build
+//   npm run e2e -- --only=timer runs only the tests whose name holds that word
 //
 // See README.md for what has to be running (a PostgreSQL with the schema loaded).
 
@@ -11,6 +12,7 @@ import {
   CONFIRM_PORT,
   CONFIRM_SERVER,
   COVER_PNG,
+  FIXTURES,
   KEY,
   OUTPUT,
   PLAIN,
@@ -23,6 +25,7 @@ import {
   buildSites,
   equal,
   jpegSize,
+  leftOut,
   loadPlaywright,
   png,
   results,
@@ -492,7 +495,7 @@ async function main() {
       await page.getByTestId("tab-notes").click();
       await page.getByTestId("add-note").click();
       await page.getByTestId("note-title").fill("People");
-      await page.getByTestId("note-text").fill("Hanna keeps her secret to the end.");
+      await page.getByTestId("note-text").fill("Hanna keeps the secret to the end.");
       await page.getByTestId("note-save").click();
       await page.getByTestId("note-row").waitFor();
       await page.getByTestId("tab-quotes").click();
@@ -673,7 +676,15 @@ async function main() {
   await test(
     "upload a cover picture, and see it on the shelf",
     async () => {
+      // A phone photographed the cover of a book: it noted the name of its file in the book.
+      const photographOnPhone = async (title, file) => {
+        await waitSaved(page);
+        const { vault, revision } = await vaultOf(anna);
+        await rpc(anna.session.token, "shelfmark_vault_push", { p_payload: { ...vault, books: vault.books.map((b) => (b.title === title ? { ...b, coverPath: file } : b)) }, p_expected: revision });
+      };
+      await photographOnPhone("Dracula", "photo-dracula.jpg");
       const dracula = await openBook(page, anna, "Dracula");
+      equal(dracula.coverPath, "photo-dracula.jpg", "the photo on the phone before anything is uploaded");
       await page.getByRole("link", { name: "Edit" }).click();
       await page.getByTestId("book-form").waitFor();
       // A photo as a phone takes it, far larger than a cover needs to be.
@@ -689,6 +700,8 @@ async function main() {
       await page.getByTestId("book-page").waitFor();
       const vault = await untilVault(anna, (v) => bookOf(v, "Dracula").coverUrl === uploaded, "the address of the cover in the library");
       equal(bookOf(vault, "Dracula").pageCount, dracula.pageCount, "the rest of the book is untouched");
+      // The phone that took the old photo would go on showing it, and upload it again over the new address.
+      assert(!("coverPath" in bookOf(vault, "Dracula")), "an uploaded cover clears the name of the photo on the phone");
 
       // What was uploaded is a JPEG of at most 1000 pixels on the longer side, and anybody with the address can fetch it.
       const response = await fetch(uploaded);
@@ -726,7 +739,8 @@ async function main() {
       });
       assert(!foreign.ok, "writing below another account's folder is refused");
 
-      // Picking a cover from the catalogues, or pasting an address, works from the same form.
+      // Picking a cover from the catalogues works from the same form, and clears the photo of the phone as well.
+      await photographOnPhone("Faust", "photo-faust.jpg");
       const faust = bookOf((await vaultOf(anna)).vault, "Faust");
       await page.goto(`${WEB}/book/edit?id=${faust.id}`);
       await page.getByTestId("field-isbn").fill("9783257229530");
@@ -735,19 +749,38 @@ async function main() {
       await page.getByTestId("cover-choice").first().click();
       const chosen = await page.locator('[data-testid="book-form"] [data-testid="cover-image"]').getAttribute("src");
       assert(chosen.startsWith("https://covers.openlibrary.org/"), `a cover from the catalogues: ${chosen}`);
-      await page.getByTestId("cover-address").fill("https://example.org/faust.jpg");
-      await page.getByTestId("cover-address-use").click();
       await page.getByTestId("field-isbn").fill("");
       await page.getByTestId("save-book").click();
-      await untilVault(anna, (v) => bookOf(v, "Faust").coverUrl === "https://example.org/faust.jpg", "the pasted address");
+      await page.getByTestId("book-page").waitFor();
+      const picked = bookOf(await untilVault(anna, (v) => bookOf(v, "Faust").coverUrl === chosen, "the cover from the catalogues"), "Faust");
+      assert(!("coverPath" in picked), "a cover from the catalogues clears the name of the photo on the phone");
+      // So does pasting an address.
+      await photographOnPhone("Faust", "photo-faust-2.jpg");
+      await page.goto(`${WEB}/book/edit?id=${faust.id}`);
+      await page.getByTestId("book-form").waitFor();
+      await page.getByTestId("cover-address").fill("https://example.org/faust.jpg");
+      await page.getByTestId("cover-address-use").click();
+      await page.getByTestId("save-book").click();
+      await page.getByTestId("book-page").waitFor();
+      const pasted = bookOf(await untilVault(anna, (v) => bookOf(v, "Faust").coverUrl === "https://example.org/faust.jpg", "the pasted address"), "Faust");
+      assert(!("coverPath" in pasted), "a pasted address clears the name of the photo on the phone");
+
       // A book whose cover is only a photo on a phone gets the drawn cover here.
-      const { vault: before, revision } = await vaultOf(anna);
-      const emma = bookOf(before, "Emma");
-      await rpc(anna.session.token, "shelfmark_vault_push", { p_payload: { ...before, books: before.books.map((b) => (b.id === emma.id ? { ...b, coverPath: "cover_emma.jpg" } : b)) }, p_expected: revision });
+      await photographOnPhone("Emma", "cover_emma.jpg");
+      const emma = bookOf((await vaultOf(anna)).vault, "Emma");
       await page.goto(`${WEB}/book?id=${emma.id}`);
       await page.getByTestId("book-page").waitFor();
       equal(await page.locator('[data-testid="book-page"] .book-head [data-testid="cover-image"]').count(), 0, "pictures on a book that has only a photo on the phone");
       assert((await page.locator('[data-testid="book-page"] .book-head .cover-title').innerText()).includes("Emma"), "the drawn cover carries the title");
+      // Correcting something else about that book leaves its photo alone.
+      await page.goto(`${WEB}/book/edit?id=${emma.id}`);
+      await page.getByTestId("book-form").waitFor();
+      await page.getByTestId("field-publisher").fill("John Murray");
+      await page.getByTestId("save-book").click();
+      await page.getByTestId("book-page").waitFor();
+      const corrected = bookOf(await untilVault(anna, (v) => bookOf(v, "Emma").publisher === "John Murray", "the corrected publisher"), "Emma");
+      equal(corrected.coverPath, "cover_emma.jpg", "the photo on the phone after another field was edited");
+      assert(!corrected.coverUrl, "no address is invented for a photo that only the phone has");
     },
     page,
   );
@@ -880,7 +913,7 @@ async function main() {
       await shot(page, "friends", { fullPage: true });
       deepAudit(await audit(page), "friends page");
 
-      // Ben's shelf, with what he shares: his rating and his review.
+      // Ben's shelf, with what Ben shares: a rating and a review.
       await card.getByTestId("open-friend").click();
       await page.getByTestId("friend-library").waitFor();
       await page.getByTestId("cover").waitFor();
@@ -894,15 +927,28 @@ async function main() {
       await page.getByTestId("ask-to-borrow").click();
       await page.getByTestId("request-state").waitFor();
       equal(await page.getByTestId("request-state").innerText(), "Request sent, waiting for Ben", "the request is on its way");
+      await until(async () => (await rpc(ben.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] })).messages.length === 1, "the request waits on the server for Ben");
       const asked = await untilVault(anna, (v) => v.requests?.length === 1, "the request in Anna's library");
       equal(asked.requests[0].incoming, false, "an outgoing request");
       equal(asked.requests[0].bookTitle, "Momo", "the book asked for");
       equal(asked.requests[0].peerName, "Ben", "whom it was asked of");
       assert(/^[0-9a-f-]{36}$/.test(asked.requests[0].id), "the id of a request is a UUID");
       assert(!("status" in asked.requests[0]), "waiting is the default and is left out");
+      // A friend's book can go straight onto my wishlist. It is not mine, so it is not offered to others.
+      await page.getByTestId("add-to-wishlist").click();
+      const wished = bookOf(await untilVault(anna, (v) => bookOf(v, "Momo"), "Momo on Anna's wishlist"), "Momo");
+      equal(wished.status, "WISHLIST", "the list it went on");
+      equal(wished.ownership, "NOT_OWNED", "who owns it");
+      equal(wished.authors, "Michael Ende", "what came along from the friend's shelf");
       await page.keyboard.press("Escape");
+      await page.goto(`${WEB}/?status=WISHLIST`);
+      await page.getByTestId("shelf-WISHLIST").waitFor();
+      await page.locator('[data-testid="spine"], [data-testid="leaning"]').first().click();
+      await page.getByTestId("delete-book").click();
+      await page.getByTestId("confirm").click();
+      await untilVault(anna, (v) => !bookOf(v, "Momo"), "the wish taken back");
 
-      // Ben finds the request waiting, with the note, in his language.
+      // Ben finds the request waiting, with the note, in German.
       await benPage.goto(`${WEB}/friends/requests`);
       const incoming = benPage.getByTestId("incoming-request");
       await incoming.waitFor();
@@ -917,8 +963,10 @@ async function main() {
 
       await benPage.getByTestId("answer-yes").click();
       await benPage.getByTestId("request-status").filter({ hasText: "Zugesagt" }).waitFor();
+      // The page says when the answer has left.
+      await benPage.getByText("Gesendet", { exact: true }).waitFor();
       const answered = await untilVault(ben, (v) => v.requests[0].status === "ACCEPTED", "the answer in Ben's library");
-      // Saying yes marks his copy as lent to her.
+      // Saying yes marks Ben's copy as lent to Anna.
       equal(bookOf(answered, "Momo").lentTo, "Anna", "who has the book now");
       equal(bookOf(answered, "Momo").lentSince, today, "since when");
       const momo = bookOf(answered, "Momo");
@@ -943,7 +991,7 @@ async function main() {
       equal(await page.getByTestId("request-state").innerText(), "Ben said yes", "the state of the request on the friend's book");
       await page.keyboard.press("Escape");
 
-      // Ben stops sharing ratings: his review disappears from what Anna sees.
+      // Ben stops sharing ratings: the review disappears from what Anna sees.
       await benPage.goto(`${WEB}/friends`);
       await benPage.getByTestId("share-ratings").click();
       await untilVault(ben, (v) => v.prefs.shareRatings === false, "ratings no longer shared");
@@ -956,7 +1004,7 @@ async function main() {
       await page.getByTestId("friend-card").getByTestId("open-friend").click();
       await page.getByTestId("cover").click();
       await page.getByTestId("friend-book").waitFor();
-      equal(await page.getByTestId("friend-opinion").count(), 0, "the friend's opinion once he stopped sharing it");
+      equal(await page.getByTestId("friend-opinion").count(), 0, "the friend's opinion once they stopped sharing it");
       await page.keyboard.press("Escape");
     },
     () => page,
@@ -1003,13 +1051,18 @@ async function main() {
       // A badge on the friends tab says that somebody is waiting.
       await page.getByTestId("requests-waiting").waitFor();
       equal(await page.getByTestId("requests-waiting").innerText(), "1 request waits for your answer", "the waiting request is announced");
-      // Anna says no. Her book stays where it is.
+      // Anna says no. The book stays where it is.
       await page.getByTestId("open-requests").click();
       await page.getByTestId("incoming-request").waitFor();
       await page.getByTestId("answer-no").click();
       const declined = await untilVault(anna, (v) => v.requests.find((r) => r.id === "carl-1").status === "DECLINED", "the no");
       assert(!("lentTo" in bookOf(declined, "Dracula")), "a book that was not lent is not marked as lent");
-      const news = await rpc(carl.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] });
+      // The answer is sent once it is safely in Anna's library, which is a moment later.
+      let news;
+      await until(async () => {
+        news = await rpc(carl.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] });
+        return news.messages.length > 0;
+      }, "the answer on its way to Carl");
       equal(news.messages.length, 1, "messages waiting for Carl");
       equal(news.messages[0].payload.answer.accepted, false, "the answer Carl gets");
       equal(news.messages[0].payload.answer.fromId, anna.session.id, "who answered");
@@ -1102,6 +1155,28 @@ async function main() {
       await second.evaluate(() => window.dispatchEvent(new Event("focus")));
       await until(async () => (await second.getByTestId("review").inputValue()) === "Fangs.", "the review in the other tab");
       await second.close();
+    },
+    page,
+  );
+
+  await test(
+    "without a connection the page says so, keeps what was typed, and saves later",
+    async () => {
+      await openBook(page, anna, "Dracula");
+      await page.route("**/rest/v1/rpc/shelfmark_vault_push", (route) => route.abort());
+      await page.getByTestId("review").fill("Fangs. Written on a train, in a tunnel.");
+      const state = page.locator('[data-testid="save-state"]:visible');
+      await page.locator('[data-testid="save-state"][data-state="error"]:visible').waitFor();
+      assert((await state.innerText()).includes("Could not save"), "the page says that it could not save");
+      // Nothing is lost meanwhile: the words are on the page, and a second change joins the queue.
+      await page.getByTestId("spice5").click();
+      equal(await page.getByTestId("review").inputValue(), "Fangs. Written on a train, in a tunnel.", "what was typed");
+      assert(!bookOf((await vaultOf(anna)).vault, "Dracula").review.includes("tunnel"), "the server has not seen it yet");
+      await page.unroute("**/rest/v1/rpc/shelfmark_vault_push");
+      await state.getByRole("button", { name: "Try again" }).click();
+      const vault = await untilVault(anna, (v) => bookOf(v, "Dracula").review === "Fangs. Written on a train, in a tunnel." && bookOf(v, "Dracula").spice === 5, "both changes, once the connection is back");
+      assert(vault, "saved");
+      await page.locator('[data-testid="save-state"][data-state="saved"]:visible, [data-testid="save-state"][data-state="idle"]:visible').waitFor();
     },
     page,
   );
@@ -1210,6 +1285,7 @@ async function main() {
       await spine.focus();
       await page.keyboard.press("Enter");
       await page.getByTestId("book-page").waitFor();
+      await openBook(page, anna, "Dracula");
       // Dialogs keep the keyboard inside and close with Escape.
       await page.getByTestId("delete-book").focus();
       await page.keyboard.press("Enter");
@@ -1218,6 +1294,13 @@ async function main() {
       await page.keyboard.press("Escape");
       await page.locator("dialog[open]").waitFor({ state: "detached" });
       equal(await page.evaluate(() => document.activeElement.getAttribute("data-testid")), "delete-book", "the focus goes back to where it came from");
+      // Within the tabs of a book the arrow keys move from one to the next.
+      await page.getByTestId("tab-overview").focus();
+      await page.keyboard.press("ArrowRight");
+      await page.getByTestId("book-reading").waitFor();
+      equal(await page.evaluate(() => document.activeElement.getAttribute("data-testid")), "tab-reading", "the tab the arrow key moved to");
+      await page.keyboard.press("ArrowLeft");
+      await page.getByTestId("book-overview").waitFor();
       // Stars can be given by keyboard.
       await page.getByTestId("star1").focus();
       await page.keyboard.press("Enter");
@@ -1315,6 +1398,14 @@ async function main() {
       const text = await notice.innerText();
       assert(text.includes("Confirm your e-mail address") && text.includes(fresh.email), `the notice says what to do: ${text}`);
       assert(freshPage.url().endsWith("/login"), "nobody is signed in yet");
+      // The mail did not arrive: it can be asked for again.
+      const resent = freshPage.waitForRequest((request) => request.url().includes("/auth/v1/resend") && request.method() === "POST");
+      await notice.getByRole("button", { name: "Send the mail again" }).click();
+      const resend = await resent;
+      equal(JSON.parse(resend.postData()).email, fresh.email, "whose mail is sent again");
+      equal(JSON.parse(resend.postData()).type, "signup", "which mail is sent again");
+      equal((await resend.response()).status(), 200, "the server's answer to sending the mail again");
+      equal(await freshPage.getByTestId("login-notice").innerText(), "The mail was sent again.", "the notice after sending again");
       // Trying to sign in before confirming gives the same clear notice, not a bare error.
       await freshPage.getByTestId("password").fill(fresh.password);
       await freshPage.getByTestId("submit").click();
@@ -1327,60 +1418,159 @@ async function main() {
       await freshPage.getByTestId("empty-library").waitFor();
       // The name typed in before confirming was kept for this moment.
       await untilVault(fresh, (v) => v.prefs?.profileName === "Dora", "the name given at sign-up");
-      // An address that has an account already.
-      const again = await context.newPage();
       await freshPage.goto(`${WEB}/settings`);
       await freshPage.getByTestId("sign-out").click();
       await freshPage.getByTestId("login-form").waitFor();
-      await signUp(again, fresh);
-      equal(await again.getByTestId("login-problem").innerText(), "There is an account for this address already. Sign in instead.", "an address that is taken");
+      // Somebody signs up with an address that has an account already. Such a server does not
+      // give away who has an account: it answers as if a mail went out, with nobody signed in.
+      const again = await context.newPage();
+      const answered = again.waitForResponse((response) => response.url().includes("/auth/v1/signup"));
+      await signUp(again, { ...fresh, name: "Somebody Else", password: "another-password-9" });
+      const answer = await answered;
+      equal(answer.status(), 200, "the server's answer for an address that is taken");
+      assert(!("access_token" in (await answer.json())), "that answer signs nobody in");
+      await again.getByTestId("confirm-notice").waitFor();
+      assert((await again.getByTestId("confirm-notice").innerText()).includes(fresh.email), "the same notice as for a new address");
+      equal(await again.getByTestId("login-problem").count(), 0, "nothing is given away about the address");
+      assert(again.url().endsWith("/login"), "and nobody is signed in");
+      equal(await again.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("shelfmark.auth")).length), 0, "no sign-in is kept in the browser");
+      // The account is what it was: its password still opens it, and the name typed in by the other person is not taken over.
+      await again.getByTestId("password").fill(fresh.password);
+      await again.getByTestId("submit").click();
+      await again.getByTestId("empty-library").waitFor();
+      await waitSaved(again);
+      equal((await vaultOf(fresh)).vault.prefs.profileName, "Dora", "the name of the account after somebody else tried to sign up with its address");
       await context.close();
+
+      // A server that lets new accounts in at once says plainly that the address is taken.
+      const plain = await newContext();
+      const taken = await plain.newPage();
+      await signUp(taken, { ...anna, password: "another-password-9" });
+      equal(await taken.getByTestId("login-problem").innerText(), "There is an account for this address already. Sign in instead.", "an address that is taken");
+      await plain.close();
     },
     null,
   );
 
   await test(
-    "forgot the password: the mail is asked for, and the page the link leads to sets a new one",
+    "forgot the password: the link in the mail sets a new one, and only the new one signs in",
     async () => {
+      // Erin has an account and no idea what its password was.
+      const erin = account("Erin");
+      const post = (path, body) => fetch(`${SERVER}${path}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      equal((await post("/auth/v1/signup", { email: erin.email, password: erin.password })).status, 200, "Erin's account");
+      // What the stand-in server hands out is the address the link in the mail ends up at.
+      const linkTo = async (target) => (await (await post("/auth/v1/dev/recovery", { email: erin.email, redirect_to: target })).json()).link;
+      const refused = async (password) => {
+        try {
+          await signIn(erin.email, password);
+          return false;
+        } catch {
+          return true;
+        }
+      };
+
       const context = await newContext();
       const visitor = await context.newPage();
       await visitor.goto(`${WEB}/login`);
       await visitor.getByTestId("forgot").click();
-      await visitor.getByTestId("email").fill(anna.email);
+      await visitor.getByTestId("email").fill(erin.email);
       const asked = visitor.waitForRequest((request) => request.url().includes("/auth/v1/recover") && request.method() === "POST");
       await visitor.getByTestId("submit").click();
       const request = await asked;
       // The link in the mail is to lead to the page of this site that sets the new password.
       assert(decodeURIComponent(request.url()).includes(`redirect_to=${WEB}/reset`), `where the link will lead: ${request.url()}`);
-      equal(JSON.parse(request.postData()).email, anna.email, "whose password");
+      equal(JSON.parse(request.postData()).email, erin.email, "whose password");
       equal(await visitor.getByTestId("login-notice").innerText(), "A mail with a link for a new password is on its way.", "the notice");
-      // A link that is too old, or opened without one: said in words, with a way back.
+      // That page opened without a link says so in words, with a way back.
       await visitor.goto(`${WEB}/reset`);
       await visitor.getByTestId("reset-invalid").waitFor();
+      await visitor.getByRole("link", { name: "Back to signing in" }).click();
+      await visitor.getByTestId("login-form").waitFor();
+
+      // The link is opened, in a tab of its own as a mail program does.
+      const link = await linkTo(`${WEB}/reset`);
+      assert(link.startsWith(`${WEB}/reset#access_token=`) && link.includes("type=recovery"), `the link in the mail: ${link.slice(0, 60)}`);
+      const mail = await context.newPage();
+      await mail.goto(link);
+      await mail.getByTestId("new-password").waitFor();
+      assert((await mail.getByTestId("reset-box").innerText()).includes(erin.email), "the page says whose password is set");
+      assert(!mail.url().includes("access_token"), `the sign-in does not stay in the address: ${mail.url()}`);
+      await mail.getByTestId("new-password").fill("short");
+      assert(await mail.getByTestId("reset-save").isDisabled(), "a password that is too short cannot be saved");
+      const first = "a-new-password-1";
+      const changed = mail.waitForResponse((response) => response.url().endsWith("/auth/v1/user") && response.request().method() === "PUT");
+      await mail.getByTestId("new-password").fill(first);
+      await mail.getByTestId("reset-save").click();
+      const change = await changed;
+      equal(change.status(), 200, "the server's answer to the new password");
+      equal(JSON.parse(change.request().postData()).password, first, "the new password is what was sent");
+      await mail.getByTestId("reset-done").waitFor();
+      await mail.getByRole("link", { name: "To the shelf" }).click();
+      await mail.getByTestId("empty-library").waitFor();
+
+      // Signed out again, the old password is refused and the new one opens the account.
+      await mail.goto(`${WEB}/settings`);
+      await mail.getByTestId("sign-out").click();
+      await mail.getByTestId("login-form").waitFor();
+      await mail.getByTestId("email").fill(erin.email);
+      await mail.getByTestId("password").fill(erin.password);
+      await mail.getByTestId("submit").click();
+      equal(await mail.getByTestId("login-problem").innerText(), "E-mail or password is not right.", "the old password after it was replaced");
+      assert(mail.url().endsWith("/login"), "the old password signs nobody in");
+      await mail.getByTestId("password").fill(first);
+      await mail.getByTestId("submit").click();
+      await mail.getByTestId("empty-library").waitFor();
+      assert(await refused(erin.password), "the server refuses the old password");
       await context.close();
 
-      // Opened through the link the reader is signed in for this purpose. The stand-in server
-      // cannot change a password, so its answer is played here: what is tested is the page.
-      await page.goto(`${WEB}/reset`);
-      await page.getByTestId("new-password").waitFor();
-      assert((await page.getByTestId("reset-box").innerText()).includes(anna.email), "the page says whose password is set");
-      await page.getByTestId("new-password").fill("short");
-      assert(await page.getByTestId("reset-save").isDisabled(), "a password that is too short cannot be saved");
-      let sent = null;
-      await page.route("**/auth/v1/user", (route) => {
-        if (route.request().method() !== "PUT") return route.continue();
-        sent = JSON.parse(route.request().postData());
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: anna.session.id, aud: "authenticated", role: "authenticated", email: anna.email, app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() }) });
+      // A mail asked for in the Android app names no page, so its link leads to the address
+      // of the site itself. The reader is taken to the new password from there as well.
+      const second = "another-password-2";
+      const other = await newContext();
+      const fromApp = await other.newPage();
+      const library = [];
+      fromApp.on("request", (r) => {
+        if (r.url().includes("/rest/v1/rpc/shelfmark_vault_")) library.push(r.url());
       });
-      await page.getByTestId("new-password").fill("a-new-password-1");
-      await page.getByTestId("reset-save").click();
-      await page.getByTestId("reset-done").waitFor();
-      equal(sent?.password, "a-new-password-1", "the new password is sent to the server");
-      await page.unroute("**/auth/v1/user");
-      await page.getByRole("link", { name: "To the shelf" }).click();
-      await page.getByTestId("greeting").waitFor();
+      const rootLink = await linkTo(`${WEB}/`);
+      assert(rootLink.startsWith(`${WEB}/#access_token=`), `the link of a mail asked for in the app: ${rootLink.slice(0, 50)}`);
+      await fromApp.goto(rootLink);
+      await fromApp.getByTestId("new-password").waitFor();
+      assert(fromApp.url().startsWith(`${WEB}/reset`) && !fromApp.url().includes("access_token"), `where the reader was taken: ${fromApp.url()}`);
+      assert((await fromApp.getByTestId("reset-box").innerText()).includes(erin.email), "whose password is set, coming from the address of the site");
+      equal(library.length, 0, "the library is not opened on the way to the new password");
+      await fromApp.getByTestId("new-password").fill(second);
+      await fromApp.getByTestId("reset-save").click();
+      await fromApp.getByTestId("reset-done").waitFor();
+      await fromApp.getByRole("link", { name: "To the shelf" }).click();
+      await fromApp.getByTestId("empty-library").waitFor();
+      await signIn(erin.email, second);
+      assert((await refused(first)) && (await refused(erin.password)), "both earlier passwords are refused");
+
+      await other.close();
+
+      // A link that is too old: Supabase says so behind the "#", and the site passes it on in words.
+      const stranger = await newContext();
+      const stale = await stranger.newPage();
+      await stale.goto(`${WEB}/#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired`);
+      await stale.getByTestId("login-form").waitFor();
+      equal(await stale.getByTestId("login-notice").innerText(), "This link does not work any more. Ask for a new one.", "an expired link");
+      // It is said once, not on every later visit of the sign-in page.
+      await stale.goto(`${WEB}/login`);
+      await stale.getByTestId("login-form").waitFor();
+      equal(await stale.getByTestId("login-notice").count(), 0, "the notice about the link on a later visit");
+      // And a sign-in somebody made up opens nothing.
+      const forged = await stranger.newPage();
+      await forged.goto(`${WEB}/#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
+      await forged.getByTestId("login-form").waitFor();
+      equal(await forged.getByTestId("login-notice").innerText(), "This link does not work any more. Ask for a new one.", "a made-up link");
+      equal(await forged.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("shelfmark.auth")).length), 0, "a made-up link signs nobody in");
+      await forged.goto(`${WEB}/reset#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
+      await forged.getByTestId("reset-invalid").waitFor();
+      await stranger.close();
     },
-    page,
+    null,
   );
 
   await test(
@@ -1441,8 +1631,341 @@ async function main() {
     page,
   );
 
+  // ------------------------------------------------------------------------------
+  console.log("\nThe reading timer, and lists from other apps");
+
   await test(
-    "delete the account, after a confirmation that names what goes",
+    "the reading timer counts through other pages and a reload, and what it measured is logged",
+    async () => {
+      const tess = account("Tess");
+      const context = await newContext();
+      const tp = await context.newPage();
+      await signUp(tp, tess);
+      await tp.getByTestId("empty-library").waitFor();
+      await addByHand(tp, { title: "Middlemarch", authors: "George Eliot", pages: 880, status: "READING" });
+      await addByHand(tp, { title: "Silas Marner", authors: "George Eliot", pages: 200, status: "READING" });
+      const library = (await vaultOf(tess)).vault;
+      const book = bookOf(library, "Middlemarch");
+      const other = bookOf(library, "Silas Marner");
+      const key = `shelfmark.timer.${tess.session.id}`;
+      const stored = () => tp.evaluate((name) => JSON.parse(localStorage.getItem(name)), key);
+      const clock = () => tp.getByTestId("timer-clock").innerText();
+      const line = tp.locator('[data-testid="timer-line"]:visible');
+
+      // The stopwatch is reached from the book, next to "Log session".
+      await tp.goto(`${WEB}/book?id=${book.id}`);
+      await tp.getByTestId("book-page").waitFor();
+      await tp.getByTestId("tab-reading").click();
+      equal(await tp.getByTestId("open-timer").getAttribute("aria-label"), "Reading timer", "the name of the way to the timer");
+      await tp.getByTestId("open-timer").click();
+      await tp.getByTestId("timer-page").waitFor();
+      equal(await tp.getByTestId("timer-book").innerText(), "Middlemarch", "whose timer this is");
+      equal(await clock(), "00:00:00", "the clock before the start");
+      assert((await tp.getByTestId("timer-discard").isDisabled()) && (await tp.getByTestId("timer-stop").isDisabled()), "nothing to discard or to log before the start");
+      equal(await tp.getByTestId("timer-toggle").getAttribute("aria-label"), "Start", "the round button before the start");
+      equal(await stored(), null, "nothing is kept before the start");
+      deepAudit(await audit(tp), "timer page");
+
+      // Start.
+      const before = Date.now();
+      await tp.getByTestId("timer-toggle").click();
+      await until(async () => (await clock()) >= "00:00:02", "the clock counts");
+      equal(await tp.getByTestId("timer-toggle").getAttribute("aria-label"), "Pause", "the round button while it runs");
+      const running = await stored();
+      assert(running.bookId === book.id && running.runningSince >= before && running.startedAt === running.runningSince && running.accumulatedSeconds === 0, `what the browser keeps: ${JSON.stringify(running)}`);
+
+      // It goes on counting on other pages, and a line in the frame of the site says so and leads back.
+      await tp.goto(`${WEB}/`);
+      await line.waitFor();
+      assert((await line.innerText()).includes("Middlemarch"), "the line names the book");
+      const first = (await line.innerText()).match(/\d\d:\d\d:\d\d/)[0];
+      assert(first >= "00:00:02", `the clock was not set back by loading another page: ${first}`);
+      await until(async () => (await line.innerText()).match(/\d\d:\d\d:\d\d/)[0] > first, "the clock in the line counts");
+      await tp.locator('[data-testid="nav-stats"]:visible').click();
+      await tp.waitForURL(/\/stats$/);
+      await tp.locator("main#content h1").first().waitFor();
+      await line.waitFor();
+      await shot(tp, "timer-line");
+      await tp.setViewportSize(PHONE);
+      await line.waitFor();
+      deepAudit(await audit(tp), "a page with the timer line on a phone");
+      await tp.goto(`${WEB}/`);
+      await line.waitFor();
+      await tp.waitForTimeout(500);
+      await shot(tp, "timer-line-mobile");
+      await tp.setViewportSize(DESKTOP);
+      await line.click();
+      await tp.getByTestId("timer-page").waitFor();
+      assert(tp.url().endsWith(`/book/timer?id=${book.id}`), `where the line leads: ${tp.url()}`);
+      equal(await line.count(), 0, "lines on the timer page of the book itself");
+
+      // Pause: the clock stands still, also through a reload. Going on adds to what was counted.
+      await tp.getByTestId("timer-toggle").click();
+      equal(await tp.getByTestId("timer-toggle").getAttribute("aria-label"), "Start", "the round button while paused");
+      const paused = await clock();
+      assert(paused >= "00:00:03", `what was counted before the pause: ${paused}`);
+      await tp.waitForTimeout(1300);
+      equal(await clock(), paused, "the clock during a pause");
+      equal((await stored()).runningSince, null, "a paused timer has no running start");
+      await tp.reload();
+      await tp.getByTestId("timer-page").waitFor();
+      equal(await clock(), paused, "the paused clock after a reload");
+      await tp.getByTestId("timer-toggle").click();
+      await until(async () => (await clock()) > paused, "the clock goes on");
+
+      // The reader reads on for 25 minutes. The test cannot wait that long, so the start is moved back instead.
+      await tp.evaluate(
+        ([name, minutes]) => {
+          const timer = JSON.parse(localStorage.getItem(name));
+          timer.runningSince -= minutes * 60_000;
+          timer.startedAt -= minutes * 60_000;
+          localStorage.setItem(name, JSON.stringify(timer));
+        },
+        [key, 25],
+      );
+      await tp.reload();
+      await tp.getByTestId("timer-page").waitFor();
+      await until(async () => (await clock()).startsWith("00:25:"), "the clock 25 minutes on");
+      await tp.waitForTimeout(300);
+      await shot(tp, "timer");
+      const startedAt = (await stored()).startedAt;
+
+      // There is one timer. The page of another book starts from nothing and points at the one that runs.
+      await tp.goto(`${WEB}/book/timer?id=${other.id}`);
+      await tp.getByTestId("timer-page").waitFor();
+      equal(await clock(), "00:00:00", "the clock of a book without a timer");
+      assert((await line.innerText()).includes("Middlemarch"), "the running timer is pointed at");
+      await line.click();
+      await until(async () => (await clock()).startsWith("00:25:"), "back at the running timer");
+
+      // Stop and log: the form the site has for sessions, with the minutes filled in.
+      await tp.getByTestId("timer-stop").click();
+      await tp.getByTestId("session-dialog").waitFor();
+      equal(await tp.getByTestId("session-minutes").inputValue(), "25", "the minutes the timer measured");
+      equal(await tp.getByTestId("session-from").inputValue(), "0", "the page the session starts on");
+      await tp.getByTestId("session-to").fill("42");
+      await tp.getByTestId("session-save").click();
+      await tp.getByTestId("book-page").waitFor();
+      const logged = await untilVault(tess, (v) => v.sessions?.length === 1, "the session in the library");
+      const [session] = logged.sessions;
+      equal(session.bookId, book.id, "the book of the session");
+      equal(session.minutes, 25, "its minutes");
+      equal(session.startPage ?? 0, 0, "where it started");
+      equal(session.endPage, 42, "where it ended");
+      equal(session.startedAt, startedAt, "the session starts when the timer was started");
+      equal(bookOf(logged, "Middlemarch").currentPage, 42, "the page the book is on now");
+      // The timer is gone, and nothing of it was ever part of the library.
+      equal(await tp.evaluate((name) => localStorage.getItem(name), key), null, "what the browser keeps after logging");
+      equal(await tp.locator('[data-testid="timer-line"]').count(), 0, "timer lines after logging");
+      assert(!/runningSince|accumulatedSeconds/.test(JSON.stringify(logged)), "the timer is not in the library");
+
+      // Discard throws a timer away without a trace.
+      await tp.getByTestId("tab-reading").click();
+      equal(await tp.getByTestId("session-row").count(), 1, "sessions on the book page");
+      await tp.getByTestId("open-timer").click();
+      await tp.getByTestId("timer-toggle").click();
+      await until(async () => (await clock()) >= "00:00:01", "the second timer counts");
+      await tp.getByTestId("timer-discard").click();
+      equal(await clock(), "00:00:00", "the clock after discarding");
+      equal(await stored(), null, "what the browser keeps after discarding");
+      await waitSaved(tp);
+      equal((await vaultOf(tess)).vault.sessions.length, 1, "sessions after a discarded timer");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "lists from Goodreads and StoryGraph are imported after a preview, each as one save, and never twice",
+    async () => {
+      const gina = account("Gina");
+      const context = await newContext();
+      const gp = await context.newPage();
+      await signUp(gp, gina);
+      await gp.getByTestId("empty-library").waitFor();
+      // Dune is here already, with Gina's own opinion of it, and so is a list.
+      await addByHand(gp, { title: "Dune", authors: "Frank Herbert" });
+      const start = await vaultOf(gina);
+      const mine = bookOf(start.vault, "Dune");
+      await rpc(gina.session.token, "shelfmark_vault_push", {
+        p_payload: { ...start.vault, books: start.vault.books.map((b) => (b.id === mine.id ? { ...b, rating: 3, review: "My own words" } : b)), shelves: [{ id: 21, name: "Sci-Fi", position: 0, createdAt: 1 }] },
+        p_expected: start.revision,
+      });
+      const saves = [];
+      gp.on("request", (r) => {
+        if (r.url().endsWith("/rest/v1/rpc/shelfmark_vault_push")) saves.push(r.postDataJSON());
+      });
+      const choose = async (file) => {
+        await gp.getByTestId("import-file").setInputFiles(file);
+      };
+      const text = (id) => gp.getByTestId(id).innerText();
+
+      await gp.goto(`${WEB}/settings`);
+      await gp.getByTestId("import-card").waitFor();
+      assert((await text("import-card")).includes("Goodreads, StoryGraph or any CSV list"), "the card says what it is for");
+      equal(await text("import-csv"), "Choose CSV file", "the button");
+
+      // ---- Goodreads ----
+      await choose(`${FIXTURES}goodreads_export.csv`);
+      const dialog = gp.getByTestId("import-dialog");
+      await dialog.waitFor();
+      assert((await dialog.innerText()).includes("Import from Goodreads"), "the kind of list is recognised");
+      equal(await text("import-found"), "3 books found in the file", "books found");
+      assert((await text("import-new")).startsWith("2 new books"), `new books: ${await text("import-new")}`);
+      assert((await text("import-known")).startsWith("1 book is already here and only gets its gaps filled"), `known books: ${await text("import-known")}`);
+      await gp.getByTestId("import-new").locator("summary").click();
+      assert((await text("import-new")).includes("Der Vorleser") && (await text("import-new")).includes("Momo") && !(await text("import-new")).includes("Dune"), "which books are new");
+      await gp.getByTestId("import-known").locator("summary").click();
+      assert((await text("import-known")).includes("Dune"), "which book is skipped as already there");
+      equal(await text("import-lists"), "New lists: favorites", "the list that will be created");
+      const columns = await text("import-columns");
+      for (const column of ["Title", "Author", "ISBN13", "My Rating", "Exclusive Shelf", "Bookshelves", "Date Read"]) assert(columns.includes(column), `the column ${column} is recognised: ${columns}`);
+      assert((await text("import-ignored")).includes("Average Rating") && !columns.includes("Average Rating"), "what is not used is said too");
+      deepAudit(await audit(gp), "import preview");
+      await gp.waitForTimeout(300);
+      await shot(gp, "import-preview");
+      // Nothing is saved before the reader says so.
+      equal(saves.length, 0, "saves before the import is confirmed");
+      equal((await vaultOf(gina)).vault.books.length, 1, "books before the import is confirmed");
+
+      await gp.getByTestId("import-confirm").click();
+      await gp.getByTestId("import-done-dialog").waitFor();
+      equal(await text("import-added"), "2 books added", "what was added");
+      equal(await text("import-completed"), "1 existing book completed", "what was completed");
+      const first = await untilVault(gina, (v) => v.books.length === 3, "the books of the Goodreads list");
+      await waitSaved(gp);
+      equal(saves.length, 1, "the whole import is one save");
+      equal(saves[0].p_payload.books.length, 3, "and that save holds all of it");
+      const dune = bookOf(first, "Dune");
+      equal(dune.id, mine.id, "the book that was here is the same book");
+      equal(dune.rating, 3, "Gina's own stars stay");
+      equal(dune.review, "My own words", "and so does their review");
+      equal(dune.isbn, "9780441172719", "the ISBN the file knew is filled in");
+      equal(dune.pageCount, 896, "and the pages");
+      const vorleser = bookOf(first, "Der Vorleser");
+      equal(vorleser.status, "WISHLIST", "wanted but not owned is a wish");
+      equal(vorleser.ownership, "NOT_OWNED", "and not owned");
+      equal(vorleser.lendable, false, "nothing to lend there");
+      const momo = bookOf(first, "Momo");
+      equal(momo.status, "READING", "the state of a book that is being read");
+      equal(momo.authors, "Michael Ende, Lucas Zwirner, Marcel Dzama", "all authors");
+      for (const b of [vorleser, momo]) assert(b.id > 9e14 && Number.isSafeInteger(b.id), `the id ${b.id} is a website id`);
+      assert(vorleser.id !== momo.id, "every book its own id");
+      equal(first.shelves.map((s) => s.name).sort().join(","), "Sci-Fi,favorites", "the list that was there is used again, the other is new");
+      equal(first.links.filter((l) => l.bookId === dune.id).length, 2, "Dune is on both lists");
+      equal(first.links.length, 2, "and nothing else is on a list");
+      assert(!/\bnull\b/.test(JSON.stringify(first)), "no nulls in the document after an import");
+
+      // The done notice offers the covers, which such lists rarely bring. Not now.
+      assert((await gp.getByTestId("import-done-dialog").innerText()).includes("Shelfmark can look them up now"), "covers are offered");
+      await gp.getByTestId("import-done-close").click();
+      await gp.getByTestId("import-done-dialog").waitFor({ state: "detached" });
+
+      // The same file again: everything is known, nothing is added and nothing is saved.
+      await choose(`${FIXTURES}goodreads_export.csv`);
+      await dialog.waitFor();
+      equal(await text("import-new"), "0 new books", "new books the second time");
+      assert((await text("import-known")).startsWith("3 books are already here and only get their gaps filled"), "known books the second time");
+      equal(await gp.getByTestId("import-lists").count(), 0, "lists to create the second time");
+      await gp.getByTestId("import-confirm").click();
+      await gp.getByTestId("import-done-dialog").waitFor();
+      equal(await text("import-added"), "0 books added", "added the second time");
+      equal(await text("import-completed"), "0 existing books completed", "completed the second time");
+      await gp.getByTestId("import-done-close").click();
+      await gp.waitForTimeout(800);
+      equal(saves.length, 1, "saves after importing the same file again");
+      const second = await vaultOf(gina);
+      equal(second.vault.books.length, 3, "books after importing the same file again");
+      equal(second.vault.shelves.length, 2, "lists after importing the same file again");
+
+      // ---- StoryGraph ----
+      await choose(`${FIXTURES}storygraph_export.csv`);
+      await dialog.waitFor();
+      assert((await dialog.innerText()).includes("Import from StoryGraph"), "the other kind of list is recognised");
+      equal(await text("import-found"), "4 books found in the file", "books found in the StoryGraph list");
+      assert((await text("import-new")).startsWith("4 new books"), "new books in the StoryGraph list");
+      equal(await text("import-known"), "0 books are already here and only get their gaps filled", "known books in the StoryGraph list");
+      assert((await text("import-columns")).includes("Read Status") && (await text("import-ignored")).includes("Moods"), "its columns");
+      await gp.getByTestId("import-confirm").click();
+      await gp.getByTestId("import-done-dialog").waitFor();
+      equal(await text("import-added"), "4 books added", "added from StoryGraph");
+      equal(await text("import-completed"), "0 existing books completed", "completed from StoryGraph");
+      await gp.getByTestId("import-done-close").click();
+      const third = await untilVault(gina, (v) => v.books.length === 7, "the books of both lists");
+      await waitSaved(gp);
+      equal(saves.length, 2, "the second import is one save as well");
+      const hobbit = bookOf(third, "The Hobbit");
+      equal(hobbit.status, "READ", "a book that was read");
+      equal(hobbit.rating, 4.5, "half stars");
+      equal(hobbit.finishedOn - hobbit.startedOn, 17, "from the 3rd to the 20th of January");
+      equal(hobbit.review, "Cosy.", "the review without its markup");
+      equal(bookOf(third, "Project Hail Mary").format, "AUDIOBOOK", "an audiobook");
+      equal(bookOf(third, "Piranesi").status, "ABANDONED", "a book that was given up");
+      equal(bookOf(third, "Piranesi").rating, 2.25, "quarter stars are kept as they are");
+      equal(bookOf(third, "Babel").status, "WISHLIST", "a wish");
+      await choose(`${FIXTURES}storygraph_export.csv`);
+      await dialog.waitFor();
+      equal(await text("import-new"), "0 new books", "new books when the StoryGraph list comes again");
+      await gp.getByTestId("import-confirm").click();
+      await gp.getByTestId("import-done-dialog").waitFor();
+      equal(await text("import-added"), "0 books added", "added when the StoryGraph list comes again");
+      await gp.getByTestId("import-done-close").click();
+      await gp.waitForTimeout(800);
+      equal(saves.length, 2, "saves after the StoryGraph list came again");
+      equal((await vaultOf(gina)).vault.books.length, 7, "books after the StoryGraph list came again");
+
+      // On the shelf: a shelf for every state the lists brought, and the two lists.
+      await gp.goto(`${WEB}/`);
+      await gp.getByTestId("greeting").waitFor();
+      assert((await text("greeting")).includes("7 books on your shelves"), `the greeting: ${await text("greeting")}`);
+      for (const shelf of ["READING", "NONE", "READ", "WISHLIST", "ABANDONED", "list_21", `list_${third.shelves.find((s) => s.name === "favorites").id}`]) await gp.getByTestId(`shelf-${shelf}`).waitFor();
+      for (const title of ["Dune", "Der Vorleser", "Momo", "The Hobbit", "Project Hail Mary", "Piranesi", "Babel"]) {
+        assert((await gp.locator(`.bookcase [aria-label="${title}"]`).count()) >= 1, `${title} stands on a shelf`);
+      }
+      await gp.waitForTimeout(600);
+      await shot(gp, "shelf-imported", { fullPage: true });
+
+      // The covers such lists do not bring are looked up for the whole library at once.
+      await gp.goto(`${WEB}/settings`);
+      equal(await text("find-covers"), "Find missing covers", "the button for the covers");
+      await gp.getByTestId("find-covers").click();
+      await gp.getByText(/^\d+ covers? found$/).waitFor();
+      equal(await text("find-covers"), "Find missing covers", "the button once the search is over");
+      const covered = await untilVault(gina, (v) => Boolean(bookOf(v, "Der Vorleser").coverUrl), "covers in the library");
+      await waitSaved(gp);
+      // Every book that has an ISBN gets a cover from the catalogues. Without one, the title has to match, and here it does not.
+      for (const title of ["Dune", "Der Vorleser", "The Hobbit", "Project Hail Mary", "Babel"]) assert(/^https:\/\//.test(bookOf(covered, title).coverUrl ?? ""), `${title} has a cover now`);
+      for (const title of ["Momo", "Piranesi"]) assert(!bookOf(covered, title).coverUrl, `${title} still has none`);
+      equal(saves.length, 3, "the covers that were found are one more save, not one each");
+
+      // ---- what is no list of books ----
+      writeFileSync(`${OUTPUT}sentence.csv`, "just a sentence, with a comma\n");
+      await choose(`${OUTPUT}sentence.csv`);
+      assert((await text("import-problem")).startsWith("No list of books was found in this file."), "a file without a title column");
+      writeFileSync(`${OUTPUT}archive.zip`, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0, 0, 0]));
+      await choose(`${OUTPUT}archive.zip`);
+      assert((await text("import-problem")).startsWith("This is a zip file."), "a zip file");
+      // A list as a spreadsheet on Windows saves it: semicolons, and umlauts that are no UTF-8.
+      writeFileSync(`${OUTPUT}liste.csv`, Buffer.from("Titel;Autor;Seiten;Status\r\nDer Schwarm;Frank Sch\u00e4tzing;987;Gelesen\r\n", "latin1"));
+      await choose(`${OUTPUT}liste.csv`);
+      await dialog.waitFor();
+      equal(await gp.getByTestId("import-problem").count(), 0, "the earlier complaint is gone");
+      assert((await dialog.innerText()).includes("Import from CSV"), "any list with a title column");
+      assert((await text("import-columns")).includes("Titel, Autor, Seiten, Status"), "German column names");
+      await gp.getByTestId("import-confirm").click();
+      await gp.getByTestId("import-done-dialog").waitFor();
+      equal(await text("import-added"), "1 book added", "one book, in the singular");
+      await gp.getByTestId("import-done-close").click();
+      const last = await untilVault(gina, (v) => bookOf(v, "Der Schwarm"), "the book from the German list");
+      equal(bookOf(last, "Der Schwarm").authors, "Frank Sch\u00e4tzing", "the umlaut survived");
+      equal(bookOf(last, "Der Schwarm").status, "READ", "the German word for read");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "delete the account, after a confirmation that names what goes, and its pictures with it",
     async () => {
       const context = await newContext();
       const zedPage = await context.newPage();
@@ -1450,6 +1973,29 @@ async function main() {
       await zedPage.getByTestId("empty-library").waitFor();
       await addByHand(zedPage, { title: "Goodbye", authors: "Zed" });
       zed.session = await signIn(zed.email, zed.password);
+      // The book carries a picture Zed uploaded. It has to go with the account.
+      const goodbye = bookOf((await vaultOf(zed)).vault, "Goodbye");
+      await zedPage.goto(`${WEB}/book/edit?id=${goodbye.id}`);
+      await zedPage.getByTestId("book-form").waitFor();
+      writeFileSync(`${OUTPUT}cover-zed.png`, png(300, 450, [60, 70, 120]));
+      await zedPage.getByTestId("cover-file").setInputFiles(`${OUTPUT}cover-zed.png`);
+      const picture = zedPage.locator('[data-testid="book-form"] img[src*="/storage/v1/object/public/shelfmark-covers/"]');
+      await picture.waitFor();
+      const address = await picture.getAttribute("src");
+      assert(address.startsWith(`${SERVER}/storage/v1/object/public/shelfmark-covers/${zed.session.id}/`), `the address of Zed's picture: ${address}`);
+      await zedPage.getByTestId("save-book").click();
+      await zedPage.getByTestId("book-page").waitFor();
+      await untilVault(zed, (v) => bookOf(v, "Goodbye").coverUrl === address, "the address of Zed's cover in their library");
+      equal((await fetch(address)).status, 200, "the picture while the account exists");
+      const steps = [];
+      let removal = null;
+      zedPage.on("request", (r) => {
+        if (r.method() === "DELETE" && r.url().includes("/storage/v1/object/shelfmark-covers/")) {
+          steps.push("picture");
+          removal = r;
+        }
+        if (r.url().endsWith("/rest/v1/rpc/shelfmark_delete_account")) steps.push("account");
+      });
       await zedPage.goto(`${WEB}/settings`);
       await zedPage.getByTestId("delete-account").click();
       const dialog = zedPage.getByTestId("delete-account-dialog");
@@ -1461,12 +2007,48 @@ async function main() {
       await zedPage.getByTestId("delete-account-confirm").click();
       await zedPage.getByTestId("login-notice").waitFor();
       equal(await zedPage.getByTestId("login-notice").innerText(), "Your account is deleted.", "the notice after deleting");
+      // The picture was removed first, while there was still somebody allowed to remove it.
+      equal(steps.join(", "), "picture, account", "what was asked of the server, in this order");
+      equal(removal.url(), address.replace("/object/public/", "/object/"), "which picture was removed");
+      equal(removal.headers().apikey, KEY, "the key of the project goes along");
+      assert(/^Bearer .+\..+\..+$/.test(removal.headers().authorization ?? ""), "and so does Zed's sign-in");
+      assert((await fetch(address)).status !== 200, "the address of the picture no longer answers");
       // The sign-in is gone with everything else.
       await zedPage.getByTestId("email").fill(zed.email);
       await zedPage.getByTestId("password").fill(zed.password);
       await zedPage.getByTestId("submit").click();
       equal(await zedPage.getByTestId("login-problem").innerText(), "E-mail or password is not right.", "signing in to a deleted account");
       await context.close();
+
+      // A picture that cannot be removed does not keep anybody from leaving.
+      const yuri = account("Yuri");
+      const created = await (await fetch(`${SERVER}/auth/v1/signup`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email: yuri.email, password: yuri.password }) })).json();
+      yuri.session = { token: created.access_token, id: created.user.id };
+      await rpc(yuri.session.token, "shelfmark_hello", { p_name: "Yuri" });
+      const file = `${SERVER}/storage/v1/object/shelfmark-covers/${yuri.session.id}/kept.jpg`;
+      const stored = await fetch(file, { method: "POST", headers: { apikey: KEY, Authorization: `Bearer ${yuri.session.token}`, "Content-Type": "image/png", "x-upsert": "true" }, body: COVER_PNG });
+      equal(stored.status, 200, "Yuri's picture is on the server");
+      const kept = file.replace("/object/", "/object/public/");
+      await rpc(yuri.session.token, "shelfmark_vault_push", { p_payload: { books: [{ id: 1, title: "Stuck", coverUrl: kept }], shelves: [], links: [], quotes: [] }, p_expected: 0 });
+      const second = await newContext();
+      const yuriPage = await second.newPage();
+      await yuriPage.route("**/storage/v1/object/shelfmark-covers/**", (route) => (route.request().method() === "DELETE" ? route.abort() : route.continue()));
+      await signInOnPage(yuriPage, yuri);
+      await yuriPage.getByTestId("greeting").waitFor();
+      await yuriPage.goto(`${WEB}/settings`);
+      await yuriPage.getByTestId("delete-account").click();
+      await yuriPage.getByTestId("delete-account-check").check();
+      await yuriPage.getByTestId("delete-account-confirm").click();
+      await yuriPage.getByTestId("login-notice").waitFor();
+      equal(await yuriPage.getByTestId("login-notice").innerText(), "Your account is deleted.", "the account goes although its picture could not be removed");
+      let gone = false;
+      try {
+        await signIn(yuri.email, yuri.password);
+      } catch {
+        gone = true;
+      }
+      assert(gone, "Yuri's sign-in is gone");
+      await second.close();
     },
     null,
   );
@@ -1494,7 +2076,7 @@ try {
 
 const passed = results.filter((r) => r.ok).length;
 const broken = results.filter((r) => !r.ok);
-console.log(`\n${results.length} tests, ${passed} passed, ${broken.length} failed`);
+console.log(`\n${results.length} tests, ${passed} passed, ${broken.length} failed${leftOut > 0 ? `, ${leftOut} left out by --only` : ""}`);
 if (problems.length > 0) {
   console.log(`\nThe browsers reported ${problems.length} error(s) of their own:`);
   for (const problem of Array.from(new Set(problems)).slice(0, 20)) console.log(`  ${problem}`);

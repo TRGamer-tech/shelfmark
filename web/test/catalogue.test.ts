@@ -64,6 +64,17 @@ test("Open Library by ISBN combines edition, data and the blurb of the work", as
   assert.ok(book.coverUrl.startsWith("https://covers.openlibrary.org/"));
 });
 
+test("a slow extra of Open Library does not cost the record that is already there", async () => {
+  // The edition record never arrives. What the other view of the edition knows is still returned.
+  const http: HttpFetcher = (url) => (url.includes("api/books") ? Promise.resolve(fixture("ol_data.json")) : new Promise(() => undefined));
+  const started = Date.now();
+  const book = (await openLibrary(http, 100).byIsbn("9783257229530", "de"))!;
+  assert.equal(book.title, "Der Vorleser");
+  assert.deepEqual(book.authors, ["Bernhard Schlink"]);
+  assert.equal(book.format, "UNKNOWN");
+  assert.ok(Date.now() - started < 1_000);
+});
+
 test("Open Library answers null for an unknown ISBN", async () => {
   const api = openLibrary(async (url) => (url.includes("api/books") ? "{}" : null));
   assert.equal(await api.byIsbn("9780000000002", "en"), null);

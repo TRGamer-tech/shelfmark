@@ -238,3 +238,24 @@ test("saved tells the page what the server now holds", async () => {
   await store.mutate(addBook(dune, [], 2));
   assert.deepEqual(seen, [1, 2]);
 });
+
+test("an answer that was overtaken by a save is not taken for news", async () => {
+  const server = new FakeServer();
+  const store = new VaultStore(server);
+  await store.load();
+  await store.mutate(addBook(emma, [], 1));
+  // The look goes out, and before its answer is back a change is made and saved.
+  const looking = store.refresh();
+  const saving = store.mutate(addBook(dune, [], 2));
+  await Promise.all([looking, saving]);
+  assert.equal(store.getState().revision, 2);
+  assert.deepEqual(
+    store.getState().vault.books.map((b) => b.title),
+    ["Emma", "Dune"],
+  );
+  // The next change is saved without having to start over.
+  const pullsBefore = server.pulls;
+  await store.mutate(addBook(momo, [], 3));
+  assert.equal(server.revision, 3);
+  assert.equal(server.pulls, pullsBefore);
+});

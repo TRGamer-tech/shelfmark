@@ -113,7 +113,7 @@ export default function RecapPage() {
       {highlights ? (
         <Card title={t("recap_highlights")}>
           {recap.bestRated ? (
-            <Link href={`/book?id=${recap.bestRated.id}`} className="row-between fact fact-link">
+            <Link href={`/book?id=${recap.bestRated.id}`} className="row-between fact-link" style={{ padding: "4px 0" }}>
               <span>
                 <span className="label-small" style={{ display: "block" }}>
                   {t("recap_best_rated")}

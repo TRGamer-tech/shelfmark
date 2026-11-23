@@ -60,7 +60,12 @@ export default function QuotesPage() {
             {book ? (
               <p className="small" style={{ marginTop: 8 }}>
                 <Link href={`/book?id=${book.id}`}>{book.title}</Link>
-                <span className="muted">{[book.authors, quote.page > 0 ? t("quote_page", quote.page) : ""].filter((part) => part.trim() !== "").map((part) => ` · ${part}`)}</span>
+                <span className="muted">
+                  {[book.authors, quote.page > 0 ? t("quote_page", quote.page) : ""]
+                    .filter((part) => part.trim() !== "")
+                    .map((part) => ` · ${part}`)
+                    .join("")}
+                </span>
               </p>
             ) : null}
           </Card>

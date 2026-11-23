@@ -7,9 +7,11 @@ import { today } from "@/lib/dates";
 import { serverConfig } from "@/lib/supabase/config";
 import { AppShell } from "./AppShell";
 import { AuthProvider, useAuth } from "./auth";
+import { CoverJobProvider } from "./coverJob";
 import { I18nProvider, useI18n } from "./i18n";
 import { LibraryProvider } from "./library";
 import { RememberedTheme } from "./theme";
+import { TimerProvider } from "./timer";
 
 /** What is shown while the browser finds out who is here. No words, so no language is needed yet. */
 export function Splash({ text }: { text?: string }) {
@@ -88,11 +90,16 @@ function Gate({ children }: { children: ReactNode }) {
       </>
     );
   }
-  // On the way to another page: nothing to show for the blink it takes.
-  if (status === "out" || onLogin || !user) return <Splash />;
+  // On the way to another page: nothing to show for the blink it takes. That includes
+  // somebody who came for a new password: the library is not opened on the way there.
+  if (status === "out" || onLogin || !user || recovering) return <Splash />;
   return (
     <LibraryProvider key={user.id}>
-      <AppShell>{children}</AppShell>
+      <TimerProvider userId={user.id}>
+        <CoverJobProvider>
+          <AppShell>{children}</AppShell>
+        </CoverJobProvider>
+      </TimerProvider>
     </LibraryProvider>
   );
 }

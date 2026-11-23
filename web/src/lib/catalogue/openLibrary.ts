@@ -117,7 +117,27 @@ export function parseEdition(edition: Json, isbn: string): RemoteBook | null {
   });
 }
 
-export function openLibrary(http: HttpFetcher): BookSource {
+/**
+ * For the parts of an answer that are nice to have: null when the request fails, and also
+ * when it takes too long, so that a slow extra does not cost the record that is already there.
+ */
+function optional(request: Promise<string | null>, ms: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    request.then(
+      (body) => {
+        clearTimeout(timer);
+        resolve(body);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
+export function openLibrary(http: HttpFetcher, extrasMs = 6_000): BookSource {
   return {
     name: NAME,
     suggests: true,
@@ -131,7 +151,7 @@ export function openLibrary(http: HttpFetcher): BookSource {
       // Two views of the same edition: "data" has author names and cover links,
       // the raw edition record has binding, language and the link to the work.
       const dataCall = http(`${BASE}/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, signal);
-      const editionCall = http(`${BASE}/isbn/${isbn}.json`, signal).catch(() => null);
+      const editionCall = optional(http(`${BASE}/isbn/${isbn}.json`, signal), extrasMs);
       const [data, editionBody] = await Promise.all([dataCall, editionCall]);
       const fromData = data !== null ? parseData(data, isbn) : null;
       const edition = editionBody !== null ? parseObject(editionBody) : null;
@@ -141,7 +161,7 @@ export function openLibrary(http: HttpFetcher): BookSource {
       if (book.description.trim() === "") {
         const workKey = str(asObject(array(edition, "works")?.[0]), "key");
         if (workKey && workKey.trim() !== "") {
-          const workBody = await http(`${BASE}${workKey}.json`, signal).catch(() => null);
+          const workBody = await optional(http(`${BASE}${workKey}.json`, signal), extrasMs);
           const work = workBody !== null ? parseObject(workBody) : null;
           book = { ...book, description: textValue(work?.description) };
         }

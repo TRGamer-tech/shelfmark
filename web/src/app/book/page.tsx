@@ -267,10 +267,12 @@ function Reading({ book, sessions, onLog }: { book: Book; sessions: ReadingSessi
           <Stat value={duration(totalMinutes(sessions))} label={t("session_time")} />
           <Stat value={speed} label={t("session_pace")} />
         </div>
-        <div style={{ marginTop: 12 }}>
-          <Button wide onClick={onLog} data-testid="log-session-reading">
+        <div className="row" style={{ marginTop: 12, flexWrap: "nowrap" }}>
+          <Button className="grow" onClick={onLog} data-testid="log-session-reading">
             {t("session_log")}
           </Button>
+          {/* The stopwatch is an extra for those who want it, not the main way to log reading. */}
+          <IconLink href={`/book/timer?id=${book.id}`} icon="timer" label={t("timer_title")} testId="open-timer" />
         </div>
       </Card>
       {sessions.length === 0 ? <EmptyHint>{t("session_empty")}</EmptyHint> : null}

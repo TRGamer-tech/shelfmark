@@ -51,6 +51,17 @@ export function weekdayOf(epochDay: number): number {
   return ((((epochDay + 3) % 7) + 7) % 7) + 1;
 }
 
+/** Noon of a day on the reader's own clock, as a moment. */
+export function localNoon(epochDay: number): number {
+  const { year, month, day } = fromEpochDay(epochDay);
+  return new Date(year, month - 1, day, 12, 0, 0, 0).getTime();
+}
+
+/** Noon of a day in UTC, for tests. */
+export function utcNoon(epochDay: number): number {
+  return epochDay * DAY_MS + 12 * 3_600_000;
+}
+
 export function dayOf(millis: number, zone: Zone): number {
   const p = zone.parts(millis);
   return toEpochDay(p.year, p.month, p.day);

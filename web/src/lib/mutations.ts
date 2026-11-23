@@ -8,6 +8,8 @@
 
 import type { Book, CustomTheme, Goal, LendRequest, Note, Ornament, OrnamentKind, Purchase, Quote, ReadingSession, ReadingStatus, Shelf, Vault, VaultPrefs } from "./model.ts";
 import { CUSTOM_THEME_PREFIX, THEME_SYSTEM, emptyVault, prefsOf } from "./model.ts";
+import type { ImportIds, ImportPlan } from "./csvImport.ts";
+import { applyImport } from "./csvImport.ts";
 import { withStatus } from "./rules.ts";
 
 export type Change = (vault: Vault) => Vault;
@@ -34,6 +36,64 @@ export function modifyBook(bookId: number, change: (book: Book) => Book, now: nu
     if (!vault.books.some((b) => b.id === bookId)) return vault;
     return { ...vault, books: vault.books.map((b) => (b.id === bookId ? { ...change(b), id: b.id, updatedAt: now } : b)) };
   };
+}
+
+/**
+ * A book with another cover, or with none when [url] is empty. The name of the photo on
+ * the phone that took the old cover goes with it: that phone still has the file, would
+ * go on showing it, and would upload it again over the new address.
+ */
+export function withCover(book: Book, url: string): Book {
+  return { ...book, coverUrl: url.trim(), coverPath: "" };
+}
+
+/** What the edit form shows and writes. The cover is not among it, see [editBook]. */
+export type BookFields = Pick<
+  Book,
+  "title" | "subtitle" | "authors" | "isbn" | "publisher" | "publishedYear" | "language" | "pageCount" | "format" | "description" | "genres" | "tags" | "series" | "seriesPosition"
+>;
+
+/**
+ * Saves the edit form. Only what the form shows is written, so stars or a status given
+ * meanwhile elsewhere are kept. The cover is only touched when the reader chose another
+ * one ([cover] is its address, "" for none, null for "left as it was"): a photo a phone
+ * took in the meantime must survive somebody correcting the title here.
+ */
+export function editBook(bookId: number, fields: BookFields, cover: string | null, now: number): Change {
+  return modifyBook(bookId, (stored) => (cover === null ? { ...stored, ...fields } : withCover({ ...stored, ...fields }, cover)), now);
+}
+
+/** Gives a book the cover that was looked up for it, unless it got one in the meantime. */
+export function fillCover(bookId: number, url: string, now: number): Change {
+  return fillCovers([{ bookId, url }], now);
+}
+
+/** The same for several books at once, as one change. Books that have a cover or a photo by now are left alone. */
+export function fillCovers(found: { bookId: number; url: string }[], now: number): Change {
+  return (vault) => {
+    const urls = new Map(found.map((cover) => [cover.bookId, cover.url]));
+    let changed = false;
+    const books = vault.books.map((book) => {
+      const url = urls.get(book.id);
+      if (!url || book.coverUrl.trim() !== "" || book.coverPath.trim() !== "") return book;
+      changed = true;
+      return { ...withCover(book, url), updatedAt: now };
+    });
+    return changed ? { ...vault, books } : vault;
+  };
+}
+
+/** Books that have neither a cover with an address nor a photo on a phone. */
+export function booksWithoutCover(vault: Vault): Book[] {
+  return vault.books.filter((book) => book.coverUrl.trim() === "" && book.coverPath.trim() === "");
+}
+
+/**
+ * Brings in a list of books from another app, as one change and so as one save. The ids
+ * are made beforehand: applied again to a fresh document, it adds nothing twice.
+ */
+export function importBooks(plan: ImportPlan, ids: ImportIds, now: number): Change {
+  return (vault) => applyImport(vault, plan, ids, now).vault;
 }
 
 export function setStatus(bookId: number, status: ReadingStatus, today: number, now: number): Change {

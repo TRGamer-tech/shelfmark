@@ -6,14 +6,18 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth";
 import { AutoSaveField } from "@/components/AutoSave";
 import { useI18n } from "@/components/i18n";
+import { ImportCard, ImportFlow } from "@/components/ImportCard";
 import { useLibrary } from "@/components/library";
 import { ThemeEditor } from "@/components/ThemeEditor";
 import { Button, Card, Chip, ConfirmDialog, Dialog, IconButton, PageHead, Switch } from "@/components/ui";
 import { LANGS } from "@/i18n/index";
+import type { ImportPlan } from "@/lib/csvImport";
+import { decodeText, isZip, parseImport } from "@/lib/csvImport";
 import { toIsoDate, today } from "@/lib/dates";
 import type { CustomTheme, Vault } from "@/lib/model";
 import { CUSTOM_THEME_PREFIX, ENVELOPE_VERSION, THEME_SYSTEM, looksLikeVault, makeEnvelope, readVault, writeEnvelope } from "@/lib/model";
 import { deleteCustomTheme, restoreBackup, saveCustomTheme, setPrefs } from "@/lib/mutations";
+import { removeCovers } from "@/lib/supabase/covers";
 import { serverProblemKey } from "@/lib/supabase/errors";
 import { reasonOf } from "@/lib/sync";
 import type { ThemePreset } from "@/lib/theme";
@@ -56,12 +60,14 @@ function backupOf(text: string): Vault | "newer" | null {
 
 export default function SettingsPage() {
   const { t, lang, setLang, locale } = useI18n();
-  const { api, user, signOut } = useAuth();
+  const { api, client, config, user, signOut } = useAuth();
   const { vault, prefs, mutate, notify, settled } = useLibrary();
   const [editing, setEditing] = useState<CustomTheme | "new" | null>(null);
   const [removing, setRemoving] = useState<CustomTheme | null>(null);
   const [restoring, setRestoring] = useState<Vault | null>(null);
   const [backupProblem, setBackupProblem] = useState<string | null>(null);
+  const [importing, setImporting] = useState<ImportPlan | null>(null);
+  const [importProblem, setImportProblem] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [understood, setUnderstood] = useState(false);
   const [accountProblem, setAccountProblem] = useState<string | null>(null);
@@ -95,16 +101,29 @@ export default function SettingsPage() {
     notify(t("settings_backup_done"));
   };
 
-  const chosen = async (file: File | undefined) => {
+  /**
+   * Every file goes through here, whichever of the two buttons it was chosen with, as in
+   * the app: a backup leads to the question whether to replace the library, a list of
+   * books from another app to the preview of an import. What went wrong is said next to
+   * the button that was used.
+   */
+  const chosen = async (file: File | undefined, from: "backup" | "import") => {
     setBackupProblem(null);
+    setImportProblem(null);
     if (!file) return;
+    const problem = from === "backup" ? setBackupProblem : setImportProblem;
     try {
-      const backup = backupOf(await file.text());
-      if (backup === "newer") setBackupProblem(t("import_newer_version"));
-      else if (!backup) setBackupProblem(t("web_restore_invalid"));
-      else setRestoring(backup);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (isZip(bytes)) return problem(t("web_file_zip"));
+      const text = decodeText(bytes);
+      const backup = backupOf(text);
+      if (backup === "newer") return problem(t("import_newer_version"));
+      if (backup) return setRestoring(backup);
+      const plan = parseImport(text);
+      if (plan) return setImporting(plan);
+      problem(t(from === "backup" ? "web_restore_invalid" : "web_import_invalid"));
     } catch {
-      setBackupProblem(t("import_unreadable"));
+      problem(t("import_unreadable"));
     } finally {
       if (fileInput.current) fileInput.current.value = "";
     }
@@ -115,6 +134,14 @@ export default function SettingsPage() {
     setBusy(true);
     setAccountProblem(null);
     try {
+      // The cover pictures go first: once the account is gone, nobody may remove them any more.
+      if (user) {
+        const token = await client.auth.getSession().then(
+          ({ data }) => data.session?.access_token,
+          () => undefined,
+        );
+        if (token) await removeCovers(config, token, user.id, vault.books);
+      }
       const { loginKept } = await api.deleteAccount();
       try {
         window.sessionStorage.setItem("shelfmark.notice", loginKept ? "login_kept" : "deleted");
@@ -207,7 +234,7 @@ export default function SettingsPage() {
           <Button variant="outline" icon="upload" onClick={() => fileInput.current?.click()} data-testid="backup-restore">
             {t("web_backup_restore")}
           </Button>
-          <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => void chosen(event.target.files?.[0])} data-testid="backup-file" />
+          <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => void chosen(event.target.files?.[0], "backup")} data-testid="backup-file" />
         </div>
         {backupProblem ? (
           <p className="problem" role="alert" data-testid="backup-problem">
@@ -215,6 +242,8 @@ export default function SettingsPage() {
           </p>
         ) : null}
       </Card>
+
+      <ImportCard problem={importProblem} onFile={(file) => void chosen(file, "import")} />
 
       <Card title={t("account_title")} testId="account-card">
         <p>{t("account_signed_in_as", user?.email ?? "")}</p>
@@ -291,6 +320,7 @@ export default function SettingsPage() {
           }}
         />
       ) : null}
+      <ImportFlow plan={importing} onClose={() => setImporting(null)} />
       {deletingAccount ? (
         <Dialog
           title={t("account_delete")}

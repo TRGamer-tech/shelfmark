@@ -26,11 +26,11 @@ export default function LoginPage() {
   /** Set to the address a confirmation mail went to: the account exists but cannot sign in yet. */
   const [confirming, setConfirming] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(() => {
-    // Left behind by the settings page when an account was deleted, to be said once.
+    // Left behind when an account was deleted, or when the link of a mail was no good, to be said once.
     try {
       const left = window.sessionStorage.getItem("shelfmark.notice");
       window.sessionStorage.removeItem("shelfmark.notice");
-      return left === "deleted" ? t("web_account_deleted") : left === "login_kept" ? t("web_account_login_kept") : null;
+      return left === "deleted" ? t("web_account_deleted") : left === "login_kept" ? t("web_account_login_kept") : left === "link_failed" ? t("web_reset_invalid") : null;
     } catch {
       return null;
     }

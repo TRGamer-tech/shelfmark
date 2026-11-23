@@ -168,13 +168,14 @@ export function paletteOf(p: ThemePreset): Record<string, string> {
     "--accent": p.accent,
     "--primary": strongAccent,
     "--on-primary": textOn(strongAccent),
-    // Accent coloured words on the page and on a card: both have to be readable.
-    "--accent-text": readable(readable(strongAccent, p.background), p.card),
+    // Accent coloured words on the page, on a card and on a tile: all have to be readable.
+    "--accent-text": readable(readable(readable(strongAccent, p.background), p.card), tile),
     "--primary-container": primaryContainer,
     "--on-primary-container": readable(p.text, primaryContainer),
     "--secondary": mix(strongAccent, p.text, 0.3),
     "--secondary-container": secondaryContainer,
     "--danger": danger,
+    "--on-danger": textOn(danger),
     "--danger-text": readable(readable(danger, p.background), p.card),
     "--danger-container": mix(p.card, danger, 0.22),
     "--surface-variant": surfaceVariant,
@@ -191,7 +192,8 @@ export function paletteOf(p: ThemePreset): Record<string, string> {
     "--wood-dark": wood.dark,
     "--shelf-back": dark ? mix(p.background, BLACK, 0.25) : mix(p.background, p.text, 0.07),
     "--star": star,
-    "--star-text": readable(readable(star, p.card), p.background, 3),
+    // Stars are pictures, not print: they have to be seen, which asks for less than reading does.
+    "--star-text": readable(readable(star, p.card, 3), p.background, 3),
     "--spice": spice,
     "--good": good,
     "--good-text": readable(readable(good, p.card), p.background),

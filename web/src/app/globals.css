@@ -49,6 +49,7 @@
   --secondary: #86563a;
   --secondary-container: #f7eae1;
   --danger: #ce3c36;
+  --on-danger: #ffffff;
   --danger-text: #c43933;
   --danger-container: #f4d4d3;
   --surface-variant: #eeeeed;
@@ -74,6 +75,7 @@
   --serif: "Playfair Display", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --sans: "Lato", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --nav-height: 72px;
+  --timer-line-height: 40px;
   --sidebar-width: 228px;
 }
 
@@ -91,6 +93,7 @@
     --secondary: #e8a571;
     --secondary-container: #4d3727;
     --danger: #e86058;
+    --on-danger: #1b1714;
     --danger-text: #e86058;
     --danger-container: #55332e;
     --surface-variant: #3c3632;
@@ -328,7 +331,7 @@ img {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
   font-size: 0.7rem;
   line-height: 18px;
   text-align: center;
@@ -395,14 +398,201 @@ img {
   text-decoration: underline;
 }
 
+/* ---- the preview of an import ---- */
+
+.import-group summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.import-titles {
+  margin: 4px 0 8px;
+  padding: 8px 12px 8px 28px;
+  max-height: 11.5rem;
+  overflow-y: auto;
+  background: var(--surface-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.import-titles li {
+  padding: 2px 0;
+}
+
+/* ---- the reading timer ---- */
+
+/* The line that says a timer is on and leads back to it. On a phone it lies on top of
+   the bar at the bottom, across the whole width, and what floats there moves up by its
+   height. On a wide screen it sits in the sidebar. */
+.timer-float {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--nav-height);
+  z-index: 19;
+}
+
+.timer-float .timer-line {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--timer-line-height);
+  border-width: 1px 0 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.timer-float .timer-line-title {
+  max-width: none;
+}
+
+@media (max-width: 899.98px) {
+  .shell-timer .content {
+    padding-bottom: calc(var(--nav-height) + var(--timer-line-height) + 24px);
+  }
+
+  .shell-timer .fab {
+    bottom: calc(var(--nav-height) + var(--timer-line-height) + 16px + env(safe-area-inset-bottom));
+  }
+
+  .shell-timer .save-float {
+    bottom: calc(var(--nav-height) + var(--timer-line-height) + 12px + env(safe-area-inset-bottom));
+  }
+
+  body:has(.shell-timer) .toasts {
+    bottom: calc(var(--nav-height) + var(--timer-line-height) + 20px);
+  }
+}
+
+.timer-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  border: 1px solid var(--outline-variant);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.timer-line .icon {
+  flex: none;
+}
+
+.timer-line-title {
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timer-line-clock {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 16px 8px 24px;
+}
+
+.timer-book {
+  font-size: 1.4rem;
+  max-width: 34rem;
+  margin: 0 0 24px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.timer > .timer-line {
+  margin-bottom: 20px;
+}
+
+.timer-ring {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  max-width: 100%;
+}
+
+.timer-ring svg {
+  display: block;
+  /* The arc starts at the top, as the hand of a clock does. */
+  transform: rotate(-90deg);
+}
+
+.timer-track {
+  stroke: var(--tile);
+}
+
+.timer-arc {
+  stroke: var(--primary);
+}
+
+.timer-clock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--serif);
+  font-size: 2.25rem;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.timer-toggle {
+  width: 76px;
+  height: 76px;
+  margin-top: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.timer-toggle:hover {
+  filter: brightness(1.08);
+}
+
+.timer-actions {
+  margin-top: 24px;
+  justify-content: center;
+  gap: 12px;
+}
+
 @media (min-width: 900px) {
   .shell {
     flex-direction: row;
   }
 
   .bottombar,
-  .save-float {
+  .save-float,
+  .timer-float {
     display: none;
+  }
+
+  .sidebar .timer-line {
+    box-shadow: none;
+    margin: 0 4px;
+  }
+
+  .sidebar .timer-line-title {
+    flex: 1;
+    max-width: none;
   }
 
   .sidebar {
@@ -598,7 +788,7 @@ img {
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .btn:disabled {
@@ -1169,6 +1359,12 @@ img {
   .bookcase-grouped .shelf-section-wide {
     grid-column: 1 / -1;
   }
+
+  /* Bays next to each other have their boards at the same height, as a bookcase has. */
+  .bookcase-grouped .shelf-row-spines,
+  .bookcase-grouped .shelf-row-empty {
+    min-height: 196px;
+  }
 }
 
 .shelf-section {
@@ -1552,7 +1748,7 @@ img {
 }
 
 .star-on {
-  color: var(--star);
+  color: var(--star-text);
 }
 
 .star-off {
@@ -1899,7 +2095,9 @@ img {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
-  margin-top: 4px;
+  /* On a wide screen the days would grow to the size of real books. */
+  max-width: 560px;
+  margin: 4px auto 0;
 }
 
 .cal-weekday {
@@ -1984,11 +2182,11 @@ img {
 }
 
 .fact {
+  display: block;
   padding: 4px 0;
 }
 
 .fact-link {
-  display: block;
   color: inherit;
   text-decoration: none;
 }
@@ -2007,7 +2205,7 @@ img {
 }
 
 .dot-on {
-  background: var(--star);
+  background: var(--star-text);
 }
 
 .milestone-head {
@@ -2037,7 +2235,7 @@ img {
 }
 
 .timeline-item .icon {
-  color: var(--star);
+  color: var(--star-text);
 }
 
 /* ---- friends ---- */
@@ -2066,7 +2264,7 @@ img {
   min-width: 0;
 }
 
-.friend-row .icon {
+.friend-row a .icon {
   color: var(--accent-text);
 }
 

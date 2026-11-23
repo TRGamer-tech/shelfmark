@@ -13,13 +13,24 @@ import { useI18n } from "./i18n";
 import { useLibrary } from "./library";
 import { Button, Dialog, Field, TextArea, digits } from "./ui";
 
+interface LogSessionProps {
+  book: Book;
+  onClose: () => void;
+  /** What the reading timer measured. The reader can still correct it. */
+  presetMinutes?: number;
+  /** When the timer was started. Without a timer the start is worked back from the minutes. */
+  startedAt?: number;
+  /** Called after the session went into the library, not when the form is only closed. */
+  onSaved?: () => void;
+}
+
 /** Asks from which page to which the reader read, and optionally for how long. */
-export function LogSessionDialog({ book, onClose }: { book: Book; onClose: () => void }) {
+export function LogSessionDialog({ book, onClose, presetMinutes, startedAt, onSaved }: LogSessionProps) {
   const { t } = useI18n();
   const { mutate } = useLibrary();
   const [from, setFrom] = useState(String(book.status === "READ" ? 0 : book.currentPage));
   const [to, setTo] = useState("");
-  const [minutes, setMinutes] = useState("");
+  const [minutes, setMinutes] = useState(presetMinutes === undefined ? "" : String(presetMinutes));
   const [note, setNote] = useState("");
   const fromPage = from === "" ? null : Number(from);
   const toPage = to === "" ? null : Number(to);
@@ -31,9 +42,10 @@ export function LogSessionDialog({ book, onClose }: { book: Book; onClose: () =>
     const spent = minutes === "" ? 0 : Number(minutes);
     const now = Date.now();
     // The start time is worked back from now, so the session lands on the right day.
-    const session = { ...sessionCodec.read({}), id: newId(now), bookId: book.id, startedAt: now - Math.round(spent * 60_000), startPage: fromPage, endPage: toPage, minutes: spent, note: note.trim() };
+    const session = { ...sessionCodec.read({}), id: newId(now), bookId: book.id, startedAt: startedAt ?? now - Math.round(spent * 60_000), startPage: fromPage, endPage: toPage, minutes: spent, note: note.trim() };
     void mutate(logSession(session, today(), now));
     onClose();
+    onSaved?.();
   };
 
   return (

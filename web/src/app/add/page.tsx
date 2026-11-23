@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { BookCover } from "@/components/BookCover";
-import { ListChoice, findCovers } from "@/components/BookForm";
+import { ListChoice } from "@/components/BookForm";
 import { useI18n } from "@/components/i18n";
 import { formatKey } from "@/components/labels";
 import { useLibrary } from "@/components/library";
@@ -16,11 +16,12 @@ import type { RemoteBook } from "@/lib/catalogue/remoteBook";
 import { authorLine, fillFrom, normalise, remoteBook, toBook } from "@/lib/catalogue/remoteBook";
 import { today } from "@/lib/dates";
 import { setDraft } from "@/lib/draft";
+import { findCovers } from "@/lib/findCovers";
 import { newId } from "@/lib/ids";
 import * as Isbn from "@/lib/isbn";
 import type { Book, ReadingStatus } from "@/lib/model";
 import { newBook } from "@/lib/model";
-import { addBook, modifyBook } from "@/lib/mutations";
+import { addBook, fillCover } from "@/lib/mutations";
 import { withDefaultsFor } from "@/lib/rules";
 
 const MIN_CHARS = 3;
@@ -175,7 +176,7 @@ export default function AddPage() {
     void mutate(addBook(book, listIds, now));
     if (book.coverUrl.trim() === "") {
       void findCovers(book.title, book.authors, book.isbn, lang).then((found) => {
-        if (found[0]) void mutate(modifyBook(id, (b) => (b.coverUrl.trim() === "" && b.coverPath.trim() === "" ? { ...b, coverUrl: found[0] } : b), Date.now()));
+        if (found[0]) void mutate(fillCover(id, found[0], Date.now()));
       });
     }
     setPreview(null);

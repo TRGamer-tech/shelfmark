@@ -39,7 +39,7 @@ function RequestCard({ request, headline, actionLabel, onAction, onDelete }: { r
 
 export default function RequestsPage() {
   const { t } = useI18n();
-  const { vault, mutate, answer, resendRequest, syncFriends, notify } = useLibrary();
+  const { vault, mutate, answer, resendRequest, syncFriends, friendsBusy, notify } = useLibrary();
   const [deleting, setDeleting] = useState<LendRequest | null>(null);
 
   // Whoever opens this page wants to know now whether something came in.
@@ -55,7 +55,9 @@ export default function RequestsPage() {
 
   return (
     <div className="page" data-testid="requests-page">
-      <PageHead title={t("requests_title")} back="/friends" />
+      <PageHead title={t("requests_title")} back="/friends">
+        <IconButton icon="refresh" label={t("server_sync_now")} disabled={friendsBusy} onClick={() => void syncFriends()} data-testid="sync-now" />
+      </PageHead>
       {vault.requests.length === 0 ? <EmptyHint>{t("requests_empty")}</EmptyHint> : null}
 
       {incoming.length > 0 ? <h2 className="section-title">{t("requests_incoming")}</h2> : null}

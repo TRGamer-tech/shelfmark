@@ -7,14 +7,16 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { RemoteBook } from "@/lib/catalogue/remoteBook";
 import { today } from "@/lib/dates";
+import { findCovers } from "@/lib/findCovers";
 import { newId } from "@/lib/ids";
 import * as Isbn from "@/lib/isbn";
 import type { Book, BookFormat, ReadingStatus } from "@/lib/model";
-import { addBook, modifyBook } from "@/lib/mutations";
+import type { BookFields } from "@/lib/mutations";
+import { addBook, editBook, fillCover, withCover } from "@/lib/mutations";
 import { prepareCover } from "@/lib/picture";
 import { isAudio, withDefaultsFor } from "@/lib/rules";
 import { coverAddressOf } from "@/lib/shelf";
-import { ownCoverFile, removeCover, uploadCover } from "@/lib/supabase/api";
+import { ownCoverFile, removeCover, uploadCover } from "@/lib/supabase/covers";
 import { useAuth } from "./auth";
 import { BookCover } from "./BookCover";
 import { useI18n } from "./i18n";
@@ -56,19 +58,6 @@ export function ListChoice({ status, onStatus, listIds, onLists }: { status: Rea
       ) : null}
     </>
   );
-}
-
-/** Asks the catalogues for cover pictures of a book. An empty list when there are none or the search failed. */
-export async function findCovers(title: string, authors: string, isbn: string, lang: string): Promise<string[]> {
-  try {
-    const query = new URLSearchParams({ title, authors, isbn, lang });
-    const response = await fetch(`/api/books/covers?${query}`);
-    if (!response.ok) return [];
-    const answer = (await response.json()) as { covers?: unknown };
-    return Array.isArray(answer.covers) ? answer.covers.filter((c): c is string => typeof c === "string" && /^https?:\/\//.test(c)) : [];
-  } catch {
-    return [];
-  }
 }
 
 function CoverPicker({ title, authors, isbn, onPick, onClose }: { title: string; authors: string; isbn: string; onPick: (url: string) => void; onClose: () => void }) {
@@ -145,6 +134,13 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const set = (patch: Partial<Book>) => setBook((current) => ({ ...current, ...patch }));
+  // Every way of giving the book another cover goes through here, so none forgets the photo on the phone.
+  // That it happened is remembered apart from the fields: the library may change under an open form.
+  const [coverTouched, setCoverTouched] = useState(false);
+  const setCover = (url: string) => {
+    setBook((current) => withCover(current, url));
+    setCoverTouched(true);
+  };
   const cover = coverAddressOf(book);
 
   const upload = async (file: File | undefined) => {
@@ -157,8 +153,8 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       const token = data.session?.access_token;
       if (!picture || !token) throw new Error("no picture");
       const url = await uploadCover(config, token, user.id, picture);
-      // The address of the picture is all that changes. Everything else in the form stays.
-      set({ coverUrl: url });
+      // Only the cover changes. Everything else in the form stays.
+      setCover(url);
     } catch {
       setCoverProblem(t("web_cover_upload_failed"));
     } finally {
@@ -171,7 +167,7 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
     event.preventDefault();
     if (book.title.trim() === "") return;
     const position = Number(seriesPosition.replace(",", "."));
-    const fields = {
+    const fields: BookFields = {
       title: book.title.trim(),
       subtitle: book.subtitle.trim(),
       authors: book.authors.trim(),
@@ -182,31 +178,29 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       pageCount: book.pageCount,
       format: book.format,
       description: book.description,
-      coverUrl: book.coverUrl.trim(),
-      coverPath: book.coverPath,
       genres: book.genres.trim(),
       tags: book.tags.trim(),
       series: book.series.trim(),
       seriesPosition: Number.isFinite(position) && position > 0 ? position : 0,
     };
+    const coverUrl = book.coverUrl.trim();
     const now = Date.now();
     if (isNew) {
       const id = newId(now);
-      const added = withDefaultsFor({ ...book, ...fields, id }, status, today());
+      const added = withDefaultsFor(withCover({ ...book, ...fields, id }, coverUrl), status, today());
       void mutate(addBook(added, listIds, now));
       // A book that came without a cover gets one looked up in the background.
-      if (fields.coverUrl === "") {
+      if (coverUrl === "") {
         void findCovers(fields.title, fields.authors, fields.isbn, lang).then((found) => {
-          if (found[0]) void mutate(modifyBook(id, (b) => (b.coverUrl.trim() === "" && b.coverPath.trim() === "" ? { ...b, coverUrl: found[0] } : b), Date.now()));
+          if (found[0]) void mutate(fillCover(id, found[0], Date.now()));
         });
       }
       onSaved(id);
     } else {
-      // Only what this form edits is written, so stars or a status given meanwhile elsewhere are kept.
-      void mutate(modifyBook(book.id, (stored) => ({ ...stored, ...fields }), now));
+      void mutate(editBook(book.id, fields, coverTouched ? coverUrl : null, now));
       // A picture this account uploaded and no longer uses is taken off the server again.
       const old = user ? ownCoverFile(config, user.id, initial.coverUrl) : null;
-      if (old && user && fields.coverUrl !== initial.coverUrl) {
+      if (coverTouched && old && user && coverUrl !== initial.coverUrl) {
         void client.auth.getSession().then(({ data }) => {
           if (data.session) void removeCover(config, data.session.access_token, user.id, old);
         });
@@ -241,7 +235,7 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
               </Button>
               <input ref={fileInput} type="file" accept="image/*" hidden onChange={(event) => void upload(event.target.files?.[0])} data-testid="cover-file" />
               {book.coverUrl.trim() !== "" || book.coverPath.trim() !== "" ? (
-                <Button variant="text" icon="delete" onClick={() => set({ coverUrl: "", coverPath: "" })} data-testid="remove-cover">
+                <Button variant="text" icon="delete" onClick={() => setCover("")} data-testid="remove-cover">
                   {t("edit_cover_remove")}
                 </Button>
               ) : null}
@@ -257,7 +251,7 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
                 variant="outline"
                 disabled={!/^https?:\/\/\S+$/i.test(address.trim())}
                 onClick={() => {
-                  set({ coverUrl: address.trim() });
+                  setCover(address);
                   setAddress("");
                 }}
                 data-testid="cover-address-use"
@@ -325,7 +319,7 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
           onClose={() => setPicking(false)}
           onPick={(url) => {
             setPicking(false);
-            set({ coverUrl: url });
+            setCover(url);
           }}
         />
       ) : null}

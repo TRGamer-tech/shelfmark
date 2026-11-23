@@ -151,6 +151,10 @@ test("text can be read in every theme", () => {
     check("--muted", "--tile", 4.5);
     check("--accent-text", "--bg", 4.5);
     check("--accent-text", "--card", 4.5);
+    check("--accent-text", "--tile", 4.5);
+    check("--on-danger", "--danger", 4.5);
+    check("--star-text", "--card", 3);
+    check("--star-text", "--bg", 3);
     check("--on-primary", "--primary", 4.5);
     check("--on-primary-container", "--primary-container", 4.5);
     check("--text", "--secondary-container", 4.5);

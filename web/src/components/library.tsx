@@ -356,8 +356,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const askToBorrow = useCallback(
     async (request: LendRequest) => {
-      await store.mutate(addRequest(request));
-      return resendRequest(request);
+      // Recorded and sent at the same moment: closing the tab right after must not leave one without the other.
+      const saving = store.mutate(addRequest(request));
+      const sent = await resendRequest(request);
+      await saving;
+      return sent;
     },
     [store, resendRequest],
   );
@@ -366,10 +369,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     async (request: LendRequest, accept: boolean) => {
       const now = Date.now();
       // Answering again (to send it once more) must not move the date or the book a second time.
-      if (request.status === "PENDING") await store.mutate(answerRequest(request.id, accept, today(), now));
-      const current = store.getState().vault.requests.find((r) => r.id === request.id) ?? request;
-      const envelope = answerEnvelope(current, accept, userId, prefsOf(store.getState().vault).profileName, current.answeredAt ?? now);
-      return send(request.peerId, writeEnvelope(envelope));
+      const first = request.status === "PENDING";
+      const saving = first ? store.mutate(answerRequest(request.id, accept, today(), now)) : Promise.resolve();
+      const envelope = answerEnvelope(request, accept, userId, prefsOf(store.getState().vault).profileName, first ? now : (request.answeredAt ?? now));
+      const sent = await send(request.peerId, writeEnvelope(envelope));
+      await saving;
+      return sent;
     },
     [store, send, userId],
   );

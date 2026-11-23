@@ -44,9 +44,9 @@ export function IconButton({ icon, label, size = 24, className, type, ...rest }:
   );
 }
 
-export function IconLink({ href, icon, label }: { href: string; icon: IconName; label: string }) {
+export function IconLink({ href, icon, label, testId }: { href: string; icon: IconName; label: string; testId?: string }) {
   return (
-    <Link href={href} className="icon-btn" aria-label={label} title={label}>
+    <Link href={href} className="icon-btn" aria-label={label} title={label} data-testid={testId}>
       <Icon name={icon} />
     </Link>
   );
@@ -282,10 +282,37 @@ export interface TabItem {
 }
 
 export function Tabs({ tabs, current, onChange, label }: { tabs: TabItem[]; current: string; onChange: (key: string) => void; label: string }) {
+  const list = useRef<HTMLDivElement>(null);
+  // Within a row of tabs the arrow keys move from one to the next, as people expect of tabs.
+  const move = (by: number) => {
+    const index = tabs.findIndex((tab) => tab.key === current);
+    const next = tabs[(index + by + tabs.length) % tabs.length];
+    onChange(next.key);
+    list.current?.querySelector<HTMLButtonElement>(`[data-tab="${next.key}"]`)?.focus();
+  };
   return (
-    <div className="tabs" role="tablist" aria-label={label}>
+    <div
+      className="tabs"
+      role="tablist"
+      aria-label={label}
+      ref={list}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight") move(1);
+        else if (event.key === "ArrowLeft") move(-1);
+      }}
+    >
       {tabs.map((tab) => (
-        <button key={tab.key} type="button" role="tab" aria-selected={tab.key === current} className={`tab ${tab.key === current ? "tab-on" : ""}`} onClick={() => onChange(tab.key)} data-testid={`tab-${tab.key}`}>
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          aria-selected={tab.key === current}
+          tabIndex={tab.key === current ? 0 : -1}
+          className={`tab ${tab.key === current ? "tab-on" : ""}`}
+          onClick={() => onChange(tab.key)}
+          data-tab={tab.key}
+          data-testid={`tab-${tab.key}`}
+        >
           {tab.label}
         </button>
       ))}

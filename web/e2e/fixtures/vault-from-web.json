@@ -1,24 +1,24 @@
 {
   "books": [
     {
-      "id": 1795440164606134,
-      "spice": 2,
+      "id": 1795445200056139,
+      "spice": 5,
       "title": "Dracula",
       "format": "HARDCOVER",
       "genres": "Horror, Classics",
-      "rating": 5,
-      "review": "Fangs.",
+      "rating": 4,
+      "review": "Fangs. Written on a train, in a tunnel.",
       "series": "Gothic",
-      "addedAt": 1795440164606,
+      "addedAt": 1795445200056,
       "authors": "Bram Stoker",
-      "coverUrl": "http://127.0.0.1:54340/storage/v1/object/public/shelfmark-covers/be01090b-0911-4460-9ef2-27495cc77fe0/8a228e3b-ce37-41c5-b043-1a389e76d3e9.jpg",
+      "coverUrl": "http://127.0.0.1:54340/storage/v1/object/public/shelfmark-covers/f860e021-c489-43d4-9ece-bc85b9f29eec/8fbc0d10-8a88-4be4-81b3-3b0305c6cddd.jpg",
       "pageCount": 418,
-      "updatedAt": 1795440201863,
+      "updatedAt": 1795445247736,
       "publishedYear": "1897",
       "seriesPosition": 1.5
     },
     {
-      "id": 1795440166239344,
+      "id": 1795445201706333,
       "isbn": "9783257229530",
       "spice": 2,
       "title": "Der Vorleser",
@@ -26,7 +26,7 @@
       "rating": 4.5,
       "review": "Quiet and hard at once.",
       "status": "READ",
-      "addedAt": 1795440166239,
+      "addedAt": 1795445201706,
       "authors": "Bernhard Schlink",
       "coverUrl": "https://covers.openlibrary.org/b/id/8782586-L.jpg",
       "favorite": true,
@@ -36,54 +36,55 @@
       "publisher": "Diogenes",
       "readCount": 1,
       "startedOn": 20759,
-      "updatedAt": 1795440168623,
+      "updatedAt": 1795445204608,
       "finishedOn": 20780,
       "currentPage": 206,
       "description": "Sie ist reizbar, rätselhaft und viel älter als er.\n\nEin Roman über Schuld & Scham.",
       "publishedYear": "1997"
     },
     {
-      "id": 1795440174823433,
+      "id": 1795445209854956,
       "title": "Faust",
-      "addedAt": 1795440174823,
+      "addedAt": 1795445209854,
       "authors": "Johann Wolfgang von Goethe",
       "coverUrl": "https://example.org/faust.jpg",
       "pageCount": 320,
-      "updatedAt": 1795440181940
+      "updatedAt": 1795445217120
     },
     {
-      "id": 1795440175439518,
+      "id": 1795445210337943,
       "title": "Emma",
-      "addedAt": 1795440175439,
+      "addedAt": 1795445210337,
       "authors": "Jane Austen",
       "coverPath": "cover_emma.jpg",
       "pageCount": 474,
-      "updatedAt": 1795440175439
+      "publisher": "John Murray",
+      "updatedAt": 1795445217845
     }
   ],
   "goals": [
     {
-      "id": 1795440172648669,
+      "id": 1795445207933193,
       "endDay": 20818,
       "repeat": "YEARLY",
       "target": 12,
       "startDay": 20454,
-      "createdAt": 1795440172648
+      "createdAt": 1795445207933
     }
   ],
   "links": [
     {
-      "bookId": 1795440164606134,
-      "shelfId": 1795440168972009
+      "bookId": 1795445200056139,
+      "shelfId": 1795445205041569
     }
   ],
   "notes": [
     {
-      "id": 1795440172157444,
-      "text": "Hanna keeps her secret to the end.",
+      "id": 1795445207456831,
+      "text": "Hanna keeps the secret to the end.",
       "title": "People",
-      "bookId": 1795440166239344,
-      "createdAt": 1795440172157
+      "bookId": 1795445201706333,
+      "createdAt": 1795445207456
     }
   ],
   "prefs": {
@@ -92,7 +93,7 @@
     "profileName": "Anna",
     "customThemes": [
       {
-        "id": "c2032a8a-90ad-46f4-b155-bb72db06b036",
+        "id": "ccb3db53-fe1b-4787-98e7-9d07bcc5b776",
         "card": -14932964,
         "name": "Moor",
         "text": -1511192,
@@ -104,72 +105,72 @@
   },
   "quotes": [
     {
-      "id": 1795440170923844,
+      "id": 1795445206754445,
       "page": 129,
       "text": "I revealed nothing that I should have kept silent about.",
-      "bookId": 1795440166239344,
-      "createdAt": 1795440170923
+      "bookId": 1795445201706333,
+      "createdAt": 1795445206754
     }
   ],
   "shelves": [
     {
-      "id": 1795440168972009,
+      "id": 1795445205041569,
       "name": "Holiday",
-      "createdAt": 1795440168972
+      "createdAt": 1795445205041
     }
   ],
   "requests": [
     {
-      "id": "8c7d43ec-118c-4d0a-b29d-b667324b1e60",
+      "id": "38e6e15c-25f0-4e5c-a25a-00ff2eb16f98",
       "note": "For the holidays?",
-      "peerId": "a774a2c3-e4b7-4f94-90de-1f03db85adcc",
+      "peerId": "bde492ca-ba87-4a4e-9c50-fcf05710d7bf",
       "status": "ACCEPTED",
       "incoming": false,
       "peerName": "Ben",
       "bookTitle": "Momo",
-      "createdAt": 1795440192806,
-      "answeredAt": 1795440193605,
+      "createdAt": 1795445228089,
+      "answeredAt": 1795445229376,
       "bookAuthors": "Michael Ende",
-      "bookRemoteId": 1795440189871085
+      "bookRemoteId": 1795445225389780
     },
     {
       "id": "carl-1",
-      "peerId": "079298ec-ffea-4d80-849b-300c033a8d23",
+      "peerId": "41872c7f-e0ec-4de6-9518-e67343c6f8b7",
       "status": "DECLINED",
       "incoming": true,
       "peerName": "Carl",
       "bookTitle": "Dracula",
-      "createdAt": 1795440196553,
-      "answeredAt": 1795440197221,
+      "createdAt": 1795445232305,
+      "answeredAt": 1795445232903,
       "bookAuthors": "Bram Stoker",
-      "bookRemoteId": 1795440164606134
+      "bookRemoteId": 1795445200056139
     }
   ],
   "sessions": [
     {
-      "id": 1795440168473537,
-      "bookId": 1795440166239344,
+      "id": 1795445204375688,
+      "bookId": 1795445201706333,
       "endPage": 100,
       "minutes": 50,
-      "startedAt": 1795437168473
+      "startedAt": 1795442204375
     },
     {
-      "id": 1795440168623673,
-      "bookId": 1795440166239344,
+      "id": 1795445204608634,
+      "bookId": 1795445201706333,
       "endPage": 206,
       "minutes": 95,
       "startPage": 120,
-      "startedAt": 1795434468623
+      "startedAt": 1795439504608
     }
   ],
   "ornaments": [
     {
-      "id": 1795440177464194,
+      "id": 1795445212322332,
       "kind": "CANDLE",
       "shelfKey": "READ"
     },
     {
-      "id": 1795440177574968,
+      "id": 1795445212424423,
       "kind": "CAT",
       "position": 1,
       "shelfKey": "READ"
@@ -177,13 +178,13 @@
   ],
   "purchases": [
     {
-      "id": 1795440172358749,
+      "id": 1795445207656549,
       "day": 20780,
       "price": 14.9,
       "store": "Orell",
-      "bookId": 1795440166239344,
+      "bookId": 1795445201706333,
       "currency": "CHF"
     }
   ],
-  "exportedAt": 1795440204139
+  "exportedAt": 1795445247736
 }
