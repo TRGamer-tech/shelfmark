@@ -16,6 +16,9 @@ import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import ch.schmidtbit.shelfmark.data.share.VaultPrefs
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -73,6 +76,11 @@ class ServerSync(
     private val baseFile: File,
     private val now: () -> Long = System::currentTimeMillis,
     private val today: () -> Long = { LocalDate.now().toEpochDay() },
+    /**
+     * Where the work is done. Not on the main thread: writing a whole library as a
+     * document, comparing two of them and reading pictures takes long enough to be felt.
+     */
+    private val work: CoroutineDispatcher = Dispatchers.Default,
 ) {
     val status = MutableStateFlow(SyncStatus())
     val waiting: Flow<Int> = db.social().observeOutboxCount()
@@ -85,7 +93,11 @@ class ServerSync(
     // ---- the account ----
 
     /** Signs in and brings this device in step with the account. */
-    suspend fun signIn(email: String, password: String): SyncResult {
+    suspend fun signIn(email: String, password: String): SyncResult = withContext(work) {
+        signInNow(email, password)
+    }
+
+    private suspend fun signInNow(email: String, password: String): SyncResult {
         val config = config ?: return SyncResult.Failed(NO_SERVER)
         val session = try {
             AuthApi(config, poster, now).signIn(email, password)
@@ -102,7 +114,11 @@ class ServerSync(
      * Creates an account. Returns null when the address has to be confirmed by a link in a
      * mail first: nobody is signed in then, and signing in works once that is done.
      */
-    suspend fun signUp(email: String, password: String): SyncResult? {
+    suspend fun signUp(email: String, password: String): SyncResult? = withContext(work) {
+        signUpNow(email, password)
+    }
+
+    private suspend fun signUpNow(email: String, password: String): SyncResult? {
         val config = config ?: return SyncResult.Failed(NO_SERVER)
         val session = try {
             AuthApi(config, poster, now).signUp(email, password) ?: return null
@@ -141,7 +157,9 @@ class ServerSync(
     }
 
     /** Signs out on this device. The library stays here, and it stays on the account. */
-    suspend fun signOut() = mutex.withLock {
+    suspend fun signOut() = withContext(work) { signOutNow() }
+
+    private suspend fun signOutNow() = mutex.withLock {
         val s = settings.current()
         val server = config
         if (server != null && s.accessToken.isNotBlank()) {
@@ -152,7 +170,9 @@ class ServerSync(
     }
 
     /** Deletes the account and everything of it on the server. This device keeps its library. False when that failed. */
-    suspend fun deleteAccount(): Boolean = mutex.withLock {
+    suspend fun deleteAccount(): Boolean = withContext(work) { deleteAccountNow() }
+
+    private suspend fun deleteAccountNow(): Boolean = mutex.withLock {
         val config = config ?: return@withLock false
         try {
             val token = token() ?: return@withLock false
@@ -200,7 +220,9 @@ class ServerSync(
 
     // ---- keeping everything in step ----
 
-    suspend fun sync(): SyncResult = mutex.withLock {
+    suspend fun sync(): SyncResult = withContext(work) { syncNow() }
+
+    private suspend fun syncNow(): SyncResult = mutex.withLock {
         val config = config ?: return@withLock SyncResult.Off
         if (!settings.current().signedIn) return@withLock SyncResult.Off
         status.value = SyncStatus(running = true)
@@ -224,7 +246,9 @@ class ServerSync(
     }
 
     /** Answers the question of [SyncResult.Choose] and goes on from there. */
-    suspend fun choose(keep: Keep): SyncResult {
+    suspend fun choose(keep: Keep): SyncResult = withContext(work) { chooseNow(keep) }
+
+    private suspend fun chooseNow(keep: Keep): SyncResult {
         val config = config ?: return SyncResult.Off
         val failed = mutex.withLock {
             try {
@@ -456,7 +480,9 @@ class ServerSync(
     }
 
     /** Connects with the owner of [code]. Returns their name, or the reason it did not work. */
-    suspend fun addFriend(code: String): Result<String> {
+    suspend fun addFriend(code: String): Result<String> = withContext(work) { addFriendNow(code) }
+
+    private suspend fun addFriendNow(code: String): Result<String> {
         val config = config ?: return Result.failure(ServerException(NO_SERVER, 0))
         return try {
             val token = mutex.withLock { token() } ?: return Result.failure(ServerException("signed_out", 0))
@@ -502,7 +528,9 @@ class ServerSync(
      * the user is sent, and it happens whether or not anybody is signed in. Somebody who
      * is signed in is brought up to date as well.
      */
-    suspend fun dailyCheck(): SyncResult {
+    suspend fun dailyCheck(): SyncResult = withContext(work) { dailyCheckNow() }
+
+    private suspend fun dailyCheckNow(): SyncResult {
         val config = config ?: return SyncResult.Off
         val day = today()
         if (settings.current().lastPingDay != day) {

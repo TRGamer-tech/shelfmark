@@ -50,8 +50,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // Raise versionCode with every release, Android refuses to install a lower one over a higher one.
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
         buildConfigField("String", "SERVER_URL", "\"" + serverUrl.replace("\"", "") + "\"")
         buildConfigField("String", "SERVER_KEY", "\"" + serverKey.replace("\"", "") + "\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
