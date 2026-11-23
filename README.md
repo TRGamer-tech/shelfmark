@@ -1,11 +1,14 @@
 # Shelfmark
 
-A personal library and reading tracker for Android that tries to feel like a real bookshelf.
-No account, no ads. Your books stay on your phone, and what friends get to see is up to you.
-The interface is available in English and German.
+A personal library and reading tracker that tries to feel like a real bookshelf: an Android
+app, and a website that shows the same shelf in a browser. No ads. An account is optional:
+without one your books simply stay on your phone. The interface is available in English and
+German.
 
-This is the native Android version (Kotlin, Jetpack Compose) of the desktop Shelfmark. It can
-import the desktop app's library file.
+- `app/`: the Android app (Kotlin, Jetpack Compose). It can import the library file of the
+  older desktop Shelfmark.
+- `web/`: the website (Next.js), for hosting on Vercel.
+- `supabase/`: the server both of them talk to, a Supabase project.
 
 <p>
   <img src="docs/screenshots/48_lively_shelf.png" width="23%" alt="Shelf with book spines, ornaments and a leaning book">
@@ -71,6 +74,18 @@ import the desktop app's library file.
 - Milestones for books, pages, sessions, hours, reviews, quotes, streaks and long books.
 - A purchase log per book: price, shop and date.
 
+**One library, everywhere**
+
+- Sign in with e-mail and password, and your library is kept in step with your account: a
+  change made on the website or on another phone arrives by itself, a change made here goes
+  there a few seconds later.
+- The shelf looks the same on every device: lists, ornaments, the theme and your own themes,
+  the view, the sort order and the movement switch belong to the account. A cover you
+  photographed is uploaded, so it shows everywhere too.
+- When two devices changed things while the other was not looking, both sets of changes are
+  kept, book by book.
+- The same library in a browser, on the website, with the same sign-in.
+
 **Friends**
 
 - You choose what friends see: only what you own, or also your reading status, lists, ratings
@@ -79,19 +94,18 @@ import the desktop app's library file.
   for it.
 - A friend can ask to borrow a book that is available. You answer with one tap, yes or no.
   Saying yes marks your copy as lent to them.
-- Two ways to get there, see below: through a server, where everything arrives by itself, or
+- Two ways to get there, see below: with an account, where everything arrives by itself, or
   with small files sent through any messenger.
 
 ## How sharing works
 
-**Through the server.** In the Friends tab, tap **Connect**. You get a friend code like
-`ZJ242-5U97E`. Whoever enters your code is your friend, and you are theirs. From then on your
-shared shelf is kept up to date for them, and borrow requests and answers arrive by
-themselves, with a notification when the app is closed. Leaving is one button in the settings
-and removes everything of yours from the server.
+**With an account.** Signed in, the Friends tab shows your friend code, like `ZJ242-5U97E`.
+Whoever enters your code is your friend, and you are theirs. From then on your shared shelf is
+kept up to date for them, and borrow requests and answers arrive by themselves, with a
+notification when the app is closed.
 
-**With files.** Without a server, or for a friend who does not use it, everything travels as
-a small `.shelfmark.json` file through the messenger you already use:
+**With files.** Without an account, or for a friend who has none, everything travels as a
+small `.shelfmark.json` file through the messenger you already use:
 
 1. You tap **Share my library** and send the file.
 2. Your friend opens it with Shelfmark and can browse your shelf.
@@ -101,44 +115,80 @@ a small `.shelfmark.json` file through the messenger you already use:
 
 ## The server
 
-The server is a [Supabase](https://supabase.com) project of your own. The free plan is enough.
-The app does not come with one: whoever builds the app decides which server it talks to.
+The server is a [Supabase](https://supabase.com) project. The free plan is enough. Whoever
+builds the app and hosts the website decides which project they talk to. The contract between
+the three parts is written down in [`supabase/README.md`](supabase/README.md).
 
 **Setting it up**
 
 1. Create a project at supabase.com.
 2. Open the **SQL editor**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and
-   run it. It can be run again later, it only updates the functions.
-3. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
-   the **publishable key** (the public one, `sb_publishable_...`, never the secret one).
-4. Give both to the build, see [Build](#build), or type them into the app under
-   Settings > Server for friends > Use a server of your own.
+   run it. Run it again whenever that file changed, it keeps all data.
+3. **Authentication > Sign In / Providers > Email**: switch off **Confirm email**. With it on,
+   a new account has to open a link in a mail first, and the mail service that comes with
+   Supabase sends very few mails, and only to members of your own Supabase organisation.
+   The apps cope with either setting.
+4. **Authentication > URL Configuration**: set **Site URL** to the address of the website.
+   The link in a "forgot the password" mail leads there.
+5. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
+   the **publishable key** (the public one, `sb_publishable_...`, never the secret one), and
+   give both to the app and to the website, see [Build](#build) and [The website](#the-website).
+
+"Forgot the password" needs mail that actually arrives. For people outside your Supabase
+organisation that means setting up a mail service of your own under **Authentication >
+Emails > SMTP Settings**. Without one, a password can still be reset by hand in the
+dashboard (**Authentication > Users**).
 
 **What it stores, and who can read it**
 
-- Per person: a random id, a name, a friend code, a hash of a secret that only their phone
-  knows, and the library snapshot they chose to share.
-- Borrow requests and answers on their way. They are deleted as soon as the receiving phone
+- Per account: the whole library as one document (only its owner ever gets it), a name, a
+  friend code, and the part of the library the person chose to share.
+- Borrow requests and answers on their way. They are deleted as soon as the receiving device
   has fetched them.
+- Cover photos, in a storage bucket. Everybody can write below their own user id only.
+  Reading a picture needs its full address, which nobody can guess, and no sign-in, so that
+  friends can see the covers of a shared shelf.
 - The tables live in a schema the Supabase Data API does not expose, with row level security
-  on and no policies. The app can only call the functions `public.shelfmark_*`, and each of
-  them checks the id and the secret. A library is handed out to friends of its owner and to
-  nobody else.
-- The publishable key is in every copy of the app and is not a secret. It lets a stranger
-  call the same functions, where they can create a profile and learn nothing.
+  on and no policies. The apps can only call the functions `public.shelfmark_*`, and each of
+  them works for the signed-in caller and nobody else.
+- The publishable key is in every copy of the app and in the website, and is not a secret.
+  Without a sign-in it opens one thing: the daily check below.
+- Deleting the account, in the app or on the website, removes all of this.
 
 **Keeping a free project awake.** Supabase pauses a free project when its database sees no
-activity for a week. The app therefore checks in once a day (a job in the background, and
-again whenever the app is opened), which writes one timestamp. That check sends nothing
-about the user and also runs for people who never connected. Where the database has the
-`pg_cron` extension, `schema.sql` adds the same heartbeat from inside as a second line of
-defence. Supabase does not publish how much activity is enough, so this is the sensible
-thing to do, not a guarantee.
+activity for a week. So there is a daily check that writes one timestamp: from the app (a
+job in the background, and whenever it is opened), from the website (a scheduled job on
+Vercel), and from inside the database where it has the `pg_cron` extension. The check sends
+nothing about anybody and needs no sign-in. Supabase does not publish how much activity is
+enough, so this is the sensible thing to do, not a guarantee.
 
 **Trying it without Supabase.** [`supabase/dev_server.py`](supabase/dev_server.py) answers
-the same calls on top of a local PostgreSQL, and [`supabase/test.sql`](supabase/test.sql)
-plays the whole friend flow against the functions. A debug build may talk plain HTTP to
-`10.0.2.2` and `localhost` for that, and to nothing else.
+the same calls on top of a local PostgreSQL, sign-in and cover photos included, and
+[`supabase/test.sql`](supabase/test.sql) plays the whole story against the functions. A debug
+build of the app may talk plain HTTP to `10.0.2.2` and `localhost` for that, and to nothing
+else.
+
+## The website
+
+`web/` is the same library in a browser, for the same accounts: a Next.js app made for
+[Vercel](https://vercel.com). How to run and test it locally is in
+[`web/README.md`](web/README.md).
+
+**Putting it on Vercel**
+
+1. In Vercel: **Add New > Project**, import this repository from GitHub.
+2. Set **Root Directory** to `web`. The framework is recognised as Next.js. Leave the build
+   settings as they are.
+3. Give it the two values of the Supabase project as environment variables:
+   `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. With the Supabase
+   integration of Vercel installed, connecting the Supabase project to this Vercel project
+   sets them for you (older setups get `NEXT_PUBLIC_SUPABASE_ANON_KEY` instead, which works
+   as well).
+4. Deploy. Then put the address Vercel gave the site (`https://<name>.vercel.app`, or your own
+   domain) into Supabase as the **Site URL** (step 4 above).
+
+Every push to `main` deploys the website again. The scheduled daily check is set up by
+`web/vercel.json` and needs nothing from you.
 
 ## Install
 
@@ -171,11 +221,13 @@ You need a JDK (17 or newer) and the Android SDK (platform 37.2, build-tools 37)
 ```properties
 shelfmark.serverUrl=https://xxxxxxxx.supabase.co
 shelfmark.serverKey=sb_publishable_...
+shelfmark.websiteUrl=https://<name>.vercel.app
 ```
 
-or from `-Pshelfmark.serverUrl=... -Pshelfmark.serverKey=...`, or from the environment
-(`SHELFMARK_SUPABASE_URL`, `SHELFMARK_SUPABASE_KEY`). Without them the app is built without a
-server.
+or from `-P` properties of the same names, or from the environment (`SHELFMARK_SUPABASE_URL`,
+`SHELFMARK_SUPABASE_KEY`, `SHELFMARK_WEBSITE_URL`). Without the first two the app is built
+without a server: no accounts, friends exchange files. The website address is optional and
+only adds a link to it in the settings.
 
 **Signing.** Android only installs an update over an earlier version that was signed with the
 same key, so debug and release builds both use one stable key when it is available. Put a
@@ -197,7 +249,7 @@ the debug APK, creates the tag `v<versionName>` and attaches the APK to a GitHub
 version is published once, so raise `versionName` and `versionCode` in `app/build.gradle.kts`
 with every change to the app. A merge that leaves the version alone (documentation, say)
 builds nothing and says so in its run. The workflow can also be started by hand (**Actions >
-Release > Run workflow** on `main`) or by pushing such a tag. It reads four repository secrets
+Release > Run workflow** on `main`) or by pushing such a tag. It reads these repository secrets
 (Settings > Secrets and variables > Actions):
 
 | Secret | What it is |
@@ -206,6 +258,7 @@ Release > Run workflow** on `main`) or by pushing such a tag. It reads four repo
 | `SHELFMARK_KEYSTORE_PASSWORD` | Its password |
 | `SHELFMARK_SUPABASE_URL` | The address of the server. Optional |
 | `SHELFMARK_SUPABASE_KEY` | The publishable key of the server. Optional |
+| `SHELFMARK_WEBSITE_URL` | The address of the website, for the link in the app. Optional |
 
 Notes for a release go into `docs/releases/<tag>.md`.
 
@@ -220,15 +273,17 @@ first version with the current code and has to keep passing.
 ```
 
 The suite covers the catalogue clients (against recorded responses), barcode decoding, the
-sharing and borrow request flow between simulated phones (with files, and through a server
-rebuilt in memory), backup and import (Goodreads, StoryGraph, CSV, the desktop Shelfmark), the
+sharing and borrow request flow between simulated phones (with files, and with accounts
+against a server rebuilt in memory), keeping one library in step between several devices, backup and import (Goodreads, StoryGraph, CSV, the desktop Shelfmark), the
 database migrations, statistics, calendar, recaps, milestones and goals. It also drives the
 real screens (in German) and writes screenshots to `app/build/outputs/roborazzi`.
 
 - `SHELFMARK_LIVE=1 ./gradlew testDebugUnitTest --tests '*LiveCatalogueTest'` talks to the real
   catalogues.
 - `SHELFMARK_SERVER_URL=http://127.0.0.1:54330 SHELFMARK_SERVER_KEY=sb_publishable_local_development ./gradlew testDebugUnitTest --tests '*LiveServerTest'`
-  plays the friend flow against a real database, through `supabase/dev_server.py`.
+  plays the account, sync and friend stories against a real database, through
+  `supabase/dev_server.py`. Not for a real project: the accounts are made up.
+- The website has its own tests, see `web/README.md`.
 - Maven Central rate-limits the large Robolectric jars per IP address. If the download is
   refused, point that one test dependency at a mirror:
   `-Pshelfmark.robolectricMirror=https://maven-central.storage-download.googleapis.com/maven2/`
@@ -241,7 +296,7 @@ needs an account.
 | Catalogue | Good for |
 | --- | --- |
 | [Open Library](https://openlibrary.org) | The widest general catalogue, with covers and blurbs |
-| Google Books | Blurbs and covers. It often refuses requests without a key, a free API key of your own can be entered under **Settings > Book catalogues** |
+| Google Books | Blurbs and covers, when it answers. It often refuses requests that come without a key, which is why it is only one of seven |
 | Apple Books | Recent titles with large covers |
 | [lobid](https://lobid.org) (hbz) | German-language books, quick suggestions while typing |
 | [Deutsche Nationalbibliothek](https://www.dnb.de) | Everything published in Germany since 1913, and covers by ISBN |
@@ -255,8 +310,7 @@ Cover pictures also come from the Open Library and DNB cover services, which ans
 - A sort order per shelf, and the timer alarm of the desktop Shelfmark.
 - News from friends the moment it happens. The app looks for it when it is opened and twice a
   day in the background, which is what works without a push service.
-- A backup does not carry the profile for the server. On a new phone you connect again and
-  hand out a new friend code.
+- Signing in with Google, Apple or a link by mail. It is e-mail and password.
 
 ## Licences
 

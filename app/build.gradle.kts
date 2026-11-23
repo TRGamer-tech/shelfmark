@@ -35,6 +35,8 @@ fun server(property: String, variable: String): String =
 
 val serverUrl = server("shelfmark.serverUrl", "SHELFMARK_SUPABASE_URL").trimEnd('/')
 val serverKey = server("shelfmark.serverKey", "SHELFMARK_SUPABASE_KEY")
+// Where the website lives (web/), so the app can point to it. Optional.
+val websiteUrl = server("shelfmark.websiteUrl", "SHELFMARK_WEBSITE_URL").trimEnd('/')
 
 val signingStore = signing("storeFile", "SHELFMARK_KEYSTORE_FILE")
 val signingPassword = signing("storePassword", "SHELFMARK_KEYSTORE_PASSWORD")
@@ -54,6 +56,7 @@ android {
         versionName = "1.3.0"
         buildConfigField("String", "SERVER_URL", "\"" + serverUrl.replace("\"", "") + "\"")
         buildConfigField("String", "SERVER_KEY", "\"" + serverKey.replace("\"", "") + "\"")
+        buildConfigField("String", "WEBSITE_URL", "\"" + websiteUrl.replace("\"", "") + "\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The text recognition library is about 10 MB per processor type. 32 bit Intel
         // phones no longer exist, x86_64 stays for emulators.

@@ -54,6 +54,8 @@ import ch.schmidtbit.shelfmark.ui.friends.AccountForm
 import ch.schmidtbit.shelfmark.ui.friends.DeleteAccountDialog
 import ch.schmidtbit.shelfmark.ui.friends.ToggleRow
 import androidx.compose.foundation.layout.Row
+import android.content.Intent
+import android.net.Uri
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.Settings
@@ -199,6 +201,14 @@ private fun AccountSection(settings: Settings) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { container.launch { container.server.signOut() } }, modifier = Modifier.testTag("signOut")) { Text(stringResource(R.string.account_sign_out)) }
                 TextButton(onClick = { deleting = true }, modifier = Modifier.testTag("deleteAccount")) { Text(stringResource(R.string.account_delete)) }
+            }
+            // The same library in a browser, where the build knows the address of the website.
+            if (BuildConfig.WEBSITE_URL.startsWith("http")) {
+                val context = LocalContext.current
+                TextButton(
+                    onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.WEBSITE_URL))) } },
+                    modifier = Modifier.testTag("openWebsite"),
+                ) { Text(stringResource(R.string.account_open_website)) }
             }
         }
         Text(stringResource(R.string.settings_server_daily), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))

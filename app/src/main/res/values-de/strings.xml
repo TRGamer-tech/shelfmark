@@ -15,6 +15,7 @@
     <string name="account_error_weak">Das Passwort ist zu kurz oder zu leicht zu erraten.</string>
     <string name="account_everywhere">Deine Bibliothek wird mit deinem Konto abgeglichen. Mit derselben Anmeldung öffnest du sie im Browser, auf der Shelfmark-Website.</string>
     <string name="account_forgot">Passwort vergessen?</string>
+    <string name="account_open_website">Website öffnen</string>
     <string name="account_password">Passwort (mindestens 6 Zeichen)</string>
     <string name="account_pitch">Mit einem Konto ist deine Bibliothek auf jedem Gerät und auf der Website dieselbe, und Freunde sind nur einen Code entfernt. Ohne Konto bleibt alles auf diesem Gerät, wie bisher.</string>
     <string name="account_reset_sent">Eine Mail mit einem Link für ein neues Passwort ist unterwegs.</string>

@@ -15,6 +15,7 @@
     <string name="account_error_weak">The password is too short or too easy to guess.</string>
     <string name="account_everywhere">Your library is kept in step with your account. With the same sign-in you can open it in a browser, on the Shelfmark website.</string>
     <string name="account_forgot">Forgot the password?</string>
+    <string name="account_open_website">Open the website</string>
     <string name="account_password">Password (at least 6 characters)</string>
     <string name="account_pitch">With an account your library is the same on every phone and on the website, and friends are one code away. Without one everything stays on this device, as before.</string>
     <string name="account_reset_sent">A mail with a link for a new password is on its way.</string>

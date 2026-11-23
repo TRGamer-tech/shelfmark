@@ -23,8 +23,10 @@
 #   SHELFMARK_SUPABASE_URL  the project address, https://xxxxxxxx.supabase.co
 #   SHELFMARK_SUPABASE_KEY  the publishable key of the project (the public one)
 #
-# They are optional. Without them the app is built without a server: friends exchange
-# files, or enter a server in the settings.
+# They are optional. Without them the app is built without a server: no accounts, and
+# friends exchange files.
+#
+#   SHELFMARK_WEBSITE_URL   where the website (web/) is published, for the link in the app. Optional.
 name: Release
 
 on:
@@ -122,6 +124,7 @@ jobs:
           SHELFMARK_KEYSTORE_PASSWORD: ${{ secrets.SHELFMARK_KEYSTORE_PASSWORD }}
           SHELFMARK_SUPABASE_URL: ${{ secrets.SHELFMARK_SUPABASE_URL }}
           SHELFMARK_SUPABASE_KEY: ${{ secrets.SHELFMARK_SUPABASE_KEY }}
+          SHELFMARK_WEBSITE_URL: ${{ secrets.SHELFMARK_WEBSITE_URL }}
         run: |
           if [ -z "$SHELFMARK_SUPABASE_URL" ] || [ -z "$SHELFMARK_SUPABASE_KEY" ]; then
             echo "::notice::No server for friends is set (SHELFMARK_SUPABASE_URL, SHELFMARK_SUPABASE_KEY). The app is built without one."
