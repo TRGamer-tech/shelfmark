@@ -5,6 +5,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useAuth } from "@/components/auth";
+import { FrontDesk } from "@/components/FrontDesk";
 import { useI18n } from "@/components/i18n";
 import { OrnamentView } from "@/components/Ornaments";
 import { ShelfBoard } from "@/components/Shelves";
@@ -26,11 +27,27 @@ export default function LoginPage() {
   /** Set to the address a confirmation mail went to: the account exists but cannot sign in yet. */
   const [confirming, setConfirming] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(() => {
-    // Left behind when an account was deleted, or when the link of a mail was no good, to be said once.
+    // Left behind when an account was deleted, or by the link of a mail that did not end
+    // in a sign-in, to be said once. No link ends in silence.
     try {
       const left = window.sessionStorage.getItem("shelfmark.notice");
       window.sessionStorage.removeItem("shelfmark.notice");
-      return left === "deleted" ? t("web_account_deleted") : left === "login_kept" ? t("web_account_login_kept") : left === "link_failed" ? t("web_reset_invalid") : null;
+      switch (left) {
+        case "deleted":
+          return t("web_account_deleted");
+        case "login_kept":
+          return t("web_account_login_kept");
+        case "confirmed":
+          return t("web_notice_confirmed");
+        case "email_changed":
+          return t("web_notice_email_changed");
+        case "link_pending":
+          return t("web_notice_link_pending");
+        case "link_failed":
+          return t("web_notice_link_failed", t("account_forgot"));
+        default:
+          return null;
+      }
     } catch {
       return null;
     }
@@ -104,20 +121,34 @@ export default function LoginPage() {
     setNotice(null);
   };
 
+  // The language sits where the front page has it: at the top, on the right.
+  const languages = (
+    <span className="front-langs" role="group" aria-label={t("settings_language")}>
+      {LANGS.map((code) => (
+        <button key={code} type="button" aria-pressed={lang === code} onClick={() => setLang(code)} lang={code} data-testid={`lang-${code}`}>
+          {t(`web_language_${code}`)}
+        </button>
+      ))}
+    </span>
+  );
+
   return (
-    <main className="login">
-      <div className="login-box">
-        <h1 className="login-brand">Shelfmark</h1>
-        <p className="login-intro">{t("web_login_intro")}</p>
-        <div className="login-shelf" aria-hidden="true">
-          <OrnamentView kind="BOOKSTACK" decorative />
-          <OrnamentView kind="CANDLE" decorative />
-          <OrnamentView kind="CAT" decorative />
-        </div>
-        <div aria-hidden="true">
-          <ShelfBoard />
+    <FrontDesk aside={languages}>
+      <div className="entry">
+        <div className="entry-words">
+          <h1>{t(mode === "up" ? "account_sign_up" : mode === "forgot" ? "account_forgot" : "account_sign_in")}</h1>
+          <p>{t("web_login_intro")}</p>
+          <div className="entry-shelf" aria-hidden="true">
+            <div className="login-shelf">
+              <OrnamentView kind="BOOKSTACK" decorative />
+              <OrnamentView kind="CANDLE" decorative />
+              <OrnamentView kind="CAT" decorative />
+            </div>
+            <ShelfBoard />
+          </div>
         </div>
 
+        <div className="entry-form paper">
         <form className="card stack" onSubmit={submit} data-testid="login-form" noValidate>
           {mode !== "forgot" ? (
             <div className="chips" role="group" aria-label={t("account_title")}>
@@ -129,10 +160,7 @@ export default function LoginPage() {
               </Chip>
             </div>
           ) : (
-            <>
-              <h2>{t("account_forgot")}</h2>
-              <p className="muted">{t("web_forgot_text")}</p>
-            </>
+            <p className="muted">{t("web_forgot_text")}</p>
           )}
 
           {confirming ? (
@@ -188,14 +216,8 @@ export default function LoginPage() {
           ) : null}
         </form>
 
-        <div className="lang-switch" role="group" aria-label={t("settings_language")}>
-          {LANGS.map((code) => (
-            <Chip key={code} selected={lang === code} onClick={() => setLang(code)} lang={code} data-testid={`lang-${code}`}>
-              {t(`web_language_${code}`)}
-            </Chip>
-          ))}
         </div>
       </div>
-    </main>
+    </FrontDesk>
   );
 }

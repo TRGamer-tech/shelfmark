@@ -107,11 +107,20 @@ function run(command, args, env) {
   });
 }
 
-const NO_SERVER = { NEXT_PUBLIC_SUPABASE_URL: "", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: "", NEXT_PUBLIC_SUPABASE_ANON_KEY: "" };
-const WITH_SERVER = { ...NO_SERVER, NEXT_PUBLIC_SUPABASE_URL: SERVER, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: KEY };
+// GitHub is answered from a recording for the first site, and cannot be reached at all
+// for the second one (nothing listens on port 9), which is what a build without a
+// network sees.
+export const GITHUB_PLAYED = `http://127.0.0.1:${GATEWAY_PORT}/api.github.com`;
+const GITHUB_GONE = "http://127.0.0.1:9";
+const NO_SERVER = { NEXT_PUBLIC_SUPABASE_URL: "", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: "", NEXT_PUBLIC_SUPABASE_ANON_KEY: "", SHELFMARK_GITHUB_API: GITHUB_GONE };
+const WITH_SERVER = { ...NO_SERVER, NEXT_PUBLIC_SUPABASE_URL: SERVER, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: KEY, SHELFMARK_GITHUB_API: GITHUB_PLAYED };
 const QUIET = { NEXT_TELEMETRY_DISABLED: "1" };
 
-/** Builds the site twice: once pointed at the stand-in server, once with no server at all. */
+/**
+ * Builds the site twice: once pointed at the stand-in server, once with no server at all.
+ * The front page is drawn while building and names the newest version of the app, so
+ * the recording of GitHub has to answer already (startGateway comes first).
+ */
 export async function buildSites() {
   await run("npx", ["next", "build"], { ...QUIET, ...WITH_SERVER, SHELFMARK_DIST_DIR: ".next-e2e" });
   await run("npx", ["next", "build"], { ...QUIET, ...NO_SERVER, SHELFMARK_DIST_DIR: ".next-plain" });
@@ -223,6 +232,8 @@ export function startGateway() {
     if (url.startsWith("/swisscovery.slsp.ch/")) return xml("swisscovery_isbn.xml");
     if (url.startsWith("/services.dnb.de/")) return send(503, "text/plain", Buffer.from("down"));
     if (url.startsWith("/covers.openlibrary.org/")) return send(200, "image/png", COVER_PNG);
+    // The releases of the project, as GitHub listed them on the day of the recording.
+    if (url.startsWith("/api.github.com/repos/TRGamer-tech/shelfmark/releases")) return json("github_releases.json");
     return send(404, "text/plain", Buffer.from("not found"));
   });
   return new Promise((resolve) => server.listen(GATEWAY_PORT, "127.0.0.1", () => resolve({ seen, close: () => server.close() })));

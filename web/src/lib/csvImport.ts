@@ -29,7 +29,9 @@ function separatorOf(header: string): string {
 
 /** Quoted fields, doubled quotes, line breaks inside quotes, any common separator. Empty lines are dropped. */
 export function parseCsv(text: string): string[][] {
-  const content = text.startsWith("﻿") ? text.slice(1) : text;
+  // The mark some programs put at the very start of a text file. Written as a number: the
+  // character itself cannot be seen, and an editor might quietly drop it from this line.
+  const content = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const separator = separatorOf(content.split(/\r\n|\n|\r/, 1)[0] ?? "");
   const rows: string[][] = [];
   let row: string[] = [];

@@ -18,7 +18,23 @@ interface I18n {
 
 const Context = createContext<I18n | null>(null);
 
+/** Remembers the language in this browser. Not being able to is no reason to complain. */
+export function rememberLang(lang: Lang): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, lang);
+  } catch {
+    // Not remembered then, but it still applies until the page is closed.
+  }
+}
+
 function initialLang(): Lang {
+  // A link from the front page says which language it was read in ("?lang=de"), so that
+  // the sign-in page goes on in the same one.
+  const asked = new URLSearchParams(window.location.search).get("lang");
+  if (asked === "en" || asked === "de") {
+    rememberLang(asked);
+    return asked;
+  }
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "en" || stored === "de") return stored;
@@ -28,27 +44,29 @@ function initialLang(): Lang {
   return langOf(navigator.language);
 }
 
-/** The language is the one thing that stays with the browser: default from it, remembered in it. */
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(initialLang);
+/**
+ * The language is the one thing that stays with the browser: default from it, remembered
+ * in it. The front page is the exception: its language is the one of its address, so
+ * there it is given ([fixed]) and nothing is looked up or remembered.
+ */
+export function I18nProvider({ children, fixed }: { children: ReactNode; fixed?: Lang }) {
+  const [chosen, setLangState] = useState<Lang>(() => fixed ?? initialLang());
+  const lang = fixed ?? chosen;
 
   useEffect(() => {
-    document.documentElement.lang = lang;
-  }, [lang]);
+    if (!fixed) document.documentElement.lang = lang;
+  }, [lang, fixed]);
 
   const setLang = useCallback((next: Lang) => {
     setLangState(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Not remembered then, but it still applies until the page is closed.
-    }
+    rememberLang(next);
   }, []);
 
   const value = useMemo<I18n>(
     () => ({
       lang,
-      locale: localeOf(lang, typeof navigator === "undefined" ? null : navigator.language),
+      // On the front page the server draws first and knows no browser, so it does not ask for one.
+      locale: localeOf(lang, fixed || typeof navigator === "undefined" ? null : navigator.language),
       setLang,
       t: (key, ...args) => translate(lang, key, ...args),
       plural: (key, count, ...args) => pluralise(lang, key, count, ...args),

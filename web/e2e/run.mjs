@@ -85,6 +85,28 @@ async function newContext({ viewport = DESKTOP, locale = "en-GB", colorScheme = 
 
 const shot = (page, name, options = {}) => page.screenshot({ path: `${SHOTS}${name}.png`, ...options });
 
+/**
+ * Makes a page note, frame by frame from before its first paint, whether the front page
+ * can be seen. Somebody who is signed in must never see it flash by on the way to their shelf.
+ */
+async function watchForFrontPage(page) {
+  await page.addInitScript(() => {
+    window.__frontPage = { frames: 0, shown: 0 };
+    const look = () => {
+      const landing = document.querySelector('[data-testid="landing"]');
+      window.__frontPage.frames++;
+      if (landing && getComputedStyle(landing).display !== "none") window.__frontPage.shown++;
+      requestAnimationFrame(look);
+    };
+    requestAnimationFrame(look);
+  });
+}
+
+const frontPageSeen = (page) => page.evaluate(() => window.__frontPage);
+
+const FRONT_LINK_FAILED =
+  "This link does not work any more: it is too old, or it was used before. If your address is confirmed already, sign in. If signing in tells you to confirm your address, you can have the mail sent again from there. For a new password, choose “Forgot the password?”.";
+
 async function waitSaved(page) {
   // Give the page a moment to notice that there is something to save at all.
   await page.waitForTimeout(150);
@@ -104,7 +126,7 @@ async function until(check, what, seconds = 10) {
 }
 
 async function signUp(page, who, base = WEB) {
-  await page.goto(`${base}/`);
+  await page.goto(`${base}/login`);
   await page.getByTestId("mode-up").click();
   await page.getByTestId("email").fill(who.email);
   await page.getByTestId("password").fill(who.password);
@@ -174,11 +196,11 @@ async function main() {
   const noBuild = process.argv.includes("--no-build");
   console.log("Starting the stand-in server ...");
   await startStandIn();
+  gateway = await startGateway();
   if (!noBuild) {
     console.log("Building the site (twice: with a server, and without one) ...");
     await buildSites();
   }
-  gateway = await startGateway();
   console.log("Starting the site ...");
   await startSites();
   browser = await chromium.launch(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {});
@@ -191,14 +213,26 @@ async function main() {
     await test(
       "without a server the site says so plainly instead of crashing",
       async () => {
+        // The front page needs no server: it says what Shelfmark is and hands over the app.
         await page.goto(`${PLAIN}/`);
+        await page.getByTestId("landing").waitFor();
+        equal(await page.getByTestId("not-configured").count(), 0, "complaints about the server on the front page");
+        // GitHub cannot be reached from this site, so the page names no version and still offers the download.
+        equal(await page.getByTestId("hero-facts").innerText(), "Android 8 or newer", "what the front page says about the app when it knows nothing");
+        equal(await page.getByTestId("download-button").innerText(), "Download for Android", "the button without a version");
+        equal(await page.getByTestId("slip-version").innerText(), "The newest build is on the releases page.", "the slip without a version");
+        const fallback = await fetch(`${PLAIN}/download`, { redirect: "manual" });
+        equal(fallback.status, 302, "the download link when GitHub cannot be asked");
+        equal(fallback.headers.get("location"), "https://github.com/TRGamer-tech/shelfmark/releases", "where it leads then");
+        // Everything behind the sign-in says plainly that the server is missing.
+        await page.goto(`${PLAIN}/login`);
         await page.getByTestId("not-configured").waitFor();
         assert((await page.getByTestId("not-configured").innerText()).includes("The server is not configured"), "the notice is missing");
         await page.goto(`${PLAIN}/settings`);
         await page.getByTestId("not-configured").waitFor();
         const german = await newContext({ locale: "de-CH" });
         const germanPage = await german.newPage();
-        await germanPage.goto(`${PLAIN}/`);
+        await germanPage.goto(`${PLAIN}/login`);
         await germanPage.getByText("Der Server ist nicht eingerichtet").waitFor();
         await german.close();
         const keepalive = await (await fetch(`${PLAIN}/api/keepalive`)).json();
@@ -211,6 +245,355 @@ async function main() {
   }
 
   // ------------------------------------------------------------------------------
+  console.log("\nThe front page");
+
+  await test(
+    "a visitor at the address of the site gets the front page, drawn by the server",
+    async () => {
+      // What the server sends, before any script runs: the whole page, for readers and search engines.
+      const html = await (await fetch(`${WEB}/`)).text();
+      for (const part of [
+        "<title>Shelfmark: a reading tracker that looks like a bookshelf</title>",
+        "Keep your reading",
+        "on a shelf.",
+        "Scan a barcode",
+        "Open Library, Google Books, Apple Books, lobid, the German National Library, K10plus and swisscovery",
+        "14 things to stand between the books",
+        "18 themes, 9 of them dark and 9 light",
+        "Import your list from Goodreads, StoryGraph or any CSV file",
+        "Friends who borrow",
+        "Asked at the desk",
+        "MIT",
+        "Download Shelfmark 1.3.0",
+      ]) {
+        assert(html.includes(part), `the page the server sends holds: ${part}`);
+      }
+      const meta = (pattern) => pattern.exec(html)?.[1] ?? "";
+      assert(meta(/<meta name="description" content="([^"]+)"/).startsWith("Keep the books you have read"), "a description for search engines");
+      equal(meta(/<meta property="og:title" content="([^"]+)"/), "Shelfmark: a reading tracker that looks like a bookshelf", "the title of a link preview");
+      equal(meta(/<meta property="og:locale" content="([^"]+)"/), "en_GB", "the language of a link preview");
+      assert(/<link rel="alternate" hrefLang="de" href="[^"]*\/de"/i.test(html), "the German page is named as the other language");
+      assert(/<link rel="canonical" href="[^"]+"/.test(html), "the page names its own address");
+      const picture = new URL(meta(/<meta property="og:image" content="([^"]+)"/).replaceAll("&amp;", "&"));
+      const png = Buffer.from(await (await fetch(`${WEB}${picture.pathname}${picture.search}`)).arrayBuffer());
+      equal(png.subarray(1, 4).toString(), "PNG", "the picture of a link preview is a picture");
+      equal(`${png.readUInt32BE(16)} x ${png.readUInt32BE(20)}`, "1200 x 630", "its size");
+
+      const context = await newContext();
+      const visitor = await context.newPage();
+      await visitor.goto(`${WEB}/`);
+      await visitor.getByTestId("landing").waitFor();
+      equal(await visitor.evaluate(() => document.documentElement.dataset.visitor), "out", "who the page takes the visitor for");
+      equal(await visitor.locator("h1").innerText(), "Keep your reading\non a shelf.", "the headline");
+      // What the recording of GitHub says about the newest app is on the page.
+      equal(await visitor.getByTestId("hero-facts").innerText(), "Version 1.3.0, 61 MB, Android 8 or newer", "the facts under the button");
+      equal(await visitor.getByTestId("download-button").innerText(), "Download Shelfmark 1.3.0", "the button of the download section");
+      equal(await visitor.getByTestId("slip-version").innerText(), "1.3.0, out since 23 November 2026", "the version on the slip");
+      equal(await visitor.getByTestId("slip-file").innerText(), "Shelfmark-1.3.0-debug.apk, 61 MB", "the file on the slip");
+      const section = await visitor.locator("#download").innerText();
+      for (const words of ["pre-release build, signed with the project's own key", "does not come from an app store", "the phone asks once", "A newer version installs over the old one", "Android 8 or newer", "Free. No ads."]) {
+        assert(section.includes(words), `near the download button it says: ${words}`);
+      }
+      // One way to the app and one way in, in the bar at the top and next to the headline.
+      for (const id of ["front-download", "hero-download", "download-button"]) equal(await visitor.getByTestId(id).getAttribute("href"), "/download", `where ${id} leads`);
+      for (const id of ["front-sign-in", "hero-sign-in"]) equal(await visitor.getByTestId(id).getAttribute("href"), "/login?lang=en", `where ${id} leads`);
+      deepAudit(await audit(visitor), "front page");
+      // Once the books have settled nothing on the page moves by itself: no flame flickers, nothing loops.
+      const looping = await visitor.evaluate(() => Array.from(document.querySelectorAll(".landing *")).filter((element) => getComputedStyle(element).animationName !== "none" && getComputedStyle(element).animationIterationCount === "infinite").length);
+      equal(looping, 0, "things on the front page that move without end");
+      // Nobody is sent to the sign-in page any more.
+      await visitor.waitForTimeout(700);
+      equal(visitor.url(), `${WEB}/`, "the address a visitor stays on");
+      await visitor.waitForTimeout(900);
+      await shot(visitor, "landing-desktop");
+      await shot(visitor, "landing-desktop-full", { fullPage: true, animations: "disabled" });
+
+      await visitor.getByTestId("hero-sign-in").click();
+      await visitor.getByTestId("login-form").waitFor();
+      equal(await visitor.locator("h1").innerText(), "Sign in", "the page the sign-in link leads to");
+      await visitor.waitForTimeout(400);
+      await shot(visitor, "login");
+      deepAudit(await audit(visitor), "sign-in page");
+      // The name at the top leads back out.
+      await visitor.getByRole("link", { name: "Shelfmark", exact: true }).click();
+      await visitor.getByTestId("landing").waitFor();
+      await context.close();
+
+      const phone = await newContext({ viewport: { width: 400, height: 860 } });
+      const phonePage = await phone.newPage();
+      await phonePage.goto(`${WEB}/login`);
+      await phonePage.getByTestId("login-form").waitFor();
+      await phonePage.waitForTimeout(400);
+      await shot(phonePage, "login-mobile");
+      deepAudit(await audit(phonePage), "sign-in page on a phone");
+      await phone.close();
+    },
+    null,
+  );
+
+  await test(
+    "the front page in German, on a phone, with less movement, and without scripts",
+    async () => {
+      // A reader whose browser speaks German is taken to the German page.
+      const german = await newContext({ locale: "de-CH" });
+      const gp = await german.newPage();
+      await gp.goto(`${WEB}/`);
+      await gp.waitForURL(`${WEB}/de`);
+      await gp.getByTestId("landing").waitFor();
+      equal(await gp.locator("h1").innerText(), "Was du liest,\nkommt ins Regal.", "the German headline");
+      equal(await gp.evaluate(() => document.documentElement.lang), "de", "the language the page says it is in");
+      equal(await gp.getByTestId("hero-facts").innerText(), "Version 1.3.0, 61 MB, ab Android 8", "the facts in German");
+      equal(await gp.getByTestId("front-sign-in").getAttribute("href"), "/login?lang=de", "the way in, in German");
+      deepAudit(await audit(gp), "German front page");
+      await gp.waitForTimeout(1500);
+      await shot(gp, "landing-de");
+      // Choosing English is remembered: the address of the site does not send them back.
+      await gp.getByTestId("front-lang-en").click();
+      await gp.waitForURL(`${WEB}/`);
+      await gp.getByTestId("landing").waitFor();
+      await gp.waitForTimeout(500);
+      equal(gp.url(), `${WEB}/`, "the address after choosing English");
+      equal(await gp.locator("h1").innerText(), "Keep your reading\non a shelf.", "the page after choosing English");
+      await gp.getByTestId("front-lang-de").click();
+      await gp.waitForURL(`${WEB}/de`);
+      await german.close();
+
+      const germanHtml = await (await fetch(`${WEB}/de`)).text();
+      for (const part of ["<title>Shelfmark: ein Lesetagebuch, das wie ein Bücherregal aussieht</title>", 'lang="de"', "kommt ins Regal.", "7 Kataloge", "18 Designs, 9 davon dunkel und 9 hell", "An der Theke gefragt"]) {
+        assert(germanHtml.includes(part), `the German page the server sends holds: ${part}`);
+      }
+      assert(/<meta property="og:locale" content="de_CH"/.test(germanHtml), "the language of the German link preview");
+
+      // The German page asked for by its address stays German in any browser, and so does the sign-in behind it.
+      const english = await newContext();
+      const ep = await english.newPage();
+      await ep.goto(`${WEB}/de`);
+      await ep.getByTestId("landing").waitFor();
+      equal(ep.url(), `${WEB}/de`, "the German address in an English browser");
+      await ep.waitForTimeout(600);
+      equal(await ep.evaluate(() => document.documentElement.lang), "de", "the language the German page says it is in, in an English browser");
+      await ep.getByTestId("hero-sign-in").click();
+      await ep.getByTestId("login-form").waitFor();
+      equal(await ep.locator("h1").innerText(), "Anmelden", "the sign-in page after the German front page");
+      await english.close();
+
+      // Phone width: nothing wider than the screen, the bar at the top on one line, the books in several rows.
+      const phone = await newContext({ viewport: PHONE });
+      const pp = await phone.newPage();
+      await pp.goto(`${WEB}/`);
+      await pp.getByTestId("hero-shelf").locator("button.spine").first().waitFor();
+      deepAudit(await audit(pp), "front page on a phone");
+      assert((await pp.locator(".front-head").evaluate((head) => head.getBoundingClientRect().height)) < 90, "the bar at the top fits on one line");
+      assert((await pp.getByTestId("hero-shelf").locator(".shelf-row").count()) >= 3, "the books of the hero stand in several rows on a phone");
+      equal(await pp.getByTestId("hero-shelf").locator("button.spine").count(), 14, "books on the hero shelf on a phone");
+      await pp.waitForTimeout(1500);
+      await shot(pp, "landing-mobile-full", { fullPage: true, animations: "disabled" });
+      await phone.close();
+
+      // Less movement, when the system asks for it: nothing animates, everything works.
+      const calm = await newContext({ reducedMotion: "reduce" });
+      const cp = await calm.newPage();
+      await cp.goto(`${WEB}/`);
+      const spines = cp.getByTestId("hero-shelf").locator("button.spine");
+      await spines.first().waitFor();
+      await shot(cp, "landing-reduced-motion");
+      const moving = await cp.evaluate(() => Array.from(document.querySelectorAll(".landing *")).filter((element) => getComputedStyle(element).animationName !== "none" || getComputedStyle(element).transitionDuration !== "0s").length);
+      equal(moving, 0, "things on the front page that would move with reduced motion");
+      await cp.getByTestId("hero-shelf").getByRole("button", { name: "Goals" }).click();
+      assert((await cp.getByTestId("open-card").innerText()).includes("Books, pages or minutes"), "a book can still be taken off the shelf");
+      // The other shelf follows without the beat in between.
+      await cp.getByTestId("browser-view").selectOption("LIST");
+      equal(await cp.locator('[data-testid="twin-phone"] .twin-frame').getAttribute("data-view"), "LIST", "the phone shelf follows at once with reduced motion");
+      await calm.close();
+
+      // Without scripts the page still says everything: all the cards lie open, and the download link is a plain link.
+      const bare = await browser.newContext({ javaScriptEnabled: false, viewport: DESKTOP });
+      const bp = await bare.newPage();
+      await bp.goto(`${WEB}/`);
+      equal(await bp.locator(".catalogue-card:visible").count(), 14, "cards a reader without scripts can read");
+      // (Looked up by their place, not by their words: the test tool does not read inside "noscript".)
+      const standIn = (selector) => bp.evaluate((css) => {
+        const element = document.querySelector(css);
+        return element && element.getBoundingClientRect().height > 0 ? element.textContent : null;
+      }, selector);
+      equal(await standIn(".shelf-plain"), "Each card below is something Shelfmark does.", "what stands where the shelf would be");
+      equal(await standIn(".twin-plain"), "With scripts switched on, two shelves stand here that follow each other.", "what stands where the two shelves would be");
+      equal(await bp.locator(".twin-stage:visible, .card-turn:visible, .shelf-hint:visible").count(), 0, "things that would need scripts and are shown anyway");
+      equal(await bp.getByTestId("hero-download").getAttribute("href"), "/download", "the download link without scripts");
+      assert(await bp.getByText("What does it cost?").isVisible(), "the questions without scripts");
+      await bare.close();
+    },
+    null,
+  );
+
+  await test(
+    "a book is taken off the shelf by mouse and by keyboard, and its card says what Shelfmark does",
+    async () => {
+      const context = await newContext();
+      const visitor = await context.newPage();
+      await visitor.goto(`${WEB}/`);
+      const shelf = visitor.getByTestId("hero-shelf");
+      const spines = shelf.locator("button.spine");
+      await spines.first().waitFor();
+      equal(await spines.count(), 14, "books on the shelf, each a button");
+      equal(await shelf.locator("svg[data-ornament]").count(), 3, "ornaments between them");
+      equal(await shelf.getByTestId("leaning").count(), 1, "the last book leans on its neighbour");
+      // It is the shelf of the library itself: the same wooden board under the books.
+      assert((await shelf.locator(".board").count()) >= 1, "the board the books stand on");
+      // Every title can be read whole on its spine, in both languages.
+      const cut = () => visitor.locator(".hero-shelf .spine-title span").evaluateAll((all) => all.filter((title) => title.scrollHeight > title.parentElement.clientHeight).map((title) => title.textContent));
+      equal((await cut()).join(), "", "titles that do not fit their spine");
+      const germanTab = await context.newPage();
+      await germanTab.goto(`${WEB}/de`);
+      await germanTab.locator(".hero-shelf button.spine").first().waitFor();
+      equal((await germanTab.locator(".hero-shelf .spine-title span").evaluateAll((all) => all.filter((title) => title.scrollHeight > title.parentElement.clientHeight).map((title) => title.textContent))).join(), "", "German titles that do not fit their spine");
+      await germanTab.close();
+      const card = visitor.getByTestId("open-card");
+      const pressed = () => shelf.locator('button.spine[aria-pressed="true"]').evaluateAll((all) => all.map((spine) => spine.getAttribute("aria-label")));
+      equal((await pressed()).join(), "Scan a barcode", "the book that is off the shelf at first");
+      assert((await card.innerText()).includes("A 1") && (await card.innerText()).includes("ISBN barcode"), "its card lies on the desk");
+      equal(await visitor.locator(".catalogue-card:visible").count(), 1, "cards on the desk");
+
+      // By mouse.
+      await shelf.getByRole("button", { name: "Themes" }).click();
+      equal((await pressed()).join(), "Themes", "the book that was clicked");
+      const themes = await card.innerText();
+      assert(themes.includes("B 4") && themes.includes("18 themes, 9 of them dark and 9 light"), `the card of the themes: ${themes}`);
+      equal(await visitor.getByTestId("card-count").innerText(), "Card 7 of 14", "which card it is");
+      await until(() => shelf.getByRole("button", { name: "Themes" }).evaluate((spine) => getComputedStyle(spine).translate === "0px -15px"), "the book stands out of the row");
+      // The label on the spine and the corner of the card carry the same shelfmark.
+      assert((await shelf.getByRole("button", { name: "Themes" }).locator(".spine-label").innerText()) === "B 4", "the shelfmark on the spine");
+      await visitor.waitForTimeout(400);
+      await shot(visitor, "landing-card");
+
+      // Card by card, like flipping through a drawer.
+      await visitor.getByTestId("card-next").click();
+      assert((await card.innerText()).includes("Stars in half steps"), "the next card");
+      equal((await pressed()).join(), "Stars and spice", "the book on the shelf follows the card");
+      await visitor.getByTestId("card-previous").click();
+      await visitor.getByTestId("card-previous").click();
+      assert((await card.innerText()).includes("14 things to stand between the books"), "two cards back");
+
+      // By keyboard: the skip link leads to the shelf, the arrows walk along the spines, Enter and Space take a book.
+      await visitor.goto(`${WEB}/`);
+      await spines.first().waitFor();
+      await visitor.keyboard.press("Tab");
+      equal(await visitor.evaluate(() => document.activeElement?.textContent), "Skip to the shelf", "the first stop of the keyboard");
+      await visitor.keyboard.press("Enter");
+      await visitor.keyboard.press("Tab");
+      const focused = () => visitor.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+      equal(await focused(), "Scan a barcode", "the first book takes the focus");
+      assert(await visitor.evaluate(() => getComputedStyle(document.activeElement).outlineStyle !== "none"), "the focus can be seen");
+      await visitor.keyboard.press("ArrowRight");
+      await visitor.keyboard.press("ArrowRight");
+      equal(await focused(), "Bring your lists", "two books to the right");
+      await visitor.keyboard.press("Enter");
+      equal((await pressed()).join(), "Bring your lists", "Enter takes the book");
+      assert((await card.innerText()).includes("Goodreads, StoryGraph or any CSV file"), "and its card is read");
+      await visitor.keyboard.press("ArrowLeft");
+      await visitor.keyboard.press("Space");
+      equal((await pressed()).join(), "7 catalogues", "Space does the same one book to the left");
+      await visitor.keyboard.press("ArrowLeft");
+      await visitor.keyboard.press("ArrowLeft");
+      equal(await focused(), "Friends who borrow", "left of the first book comes the last");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "two shelves of one sample library follow each other: view, order and ornaments",
+    async () => {
+      const context = await newContext();
+      const visitor = await context.newPage();
+      await visitor.goto(`${WEB}/`);
+      const frame = (device) => visitor.locator(`[data-testid="twin-${device}"] .twin-frame`);
+      await frame("browser").locator(".spine").first().waitFor();
+      await frame("phone").locator(".spine").first().waitFor();
+      const titles = (device) => frame(device).locator(".spine, .cover-link").evaluateAll((all) => all.map((book) => book.getAttribute("aria-label")));
+      // Books here do nothing when clicked, so they are not buttons.
+      equal(await frame("browser").locator("button, a").count(), 0, "things in the sample shelf that pretend to be clickable");
+      equal((await titles("browser")).join(), (await titles("phone")).join(), "both shelves hold the same books in the same order");
+      // Side by side in the wide window, one under the other on the phone.
+      const tops = (device) => frame(device).locator(".shelf-heading").evaluateAll((all) => all.map((heading) => Math.round(heading.getBoundingClientRect().top)));
+      const [wideA, wideB] = await tops("browser");
+      const [narrowA, narrowB] = await tops("phone");
+      assert(wideA === wideB && narrowB > narrowA + 100, `shelves side by side in the browser (${wideA}, ${wideB}), stacked on the phone (${narrowA}, ${narrowB})`);
+
+      // The view, changed in the browser.
+      await visitor.getByTestId("browser-view").selectOption("COVERS");
+      equal(await frame("browser").getAttribute("data-view"), "COVERS", "the browser shelf changes at once");
+      await visitor.locator('[data-testid="twin-phone"] .twin-frame[data-view="COVERS"]').waitFor();
+      equal(await visitor.getByTestId("twin-said").innerText(), "Changed in the browser. The phone has followed.", "what the page says about it");
+      equal(await visitor.getByTestId("phone-view").inputValue(), "COVERS", "the phone's own control shows the new view");
+      assert((await frame("phone").locator(".cover").count()) === 9, "covers on the phone shelf");
+      // Ornaments stand among spines only, so their buttons rest in the other views.
+      assert(await visitor.getByTestId("phone-candle-left").isDisabled(), "the candle cannot be moved where it does not stand");
+
+      // The order, changed on the phone.
+      await visitor.getByTestId("phone-sort").selectOption("TITLE");
+      await visitor.locator('[data-testid="twin-browser"] .twin-frame[data-sort="TITLE"]').waitFor();
+      equal(await visitor.getByTestId("twin-said").innerText(), "Changed on the phone. The browser has followed.", "what the page says the other way round");
+      equal((await titles("browser")).join(), "Heidi,Middlemarch,Moby-Dick,Dracula,Effi Briest,Emma,Frankenstein,Jane Eyre,Walden", "the browser shelf by title, list by list");
+      await visitor.getByTestId("phone-sort").selectOption("RATING");
+      await visitor.locator('[data-testid="twin-browser"] .twin-frame[data-sort="RATING"]').waitFor();
+      equal((await titles("browser"))[0], "Middlemarch", "the best rated book first");
+      await visitor.getByTestId("browser-view").selectOption("LIST");
+      await visitor.locator('[data-testid="twin-phone"] .twin-frame[data-view="LIST"]').waitFor();
+      equal(await frame("phone").locator(".book-row").count(), 9, "rows of the list on the phone");
+
+      // An ornament, moved on the phone and put up in the browser.
+      await visitor.getByTestId("phone-view").selectOption("SPINES");
+      await visitor.locator('[data-testid="twin-browser"] .twin-frame[data-view="SPINES"]').waitFor();
+      const candleAfter = (device) =>
+        frame(device)
+          .locator(".shelf-section")
+          .nth(1)
+          .locator(".spine, svg[data-ornament]")
+          .evaluateAll((all) => all.findIndex((thing) => thing.getAttribute("data-ornament") === "CANDLE"));
+      equal(await candleAfter("phone"), 2, "books before the candle at first");
+      await visitor.getByTestId("phone-candle-right").click();
+      equal(await candleAfter("phone"), 3, "books before the candle after moving it on the phone");
+      await until(async () => (await candleAfter("browser")) === 3, "the candle has moved in the browser as well");
+      await visitor.getByTestId("browser-candle-left").click();
+      await visitor.getByTestId("browser-candle-left").click();
+      await until(async () => (await candleAfter("phone")) === 1, "and back again, from the browser");
+      equal(await frame("phone").locator('svg[data-ornament="CAT"]').count(), 0, "cats before one was put up");
+      await visitor.getByTestId("browser-cat").click();
+      await frame("phone").locator('svg[data-ornament="CAT"]').waitFor();
+      equal(await visitor.getByTestId("phone-cat").innerText(), "Remove the cat", "the button on the other side knows the cat is there");
+      await visitor.locator(".twin").scrollIntoViewIfNeeded();
+      await visitor.waitForTimeout(500);
+      await shot(visitor, "landing-two-shelves");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "the download link leads to the newest app in the project's releases",
+    async () => {
+      gateway.seen.length = 0;
+      const answer = await fetch(`${WEB}/download`, { redirect: "manual" });
+      equal(answer.status, 302, "the answer of the download link");
+      equal(answer.headers.get("location"), "https://github.com/TRGamer-tech/shelfmark/releases/download/v1.3.0/Shelfmark-1.3.0-debug.apk", "where it leads: the .apk of the newest release, pre-release or not");
+      equal(answer.headers.get("cache-control"), "no-store", "a browser does not keep the answer");
+      // Asked again right away, GitHub is not bothered a second time.
+      await fetch(`${WEB}/download`, { redirect: "manual" });
+      assert(gateway.seen.filter((url) => url.startsWith("/api.github.com/")).length <= 1, `how often GitHub was asked for two downloads: ${gateway.seen.join(" ")}`);
+      // In a browser the link on the page is that address.
+      const context = await newContext();
+      const visitor = await context.newPage();
+      await visitor.goto(`${WEB}/`);
+      const leaving = visitor.waitForRequest((request) => request.url().startsWith("https://github.com/TRGamer-tech/shelfmark/releases/download/"));
+      await visitor.getByTestId("hero-download").click().catch(() => undefined);
+      assert((await leaving).url().endsWith("/Shelfmark-1.3.0-debug.apk"), "the browser is sent to the file");
+      await context.close();
+    },
+    null,
+  );
+
+  // ------------------------------------------------------------------------------
   console.log("\nAnna, on a desktop, in English");
   const annaContext = await newContext();
   const page = await annaContext.newPage();
@@ -218,17 +601,10 @@ async function main() {
   await test(
     "create an account and land on an empty shelf",
     async () => {
-      await page.goto(`${WEB}/`);
+      // A page of the library asked for by somebody who is not signed in leads to the sign-in page.
+      await page.goto(`${WEB}/lists`);
       await page.getByTestId("login-form").waitFor();
       assert(page.url().endsWith("/login"), "a visitor who is not signed in is sent to the sign-in page");
-      const phone = await newContext({ viewport: { width: 400, height: 860 } });
-      const phonePage = await phone.newPage();
-      await phonePage.goto(`${WEB}/login`);
-      await phonePage.getByTestId("login-form").waitFor();
-      await phonePage.waitForTimeout(400);
-      await shot(phonePage, "login");
-      deepAudit(await audit(phonePage), "sign-in page");
-      await phone.close();
 
       await signUp(page, anna);
       await page.getByTestId("empty-library").waitFor();
@@ -239,6 +615,37 @@ async function main() {
       equal(vault.books.length, 0, "books of a new account");
       await until(async () => (await rpc(anna.session.token, "shelfmark_hello")).name === "Anna", "the name on the profile");
       await shot(page, "shelf-empty");
+    },
+    page,
+  );
+
+  await test(
+    "somebody who is signed in finds their shelf at the address of the site and never sees the front page",
+    async () => {
+      const tab = await annaContext.newPage();
+      await watchForFrontPage(tab);
+      await tab.goto(`${WEB}/`);
+      await tab.getByTestId("empty-library").waitFor();
+      const seen = await frontPageSeen(tab);
+      assert(seen.frames > 3, `the page was watched from its first frame: ${JSON.stringify(seen)}`);
+      equal(seen.shown, 0, "frames in which the front page could be seen");
+      equal(await tab.getByTestId("landing").count(), 0, "front pages left in the document once the shelf is there");
+      equal(await tab.evaluate(() => document.documentElement.dataset.visitor), "in", "who the page takes Anna for");
+      // The same at the German address, which has no shelf of its own.
+      await tab.goto(`${WEB}/de`);
+      await tab.getByTestId("empty-library").waitFor();
+      equal(tab.url(), `${WEB}/`, "where the German address leads somebody who is signed in");
+      equal((await frontPageSeen(tab)).shown, 0, "frames in which the German front page could be seen");
+      await tab.close();
+      // The watching itself works: a visitor does see the page.
+      const visitors = await newContext();
+      const visitor = await visitors.newPage();
+      await watchForFrontPage(visitor);
+      await visitor.goto(`${WEB}/`);
+      await visitor.getByTestId("landing").waitFor();
+      await visitor.waitForTimeout(300);
+      assert((await frontPageSeen(visitor)).shown > 0, "a visitor sees the front page");
+      await visitors.close();
     },
     page,
   );
@@ -1453,6 +1860,147 @@ async function main() {
   );
 
   await test(
+    "the link in the confirmation mail signs in, says that the address is confirmed, and no other link ends in silence",
+    async () => {
+      const post = (base, path, body) => fetch(`${base}${path}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const context = await newContext();
+      // This browser talks to a server on which new accounts have to confirm their address.
+      await context.route(`${SERVER}/**`, (route) => route.continue({ url: route.request().url().replace(`:${SERVER_PORT}/`, `:${CONFIRM_PORT}/`) }));
+      const fay = account("Fay");
+      const first = await context.newPage();
+      await signUp(first, fay);
+      await first.getByTestId("confirm-notice").waitFor();
+
+      // The click in the mail: Supabase confirms the address and sends the browser to the
+      // address of the site itself, with a sign-in behind the "#". The stand-in hands out that address.
+      const { link } = await (await post(CONFIRM_SERVER, "/auth/v1/dev/confirm", { email: fay.email, redirect_to: `${WEB}/` })).json();
+      assert(link.startsWith(`${WEB}/#access_token=`) && link.endsWith("&type=signup"), `where the click in the mail leads: ${link.slice(0, 48)}`);
+      const mail = await context.newPage();
+      await watchForFrontPage(mail);
+      await mail.goto(link);
+      const notice = mail.getByTestId("confirmed-notice");
+      await notice.waitFor();
+      const words = await notice.innerText();
+      assert(words.includes("Your e-mail address is confirmed"), `the notice says what happened: ${words}`);
+      assert(words.includes("You are signed in, and this is your shelf."), "and where the reader is now");
+      // The same notice has to serve somebody who signed up in the Android app and opened the mail on the phone.
+      assert(words.includes("Android app") && words.includes("Go back to the app") && words.includes("“Sign in”"), "and what to do when the account was made in the app");
+      await mail.getByTestId("empty-library").waitFor();
+      equal(mail.url(), `${WEB}/`, "the sign-in does not stay in the address");
+      equal((await frontPageSeen(mail)).shown, 0, "frames in which the front page could be seen on the way in");
+      equal(await mail.getByTestId("login-form").count(), 0, "sign-in forms the confirmed reader is left in front of");
+      // The name given when signing up is put into the new library.
+      await untilVault(fay, (v) => v.prefs?.profileName === "Fay", "the name given at sign-up");
+      deepAudit(await audit(mail), "shelf with the confirmation notice");
+      await mail.waitForTimeout(500);
+      await shot(mail, "confirmed");
+      await mail.getByTestId("confirmed-ok").click();
+      await notice.waitFor({ state: "detached" });
+      await mail.reload();
+      await mail.getByTestId("empty-library").waitFor();
+      equal(await notice.count(), 0, "the notice after it was put away");
+
+      // The link clicked a second time. Supabase then says it is used up. Whoever is signed in stays on their shelf and is told.
+      const usedUp = "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired";
+      const again = await context.newPage();
+      await again.goto(`${WEB}/${usedUp}`);
+      await again.getByTestId("empty-library").waitFor();
+      await again.getByText("That link was used before or is too old. You are signed in all the same.").waitFor();
+      await context.close();
+
+      // The same used-up link in a browser where nobody is signed in: the sign-in page, with words that say what to do.
+      const elsewhere = await newContext();
+      const stale = await elsewhere.newPage();
+      await watchForFrontPage(stale);
+      await stale.goto(`${WEB}/${usedUp}`);
+      await stale.getByTestId("login-form").waitFor();
+      equal(await stale.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "what the sign-in page says after a stale link");
+      equal((await frontPageSeen(stale)).shown, 0, "frames in which the front page could be seen on the way to the sign-in page");
+      // "Sign in if the address is confirmed already": it is, so that works right there.
+      await stale.getByTestId("email").fill(fay.email);
+      await stale.getByTestId("password").fill(fay.password);
+      await stale.getByTestId("submit").click();
+      await stale.getByTestId("empty-library").waitFor();
+      equal(await stale.getByTestId("confirmed-notice").count(), 0, "confirmation notices after an ordinary sign-in");
+      await elsewhere.close();
+
+      // A confirmation link whose sign-in does not take: the address is confirmed all the same, and the page says so.
+      const made = (type) => `#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=${type}`;
+      const cold = await newContext();
+      const lost = await cold.newPage();
+      await lost.goto(`${WEB}/${made("signup")}`);
+      await lost.getByTestId("login-form").waitFor();
+      equal(await lost.getByTestId("login-notice").innerText(), "Your e-mail address is confirmed. Sign in now, here or in the Android app.", "a confirmation without a sign-in");
+      // The other kinds a mail can carry. None of them ends without a word.
+      const change = await cold.newPage();
+      await change.goto(`${WEB}/${made("email_change")}`);
+      equal(await change.getByTestId("login-notice").innerText(), "Your new e-mail address is confirmed. Sign in with it.", "a change of address without a sign-in");
+      const half = await cold.newPage();
+      await half.goto(`${WEB}/#message=Confirmation+link+accepted.+Please+proceed+to+confirm+link+sent+to+the+other+email`);
+      equal(await half.getByTestId("login-notice").innerText(), "That link was accepted. One step is left: open the link in the mail that went to your other address.", "the first half of a change of address");
+      const magic = await cold.newPage();
+      await magic.goto(`${WEB}/${made("magiclink")}`);
+      equal(await magic.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "a sign-in link that did not work");
+      await cold.close();
+
+      // The same kinds with a sign-in that does take, as the stand-in hands them out for Fay.
+      const working = async (type) => (await (await post(SERVER, "/auth/v1/dev/recovery", { email: fay.email, redirect_to: `${WEB}/` })).json()).link.replace("type=recovery", `type=${type}`);
+      const warm = await newContext();
+      const signedIn = await warm.newPage();
+      await signedIn.goto(await working("magiclink"));
+      await signedIn.getByTestId("empty-library").waitFor();
+      await signedIn.getByText("You are signed in.", { exact: true }).waitFor();
+      equal(await signedIn.getByTestId("confirmed-notice").count(), 0, "confirmation notices after a plain sign-in link");
+      await warm.close();
+      const moved = await newContext();
+      const newAddress = await moved.newPage();
+      await newAddress.goto(await working("email_change"));
+      await newAddress.getByText("Your new e-mail address is confirmed.", { exact: true }).waitFor();
+      await moved.close();
+      // Somebody invited has no password yet, so they are taken to choose one.
+      const invited = await newContext();
+      const guest = await invited.newPage();
+      await guest.goto(await working("invite"));
+      await guest.getByTestId("new-password").waitFor();
+      assert(guest.url().startsWith(`${WEB}/reset`), `where an invitation leads: ${guest.url()}`);
+      await invited.close();
+    },
+    null,
+  );
+
+  await test(
+    "an address that leads nowhere says so, to a visitor and to somebody signed in",
+    async () => {
+      const context = await newContext();
+      const visitor = await context.newPage();
+      const answer = await visitor.goto(`${WEB}/no/such/page`);
+      equal(answer.status(), 404, "the answer of the server for a page that does not exist");
+      await visitor.getByTestId("not-found").waitFor();
+      equal(await visitor.locator("h1").innerText(), "Nothing stands here.", "the headline");
+      // The books on its shelf spell out what happened.
+      const spines = visitor.locator('[data-testid="not-found"] .spine');
+      await spines.first().waitFor();
+      equal((await spines.evaluateAll((all) => all.map((spine) => spine.getAttribute("aria-label")))).join(" "), "This page is out on loan", "what the spines say, read along the shelf");
+      assert((await visitor.getByTestId("not-found").innerText()).includes("a gap on the shelf"), "the words under it");
+      equal(visitor.url(), `${WEB}/no/such/page`, "nobody is sent to the sign-in page for a page that does not exist");
+      deepAudit(await audit(visitor), "missing page");
+      await visitor.waitForTimeout(900);
+      await shot(visitor, "not-found");
+      await visitor.getByRole("link", { name: "To the entrance" }).click();
+      await visitor.getByTestId("landing").waitFor();
+      await context.close();
+      // Somebody signed in gets the same page, and the way out leads to their shelf.
+      const tab = await annaContext.newPage();
+      await tab.goto(`${WEB}/no/such/page`);
+      await tab.getByTestId("not-found").waitFor();
+      await tab.getByRole("link", { name: "To the entrance" }).click();
+      await tab.getByTestId("greeting").waitFor();
+      await tab.close();
+    },
+    null,
+  );
+
+  await test(
     "forgot the password: the link in the mail sets a new one, and only the new one signs in",
     async () => {
       // Erin has an account and no idea what its password was.
@@ -1555,7 +2103,8 @@ async function main() {
       const stale = await stranger.newPage();
       await stale.goto(`${WEB}/#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired`);
       await stale.getByTestId("login-form").waitFor();
-      equal(await stale.getByTestId("login-notice").innerText(), "This link does not work any more. Ask for a new one.", "an expired link");
+      equal(await stale.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "an expired link");
+      equal(stale.url(), `${WEB}/login`, "where an expired link leads");
       // It is said once, not on every later visit of the sign-in page.
       await stale.goto(`${WEB}/login`);
       await stale.getByTestId("login-form").waitFor();
@@ -1564,7 +2113,7 @@ async function main() {
       const forged = await stranger.newPage();
       await forged.goto(`${WEB}/#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
       await forged.getByTestId("login-form").waitFor();
-      equal(await forged.getByTestId("login-notice").innerText(), "This link does not work any more. Ask for a new one.", "a made-up link");
+      equal(await forged.getByTestId("login-notice").innerText(), FRONT_LINK_FAILED, "a made-up link");
       equal(await forged.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("shelfmark.auth")).length), 0, "a made-up link signs nobody in");
       await forged.goto(`${WEB}/reset#access_token=made.up.token&expires_in=3600&refresh_token=nothing&token_type=bearer&type=recovery`);
       await forged.getByTestId("reset-invalid").waitFor();

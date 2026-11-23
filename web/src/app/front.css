@@ -1,0 +1,1136 @@
+/*
+ * The pages a visitor sees before signing in: the front page, signing in, a new
+ * password, "no such page" and a site without a server.
+ *
+ * They look like a lending library at closing time. The room is the app's own Cocoa
+ * theme: dark wood that owns the page. Paper (the app's Paper theme) appears only as
+ * the things one reads or fills in: a catalogue card, a slip, a form, a screen.
+ * The colours below are those two themes as lib/theme.ts computes them, and a test
+ * holds them against it. Unlike the library, these pages do not follow the reader's
+ * own theme: they are the same for everybody.
+ */
+
+:root {
+  /* Outside any theme, for the first paint and for what stands behind these pages. */
+  --night: #2a1d17;
+  --night-deep: #201611;
+  --night-ink: #f6eade;
+  --timber: #6b4630;
+}
+
+html[data-world="front"] {
+  background: var(--night);
+  color-scheme: dark;
+}
+
+html[data-world="front"] body {
+  background: transparent;
+  color: var(--night-ink);
+}
+
+/* The front page is in the document for everybody. Somebody this browser remembers as
+   signed in never sees it: they get the quiet first screen of the library instead. */
+html[data-visitor="in"] .landing,
+html:not([data-visitor="in"]) .splash-home {
+  display: none;
+}
+
+.front {
+  /* Cocoa */
+  --bg: #2a1d17;
+  --card: #3a2921;
+  --text: #f6eade;
+  --accent: #eea262;
+  --primary: #eea262;
+  --on-primary: #1b1714;
+  --accent-text: #eea262;
+  --primary-container: #704d35;
+  --on-primary-container: #f6eade;
+  --secondary: #f0b887;
+  --secondary-container: #5a3f2d;
+  --danger: #e86058;
+  --on-danger: #1b1714;
+  --danger-text: #ea7069;
+  --danger-container: #60352d;
+  --surface-variant: #493830;
+  --muted: #b5a89e;
+  --outline: #85766d;
+  --outline-variant: #54443b;
+  --surface-low: #34241d;
+  --surface-high: #43332a;
+  --tile: #4b3a32;
+  --surface-dim: #271b15;
+  --wood-light: #b98862;
+  --wood: #9a6a48;
+  --wood-dark: #6b4630;
+  --shelf-back: #201611;
+  --star: #e8ba4a;
+  --star-text: #e8ba4a;
+  --spice: #ff6b5e;
+  --good: #8bc878;
+  --good-text: #8bc878;
+  --lamp: 232, 186, 74;
+
+  --gutter: clamp(20px, 5vw, 72px);
+  background: var(--bg);
+  color: var(--text);
+  color-scheme: dark;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+
+.front .paper {
+  /* Paper */
+  --bg: #f5f1ea;
+  --card: #ffffff;
+  --text: #2b2723;
+  --accent: #c8692c;
+  --primary: #b05c27;
+  --on-primary: #ffffff;
+  --accent-text: #9f5323;
+  --primary-container: #f3ded1;
+  --on-primary-container: #2b2723;
+  --secondary: #884c26;
+  --secondary-container: #f7eae1;
+  --danger: #ce3c36;
+  --on-danger: #ffffff;
+  --danger-text: #c43933;
+  --danger-container: #f4d4d3;
+  --surface-variant: #eeeeed;
+  --muted: #6a6866;
+  --outline: #898886;
+  --outline-variant: #e1e1e0;
+  --surface-low: #fbf9f7;
+  --surface-high: #f4f4f4;
+  --tile: #ececeb;
+  --surface-dim: #e1ded7;
+  --wood-light: #d9b48a;
+  --wood: #bf9264;
+  --wood-dark: #94683f;
+  --shelf-back: #e7e3dc;
+  --star: #be8c14;
+  --star-text: #ab7e12;
+  --spice: #ce3c36;
+  --good: #3a964a;
+  --good-text: #2f793c;
+  --lamp: 190, 140, 20;
+
+  background: var(--bg);
+  color: var(--text);
+  color-scheme: light;
+}
+
+.front h1,
+.front h2,
+.front h3 {
+  text-wrap: balance;
+}
+
+.front a {
+  text-underline-offset: 0.22em;
+}
+
+/* ---- the bar at the top ---- */
+
+.front-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px var(--gutter);
+}
+
+.wordmark {
+  flex: none;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.55rem;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.front-nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2.6vw, 30px);
+}
+
+.front-langs {
+  display: flex;
+  gap: 2px;
+}
+
+.front-langs a,
+.front-langs button {
+  padding: 8px 7px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.front-langs a:hover,
+.front-langs button:hover {
+  color: var(--text);
+}
+
+.front-langs button[aria-pressed="true"] {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.45em;
+}
+
+.lang-code {
+  display: none;
+}
+
+.front-langs a[aria-current] {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.45em;
+}
+
+.front-link {
+  color: var(--text);
+  font-weight: 700;
+  padding: 8px 2px;
+  white-space: nowrap;
+}
+
+.front-link:hover {
+  color: var(--accent-text);
+}
+
+/* The one thing a section asks for. Its colour is the lamp. */
+.front-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 54px;
+  padding: 12px 30px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 700;
+  font-size: 1.08rem;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease-out,
+    color 0.15s ease-out;
+}
+
+.front-button:hover {
+  background: #f6b784;
+}
+
+/* In the bar at the top the same way to the app is drawn in outline: the filled button
+   below the headline is the one thing that page asks for, and there is to be only one. */
+.front-button-small {
+  min-height: 42px;
+  padding: 7px 19px;
+  border: 1.5px solid var(--primary);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.front-button-small:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+/* ---- the front page: the shelf ---- */
+
+.landing,
+.desk {
+  overflow-x: clip;
+}
+
+.hero {
+  position: relative;
+  padding: clamp(10px, 2.2vh, 28px) 0 clamp(64px, 10vh, 120px);
+}
+
+/* The lamp of the reading room. It hangs over the shelf, and its light falls on the
+   wall behind the books, never behind a paragraph. */
+.hero-lamp {
+  position: absolute;
+  inset: -90px 0 auto 0;
+  height: min(980px, 100%);
+  pointer-events: none;
+  background: radial-gradient(ellipse 62% 58% at 64% 4%, rgba(var(--lamp), 0.2), rgba(var(--lamp), 0.07) 46%, transparent 72%);
+}
+
+.hero-words {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 24px;
+  row-gap: clamp(16px, 2.8vh, 28px);
+  padding: 0 var(--gutter);
+}
+
+.hero h1 {
+  grid-column: 1 / -1;
+  /* As large as the window allows, in width and in height: the shelf belongs on the first screen too. */
+  font-size: clamp(3.05rem, min(9.1vw, 13.6vh), 8.6rem);
+  line-height: 0.97;
+  letter-spacing: -0.028em;
+  /* The lines are set by hand, see the texts. */
+  text-wrap: wrap;
+}
+
+.hero h1 span {
+  display: block;
+}
+
+.hero-lead {
+  grid-column: 1 / span 6;
+  font-size: clamp(1.1rem, 1.45vw, 1.3rem);
+  line-height: 1.5;
+  max-width: 34em;
+}
+
+.hero-side {
+  display: contents;
+}
+
+.hero-actions {
+  grid-column: 8 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  align-self: start;
+}
+
+.hero-facts {
+  grid-column: 8 / -1;
+  grid-row: 2;
+  align-self: end;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-case {
+  position: relative;
+  margin-top: clamp(24px, 4vh, 44px);
+}
+
+/* Above the shelf: what to do with it, and in the margin what a shelfmark is. */
+.shelf-intro {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 24px;
+  align-items: end;
+  padding: 0 var(--gutter);
+  margin-bottom: clamp(14px, 2.4vh, 22px);
+}
+
+.hero-shelf {
+  padding: 0 var(--gutter);
+  /* Room for one row of books before they are there, so that nothing below jumps. */
+  min-height: calc(208px * var(--shelf-scale));
+  --shelf-scale: 1.2;
+}
+
+.scaled-inner {
+  width: calc(100% / var(--shelf-scale));
+  transform: scale(var(--shelf-scale));
+  transform-origin: 0 0;
+}
+
+/* The board, and the wall darkening above it, run off both edges of the window. The
+   books keep to the page. */
+.hero-shelf .shelf-row {
+  margin-inline: -100vw;
+  padding-inline: calc(100vw + 16px);
+}
+
+.hero-shelf .board,
+.hero-shelf .board-shadow {
+  margin-inline: -100vw;
+}
+
+.hero-shelf .bookcase {
+  font-weight: 700;
+}
+
+/* A book that is a button rises a little under the pointer. The one that was taken off
+   the shelf stands out further and stays there. */
+.front .spine:hover,
+.front .spine:focus-visible {
+  translate: 0 -2px;
+}
+
+.front .spine-out,
+.front .spine-out:hover,
+.front .spine-out:focus-visible {
+  translate: 0 -15px;
+}
+
+.front .spine.still,
+.front .spine.still:hover {
+  translate: none;
+  cursor: default;
+}
+
+.front .spine:focus-visible {
+  outline-color: var(--night-ink);
+  outline-offset: 2px;
+  border-radius: 3px 3px 0 0;
+}
+
+/* The shelfmark: the paper label at the foot of a spine. */
+.spine-label {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 9px;
+  padding: 2px 0 1px;
+  border-radius: 1px;
+  background: #f1e7d2;
+  color: #2b2520;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 8px;
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.spine-marked .spine-title {
+  inset: 20px 0 32px;
+}
+
+.shelf-plain {
+  padding: 28px 0 0;
+  color: var(--muted);
+}
+
+/* Under the shelf: the card of the book that was taken off it. */
+.reading-desk {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 24px;
+  padding: 0 var(--gutter);
+  margin-top: clamp(22px, 3.6vh, 36px);
+}
+
+.shelf-hint {
+  grid-column: 1 / span 8;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(1.15rem, 1.55vw, 1.4rem);
+  line-height: 1.25;
+}
+
+.cards {
+  grid-column: 1 / span 8;
+  min-width: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.card-slip + .card-slip {
+  margin-top: 18px;
+}
+
+/* With scripts one card lies on the desk at a time. Without them all of them do. */
+html.js .card-slip:not(.is-open),
+html:not(.js) .card-turn,
+html:not(.js) .shelf-hint {
+  display: none;
+}
+
+.catalogue-card {
+  position: relative;
+  max-width: 46rem;
+  padding: 24px clamp(20px, 3vw, 34px) 46px;
+  border-radius: 3px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 22px 44px rgba(0, 0, 0, 0.45);
+  rotate: -0.5deg;
+}
+
+.card-mark {
+  color: var(--accent-text);
+  font-weight: 700;
+  font-size: 0.98rem;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.catalogue-card h3 {
+  margin: 2px 0 14px;
+  padding-bottom: 12px;
+  /* The ruled line of an index card. */
+  border-bottom: 2px solid rgba(176, 92, 39, 0.42);
+  font-size: clamp(1.55rem, 2.7vw, 2.25rem);
+  letter-spacing: -0.01em;
+}
+
+.card-text {
+  max-width: 62ch;
+}
+
+.card-where {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.card-where span {
+  color: var(--text);
+  font-weight: 700;
+  margin-right: 0.35em;
+}
+
+/* The hole the rod of the card drawer goes through. */
+.card-hole {
+  position: absolute;
+  left: 50%;
+  bottom: 13px;
+  width: 17px;
+  height: 17px;
+  margin-left: -8.5px;
+  border-radius: 50%;
+  background: var(--night);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.55);
+}
+
+.card-turn {
+  grid-column: 9 / -1;
+  align-self: start;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding-top: 6px;
+}
+
+.card-turn .card-count {
+  flex-basis: 100%;
+}
+
+.card-turn button,
+.twin-buttons button {
+  min-height: 42px;
+  padding: 8px 18px;
+  border: 1px solid var(--outline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.card-turn button:hover,
+.twin-buttons button:not(:disabled):hover {
+  border-color: var(--text);
+  background: var(--surface-low);
+}
+
+.card-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* What a shelfmark is, as a note in the margin. */
+.hero-note {
+  grid-column: 9 / -1;
+  padding-top: 10px;
+  border-top: 1px solid var(--outline-variant);
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+/* ---- the front page: two shelves that follow each other ---- */
+
+.twin {
+  position: relative;
+  padding: clamp(72px, 12vh, 132px) var(--gutter) clamp(96px, 15vh, 170px);
+  background: var(--night-deep);
+}
+
+.twin-words {
+  max-width: 62rem;
+}
+
+.twin-words h2,
+.counter h2,
+.asked h2 {
+  font-size: clamp(2.15rem, 5.1vw, 4.6rem);
+  line-height: 1.04;
+  letter-spacing: -0.022em;
+}
+
+.twin-words p {
+  margin-top: clamp(18px, 3vh, 28px);
+  max-width: 62ch;
+  font-size: 1.1rem;
+}
+
+.twin-sample {
+  margin-top: clamp(34px, 6vh, 60px);
+  color: var(--muted);
+}
+
+.twin-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
+  margin-top: 14px;
+}
+
+.twin-name {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.25rem;
+  margin-bottom: 12px;
+}
+
+.twin-frame {
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5);
+}
+
+.twin-phone .twin-frame {
+  border: 9px solid #120c08;
+  border-radius: 32px;
+}
+
+.twin-phone {
+  width: min(318px, 100%);
+}
+
+.twin-screen {
+  padding: 10px 0 20px;
+  min-height: 250px;
+}
+
+.twin-screen .book-row:hover {
+  background: none;
+}
+
+.twin-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 14px;
+  margin-top: 18px;
+}
+
+.twin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.twin-field label {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.twin-field select {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--outline);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.twin-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.twin-buttons button:disabled {
+  color: var(--outline);
+  border-color: var(--outline-variant);
+}
+
+.twin-said {
+  min-height: 1.6em;
+  margin-top: 26px;
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.twin-caption,
+.twin-plain {
+  margin-top: 8px;
+  max-width: 56ch;
+  color: var(--muted);
+  font-size: 0.97rem;
+}
+
+.twin-left {
+  min-width: 0;
+}
+
+/* Two shelves that cannot be changed would only pretend. Without scripts a sentence stands in for them. */
+html:not(.js) .twin-stage,
+html:not(.js) .twin-sample {
+  display: none;
+}
+
+/* ---- the front page: the counter where the app is handed over ---- */
+
+.counter {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
+  padding: clamp(64px, 10vh, 112px) var(--gutter);
+  /* The top of a wooden counter: lighter where the light catches its edge. */
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 7px),
+    linear-gradient(#775036, #5f3e2a);
+}
+
+.counter-lead {
+  margin: clamp(16px, 2.6vh, 24px) 0 clamp(22px, 3.4vh, 32px);
+  max-width: 34em;
+  font-size: 1.1rem;
+}
+
+.counter-notes {
+  margin: clamp(22px, 3.4vh, 32px) 0 0;
+  padding: 0 0 0 1.15em;
+  max-width: 36em;
+  color: #f0dfcf;
+}
+
+.counter-notes li + li {
+  margin-top: 6px;
+}
+
+/* The slip that goes with a borrowed book, with the day stamped on it. */
+.slip {
+  position: relative;
+  align-self: start;
+  padding: clamp(22px, 3vw, 32px) clamp(20px, 3vw, 32px) 24px;
+  border-radius: 3px;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.42);
+}
+
+.slip dl {
+  margin: 0;
+}
+
+.slip dl > div {
+  display: grid;
+  grid-template-columns: 6.4rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid rgba(43, 39, 35, 0.2);
+}
+
+.slip dt {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.slip dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.slip-stamp {
+  position: absolute;
+  top: -20px;
+  right: 16px;
+  padding: 6px 12px 5px;
+  border: 2.5px solid var(--danger-text);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--danger-text);
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  rotate: 5deg;
+}
+
+.slip-stamp span {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+}
+
+.slip-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: 16px;
+  font-size: 0.95rem;
+}
+
+/* ---- the front page: questions, on paper ---- */
+
+.asked {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(28px, 5vh, 48px);
+  padding: clamp(72px, 12vh, 136px) var(--gutter);
+}
+
+.asked-list {
+  margin: 0;
+}
+
+.asked-list > div {
+  padding: 20px 0 22px;
+  border-top: 1px solid rgba(43, 39, 35, 0.22);
+}
+
+.asked-list dt {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(1.25rem, 2vw, 1.55rem);
+  line-height: 1.25;
+}
+
+.asked-list dd {
+  margin: 8px 0 0;
+  max-width: 62ch;
+}
+
+/* ---- the foot ---- */
+
+.front-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px 32px;
+  padding: 40px var(--gutter) 48px;
+}
+
+.foot-line {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+}
+
+.front-foot a {
+  color: var(--text);
+}
+
+/* ---- wider windows ---- */
+
+@media (max-width: 559.98px) {
+  .front-head .front-button {
+    display: none;
+  }
+
+  .wordmark {
+    font-size: 1.35rem;
+  }
+
+  .lang-code {
+    display: inline;
+  }
+
+  /* Out of sight, still read out. */
+  .lang-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 899.98px) {
+  .hero-lead,
+  .hero-actions,
+  .hero-facts,
+  .shelf-hint,
+  .hero-note,
+  .cards,
+  .card-turn {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .hero-note {
+    margin-top: 14px;
+    max-width: 24rem;
+  }
+
+  .card-turn {
+    margin-top: 18px;
+  }
+
+  .card-turn .card-count {
+    flex-basis: auto;
+    order: 2;
+  }
+
+  .card-turn button:last-child {
+    order: 3;
+  }
+}
+
+@media (min-width: 640px) {
+  .hero-shelf {
+    --shelf-scale: 1.5;
+  }
+}
+
+@media (min-width: 900px) {
+  .twin-stage {
+    grid-template-columns: minmax(0, 1fr) 318px;
+    gap: clamp(32px, 5vw, 80px);
+    align-items: start;
+  }
+
+  .counter {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+
+  .counter-words {
+    grid-column: 7 / -1;
+    grid-row: 1;
+  }
+
+  /* The slip lies across the edge of the counter and sticks out over it, into the room
+     the shorter of the two shelves leaves above: besides the shelf in the hero, the one
+     thing on the page that does not keep to its section. */
+  .slip {
+    grid-column: 1 / span 5;
+    grid-row: 1;
+    margin-top: calc(-1 * clamp(64px, 10vh, 112px) - 150px);
+    rotate: -1.4deg;
+  }
+
+  .asked h2 {
+    position: sticky;
+    top: 40px;
+    align-self: start;
+  }
+
+  .asked {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+
+  .asked h2 {
+    grid-column: 1 / span 4;
+  }
+
+  .asked-list {
+    grid-column: 6 / -1;
+  }
+}
+
+/* From here on all the books of the hero stand in one row. */
+@media (min-width: 1360px) {
+  .hero-shelf {
+    --shelf-scale: 1.6;
+  }
+}
+
+/* A wide but low window, as many laptops have: smaller books, so that the board they
+   stand on is still on the first screen. */
+@media (min-width: 1200px) and (max-height: 840px) {
+  .hero-shelf {
+    --shelf-scale: 1.3;
+  }
+}
+
+@media (min-width: 1560px) and (min-height: 841px) {
+  .hero-shelf {
+    --shelf-scale: 1.75;
+  }
+}
+
+/* ---- signing in, a new password, no such page ---- */
+
+.desk {
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -6%, rgba(var(--lamp), 0.17), transparent 70%),
+    var(--bg);
+}
+
+.desk-main {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 28px;
+  padding: 12px var(--gutter) 72px;
+}
+
+.desk-main > h1 {
+  font-size: clamp(2.3rem, 6vw, 4.4rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  text-align: center;
+  max-width: 16ch;
+}
+
+.desk-main > p {
+  max-width: 34em;
+  text-align: center;
+}
+
+.entry {
+  width: min(960px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 28px;
+  align-items: center;
+}
+
+.entry-words h1 {
+  font-size: clamp(2.5rem, 6.4vw, 4.8rem);
+  line-height: 1;
+  letter-spacing: -0.024em;
+}
+
+.entry-words p {
+  margin-top: 14px;
+  max-width: 26em;
+  color: var(--muted);
+}
+
+.entry-shelf {
+  margin-top: 26px;
+  max-width: 420px;
+}
+
+.entry-shelf .login-shelf {
+  justify-content: flex-start;
+  padding-left: 18px;
+  margin-top: 0;
+}
+
+/* Only the form is paper, not what is around it. */
+.front .entry-form {
+  min-width: 0;
+  background: none;
+}
+
+.entry-form .card {
+  margin: 0;
+  background: var(--bg);
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.42);
+}
+
+.entry-narrow {
+  width: min(440px, 100%);
+}
+
+/* What is typed into stands out from the paper it lies on. */
+.entry-form .field input {
+  background: #ffffff;
+}
+
+/* A shelf whose spines spell a sentence, for a page that is not there. */
+.missing-shelf {
+  width: min(520px, 100%);
+  --shelf-scale: 1.25;
+}
+
+.missing-shelf .bookcase {
+  font-weight: 700;
+}
+
+.desk-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 20px;
+}
+
+@media (min-width: 900px) {
+  .entry {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+    gap: clamp(40px, 7vw, 96px);
+  }
+}
+
+/* ---- the quiet first screen, in the colours of these pages ---- */
+
+html[data-world="front"] .splash {
+  color: var(--night-ink);
+}
+
+html[data-world="front"] .splash-board {
+  background: linear-gradient(#b98862, #9a6a48 42%, #6b4630);
+}
+
+/* ---- movement ---- */
+
+/*
+ * One moment: the books settle onto the shelf, one after the other, and the card of the
+ * first is dealt onto the desk. After that things only move when the visitor moves
+ * them, and only a little. The switch for "a lively shelf" belongs to the library and
+ * does not exist out here, so the setting of the system is what counts.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .front .settle {
+    animation: settle 0.5s cubic-bezier(0.3, 0, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 55ms + 120ms);
+  }
+
+  .front .spine {
+    transition: translate 0.16s ease-out;
+  }
+
+  html.js .card-slip.is-open {
+    animation: dealt 0.24s ease-out both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .front-button,
+  .front-button-small {
+    transition: none;
+  }
+}
+
+@keyframes dealt {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+  }
+}

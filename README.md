@@ -131,13 +131,18 @@ the three parts is written down in [`supabase/README.md`](supabase/README.md).
 1. Create a project at supabase.com.
 2. Open the **SQL editor**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and
    run it. Run it again whenever that file changed, it keeps all data.
-3. **Authentication > Sign In / Providers > Email**: switch off **Confirm email**. With it on,
-   a new account has to open a link in a mail first, and the mail service that comes with
-   Supabase sends very few mails, and only to members of your own Supabase organisation.
-   The apps cope with either setting.
+3. **Authentication > Sign In / Providers**: switch off **Confirm email**. It is one of the
+   switches for signing up at the top of that page (older dashboards have it inside the panel
+   of the Email provider). With it on, a new account has to open a link in a mail first, and
+   the mail service that comes with Supabase sends very few mails, and only to members of
+   your own Supabase organisation. The apps cope with either setting: with it on, the link
+   in the mail leads to the website, signed in and told so, and the Android app signs in by
+   itself when its owner comes back to it.
 4. **Authentication > URL Configuration**: set **Site URL** to the address of the website,
-   and add `https://<your site>/reset` under **Redirect URLs**. The link in a "forgot the
-   password" mail leads there.
+   and add `https://<your site>/**` under **Redirect URLs**, once for every address the site
+   is reached at (Vercel gives a project more than one). The links in the mails lead there:
+   to the page for a new password, and back to the site after an address was confirmed. An
+   address that is not on the list is replaced by the Site URL.
 5. From the project's settings take the **project URL** (`https://xxxxxxxx.supabase.co`) and
    the **publishable key** (the public one, `sb_publishable_...`, never the secret one), and
    give both to the app and to the website, see [Build](#build) and [The website](#the-website).
@@ -182,6 +187,14 @@ else.
 [Vercel](https://vercel.com). How to run and test it locally is in
 [`web/README.md`](web/README.md).
 
+A visitor who is not signed in gets a front page that says what Shelfmark does, on a shelf
+whose books are its features, with the download of the app and the sign-in. Somebody who is
+signed in gets their shelf at the same address. `/download` always leads to the newest APK
+of the [releases](https://github.com/TRGamer-tech/shelfmark/releases).
+
+<p>
+  <img src="docs/screenshots/web_landing.png" width="84%" alt="The front page of the website: a shelf whose books are what Shelfmark does">
+</p>
 <p>
   <img src="docs/screenshots/web_shelf.png" width="62%" alt="The shelf on the website, with the spines, the candle and the cat">
   <img src="docs/screenshots/web_shelf_phone_width.png" width="20%" alt="The same shelf of the same account in a narrow window, dark theme">
@@ -198,7 +211,7 @@ else.
    sets them for you (older setups get `NEXT_PUBLIC_SUPABASE_ANON_KEY` instead, which works
    as well).
 4. Deploy. Then put the address Vercel gave the site (`https://<name>.vercel.app`, or your own
-   domain) into Supabase as the **Site URL**, and the same address followed by `/reset` as a
+   domain) into Supabase as the **Site URL**, and the same address followed by `/**` as a
    **Redirect URL** (step 4 above).
 5. Optional: add that address to this repository as the secret `SHELFMARK_WEBSITE_URL`, and
    the app shows a link to the website in its settings from the next release on.

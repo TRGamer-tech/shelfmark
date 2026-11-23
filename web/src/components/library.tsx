@@ -294,6 +294,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // "Off" means no decorative animation at all, whatever the browser would allow.
     document.documentElement.dataset.motion = prefs.motion ? "on" : "off";
+    // The switch belongs to the library. Once it is closed (signed out), the pages
+    // outside it go by the setting of the system again.
+    return () => {
+      delete document.documentElement.dataset.motion;
+    };
   }, [prefs.motion]);
 
   const mutate = useCallback((change: Change) => store.mutate(change), [store]);

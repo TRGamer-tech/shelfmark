@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useAuth } from "@/components/auth";
+import { FrontDesk } from "@/components/FrontDesk";
 import { useI18n } from "@/components/i18n";
 import { Button, Field } from "@/components/ui";
 import { authProblem } from "@/lib/supabase/errors";
@@ -47,11 +48,10 @@ export default function ResetPage() {
   };
 
   return (
-    <main className="login">
-      <div className="login-box">
-        <h1 className="login-brand">Shelfmark</h1>
+    <FrontDesk>
+      <h1>{t("web_reset_title")}</h1>
+      <div className="entry-form entry-narrow paper">
         <div className="card stack" data-testid="reset-box">
-          <h2>{t("web_reset_title")}</h2>
           {done ? (
             <>
               <p className="notice" role="status" data-testid="reset-done">
@@ -90,6 +90,6 @@ export default function ResetPage() {
           )}
         </div>
       </div>
-    </main>
+    </FrontDesk>
   );
 }

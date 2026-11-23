@@ -25,8 +25,12 @@ export interface ShelfItem {
   format: BookFormat | string;
   /** Colour of a small ribbon, e.g. for "currently reading" or "available to borrow". */
   ribbon?: string | null;
-  /** Where a click leads. Without it [onClick] of the shelf is called. */
+  /** Where a click leads. Without it [onClick] of the shelf is called, and without that the book just stands there. */
   href?: string;
+  /** A paper label at the foot of the spine, as library books carry their shelfmark. */
+  label?: string;
+  /** For a book that works as a switch: whether it is the one taken off the shelf. */
+  pressed?: boolean;
 }
 
 /** A run of books under one heading, e.g. everything on the "Reading" list. */
@@ -53,16 +57,19 @@ interface ShelfProps {
   lively?: boolean;
 }
 
-/** The width of an element, kept up to date as the window changes. Zero until it is known. */
+/**
+ * The width of an element, kept up to date as the window changes. Zero until it is known.
+ * It is the width the element is laid out with: a shelf that is drawn larger or smaller
+ * than life (as on the front page) still packs its books by its own measure.
+ */
 function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
   const ref = useRef<T | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const measure = () => setWidth(element.getBoundingClientRect().width);
-    measure();
-    const observer = new ResizeObserver(measure);
+    setWidth(element.offsetWidth);
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -78,8 +85,12 @@ export function ShelfBoard() {
   );
 }
 
-function Heading({ section, decorate }: { section: ShelfSection; decorate: boolean }) {
+function DecorateButton({ section }: { section: ShelfSection }) {
   const { t } = useI18n();
+  return <IconButton icon="flower" label={`${t("ornament_title")}: ${section.title}`} onClick={section.onDecorate ?? undefined} className="muted" data-testid={`decorate-${section.key}`} />;
+}
+
+function Heading({ section, decorate }: { section: ShelfSection; decorate: boolean }) {
   if (!section.title) return null;
   const inner = (
     <>
@@ -100,7 +111,7 @@ function Heading({ section, decorate }: { section: ShelfSection; decorate: boole
         )}
       </h2>
       <span className="grow" />
-      {decorate && section.onDecorate ? <IconButton icon="flower" label={`${t("ornament_title")}: ${section.title}`} onClick={section.onDecorate} className="muted" data-testid={`decorate-${section.key}`} /> : null}
+      {decorate && section.onDecorate ? <DecorateButton section={section} /> : null}
     </div>
   );
 }
@@ -116,7 +127,7 @@ function EmptyShelf({ hint, sectionKey }: { hint: string; sectionKey: string }) 
   );
 }
 
-/** What a book on the shelf is: a link to its page, or a button that opens something. */
+/** What a book on the shelf is: a link to its page, a button that opens something, or simply a book. */
 function Clickable({ item, onClick, className, style, children, testId }: { item: ShelfItem; onClick?: (item: ShelfItem) => void; className: string; style?: React.CSSProperties; children: ReactNode; testId?: string }) {
   if (item.href) {
     return (
@@ -125,8 +136,16 @@ function Clickable({ item, onClick, className, style, children, testId }: { item
       </Link>
     );
   }
+  if (!onClick) {
+    // Nothing happens on a click, so it must not look or behave as if something did.
+    return (
+      <span className={`${className} still`} style={style} role="img" aria-label={item.title} title={item.title} data-testid={testId}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <button type="button" className={className} style={style} aria-label={item.title} title={item.title} onClick={() => onClick?.(item)} data-testid={testId}>
+    <button type="button" className={className} style={style} aria-label={item.title} title={item.title} aria-pressed={item.pressed} onClick={() => onClick(item)} data-testid={testId}>
       {children}
     </button>
   );
@@ -148,13 +167,18 @@ function Spine({ item, onClick, order, lean }: { item: ShelfItem; onClick?: (ite
     style.rotate = `${-lean.angle}deg`;
   }
   return (
-    <Clickable item={item} onClick={onClick} className={`spine settle ${width >= 44 ? "spine-wide" : ""}`} style={style} testId={lean ? "leaning" : "spine"}>
+    <Clickable item={item} onClick={onClick} className={`spine settle ${width >= 44 ? "spine-wide" : ""} ${item.pressed ? "spine-out" : ""} ${item.label ? "spine-marked" : ""}`} style={style} testId={lean ? "leaning" : "spine"}>
       <span className="spine-band" style={{ top: 9 }} />
       <span className="spine-band spine-band-thin" style={{ top: 13 }} />
-      <span className="spine-band" style={{ bottom: 10 }} />
+      {item.label ? null : <span className="spine-band" style={{ bottom: 10 }} />}
       <span className="spine-title" aria-hidden="true">
         <span>{item.title}</span>
       </span>
+      {item.label ? (
+        <span className="spine-label" aria-hidden="true">
+          {item.label}
+        </span>
+      ) : null}
       {item.ribbon ? <span className="ribbon" style={{ background: item.ribbon }} /> : null}
     </Clickable>
   );

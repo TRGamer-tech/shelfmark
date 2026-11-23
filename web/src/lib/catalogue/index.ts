@@ -6,16 +6,13 @@ import { networkFetcher } from "./http.ts";
 import { dnb, iTunes, k10plus, lobid, swisscovery } from "./libraryCatalogues.ts";
 import { BookLookup } from "./lookup.ts";
 import { openLibrary } from "./openLibrary.ts";
+import type { BookSource } from "./source.ts";
 
-/**
- * [country] is the two letter code of the reader's country, for the Apple Books store
- * to look in. Empty leaves the choice to Apple.
- */
-export function makeLookup(country = ""): BookLookup {
+function sources(country: string): BookSource[] {
   const http = networkFetcher();
   // Ordered by how much a hit is worth: full records with covers first,
   // then the library catalogues that fill in what those do not know.
-  return new BookLookup([
+  return [
     openLibrary(http),
     googleBooks(http, () => process.env.GOOGLE_BOOKS_API_KEY ?? ""),
     iTunes(http, () => country),
@@ -23,7 +20,20 @@ export function makeLookup(country = ""): BookLookup {
     dnb(http),
     k10plus(http),
     swisscovery(http),
-  ]);
+  ];
+}
+
+/**
+ * [country] is the two letter code of the reader's country, for the Apple Books store
+ * to look in. Empty leaves the choice to Apple.
+ */
+export function makeLookup(country = ""): BookLookup {
+  return new BookLookup(sources(country));
+}
+
+/** How many catalogues one search asks. The front page says this number, so it is counted here and not written there. */
+export function catalogueCount(): number {
+  return sources("").length;
 }
 
 export function makeCoverFinder(country = ""): CoverFinder {

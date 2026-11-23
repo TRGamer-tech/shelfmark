@@ -44,7 +44,8 @@ function Swatch({ preset, selected, onPick, label, testId }: { preset: ThemePres
 function backupOf(text: string): Vault | "newer" | null {
   let raw: unknown;
   try {
-    raw = JSON.parse(text.trim().replace(/^﻿/, ""));
+    // Without the invisible mark some programs put at the very start of a text file.
+    raw = JSON.parse((text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).trim());
   } catch {
     return null;
   }

@@ -1,18 +1,29 @@
 # Shelfmark on the web
 
-The website of Shelfmark: sign in, and the library you keep on your phone is in your
-browser. Same shelves, same lists, same themes and ornaments, because both show the same
-document, kept in a Supabase project (see `../supabase/README.md`, which is the contract
-this site is written against).
+The website of Shelfmark. A visitor finds a front page that says what Shelfmark is, hands
+over the Android app and leads to the sign-in. Signed in, the library you keep on your
+phone is in your browser: same shelves, same lists, same themes and ornaments, because
+both show the same document, kept in a Supabase project (see `../supabase/README.md`,
+which is the contract this site is written against).
 
 It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependencies are
 `next`, `react`, `react-dom` and `@supabase/supabase-js`, nothing else.
 
 ## How it is built
 
-- Everything a reader sees is drawn in the browser after signing in. The pages are
-  static, the server only answers the book search (`/api/books/...`) and the daily check
-  (`/api/keepalive`).
+- The front page (`/`, and `/de` in German) is drawn by the server and reads without
+  scripts. Everything of the library is drawn in the browser after signing in. Those
+  pages are static, and the server only answers the book search (`/api/books/...`), the
+  download link (`/download`) and the daily check (`/api/keepalive`).
+- The address of the site itself serves two pages: the front page for a visitor and the
+  shelf for somebody who is signed in. A small script in the head decides which, before
+  the first paint, from whether this browser remembers a sign-in (`src/lib/visitor.ts`),
+  so that nobody sees the front page flash by on the way to their shelf.
+  `src/components/Providers.tsx` then keeps the two apart.
+- The pages before the sign-in (`src/components/landing/`, `FrontDesk.tsx`,
+  `src/app/front.css`) look the same for everybody: the app's Cocoa theme as the room
+  and its Paper theme for what is read or filled in. The two shelves on the front page
+  are the shelves of the library (`Shelves.tsx`), not pictures of them.
 - `src/lib` holds the logic, free of React and tested by itself: the library document and
   its defaults (`model.ts`), every change a reader can make (`mutations.ts`), saving by
   revision with the conflict path (`sync.ts`), what friends get (`share.ts`, `social.ts`),
@@ -36,6 +47,8 @@ It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependen
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | The publishable key of that project |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Other names for the same key. The first of the three that is set is used |
 | `GOOGLE_BOOKS_API_KEY` | Optional, server side only. Google Books often refuses searches without a key |
+| `NEXT_PUBLIC_SITE_URL` | Optional. The address of the site, for the addresses in link previews. On Vercel it is known without this |
+| `SHELFMARK_GITHUB_API` | Optional, server side only. Asked instead of `https://api.github.com` for the releases of the app. The tests point it at a recording |
 
 Only the publishable key is used. It is meant to be public: what a caller may do is
 decided by the server for the signed-in account. The values are read when the site is
@@ -76,8 +89,10 @@ originals when those are there), `buildLibrary` against the two library samples 
 byte, the status rules, statistics, calendar, recap and milestones (the cases of the
 app's Kotlin tests), ISBNs, the catalogue parsers against recorded answers, saving with
 conflicts against a server in memory, what another cover does to a book and the requests
-for uploaded pictures, what the address says after the link of a mail, the reading
-timer, and the texts. The importer of lists from other apps is tested with the cases of
+for uploaded pictures, what the address says after every kind of mail link, the script
+that decides between front page and shelf, picking the newest release of the app, the
+words, numbers and colours of the front page, the reading timer, and the texts. The
+importer of lists from other apps is tested with the cases of
 the app's Kotlin test on the same two files (`test/fixtures/goodreads_export.csv` and
 `storygraph_export.csv`, copies of the app's test fixtures that are compared with the
 originals when those are there), so that the phone and the website read a list alike.
@@ -88,7 +103,9 @@ global modules) and a PostgreSQL with the schema loaded as above. It then does t
 by itself: starts the stand-in server twice (port 54340, and 54341 in the mode where new
 accounts confirm their e-mail address), builds the site twice (with a server into
 `.next-e2e`, without one into `.next-plain`), starts both (ports 3210 and 3211) and a
-small server that answers for the seven catalogues from recorded answers (port 3212).
+small server that answers for the seven catalogues and for GitHub's list of releases
+from recorded answers (port 3212). The second site cannot reach GitHub at all, which is
+how the download link and the front page are tested without it.
 Set `SHELFMARK_E2E_DSN` if the database is not
 `host=127.0.0.1 port=54329 user=postgres dbname=shelfmark_web`. `npm run e2e -- --no-build`
 reuses the last build, and `npm run e2e -- --only=timer` runs only the tests whose name
@@ -115,6 +132,14 @@ that file to prove that the app understands what the website writes.
   `https://<your site>/reset` as a redirect, so that the link in a "forgot password" mail
   leads to the page that sets the new password. A mail asked for in the Android app names
   no page and leads to the site URL itself, which takes the reader to that page as well.
+- The link in a confirmation mail leads to the site URL too. The site takes the sign-in
+  that comes with it: the reader lands on their shelf with a notice that the address is
+  confirmed, worded also for somebody who signed up in the Android app. A link that is
+  too old or was used before leads to the sign-in page, which says what to do.
+- `/download` redirects to the newest `.apk` among the releases of the project on
+  GitHub, pre-releases included, and to the list of releases when GitHub cannot be
+  asked. The front page names the version and size from the same answer, renewed every
+  ten minutes, and speaks without them when it knows nothing. The build needs no network.
 
 ## What the website leaves to the phone
 

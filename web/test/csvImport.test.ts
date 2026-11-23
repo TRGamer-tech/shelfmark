@@ -44,7 +44,7 @@ test("the two lists are the ones the app is tested with", () => {
 });
 
 test("csv fields may hold commas, quotes and line breaks", () => {
-  const rows = parseCsv('﻿a,b,c\r\n"one, two","say ""hi""","line\nbreak"\r\n\r\n3,4,5');
+  const rows = parseCsv(String.fromCharCode(0xfeff) + 'a,b,c\r\n"one, two","say ""hi""","line\nbreak"\r\n\r\n3,4,5');
   assert.deepEqual(rows, [
     ["a", "b", "c"],
     ["one, two", 'say "hi"', "line\nbreak"],
