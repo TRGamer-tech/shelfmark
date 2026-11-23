@@ -89,7 +89,10 @@ fun serverProblem(reason: String): String = stringResource(
         "weak_password" -> R.string.account_error_weak
         "email_not_confirmed" -> R.string.account_error_unconfirmed
         "validation_failed", "email_address_invalid" -> R.string.account_error_email
-        "over_email_send_rate_limit", "over_request_rate_limit" -> R.string.account_error_rate
+        // Not the reader's doing: the mail service of the server has sent all it may for now.
+        "over_email_send_rate_limit" -> R.string.account_error_mail_limit
+        "email_address_not_authorized" -> R.string.account_error_mail_refused
+        "over_request_rate_limit" -> R.string.account_error_rate
         "signup_disabled" -> R.string.account_error_closed
         else -> R.string.server_error_other
     },

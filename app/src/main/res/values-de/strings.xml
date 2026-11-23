@@ -9,6 +9,8 @@
     <string name="account_error_credentials">E-Mail oder Passwort stimmt nicht.</string>
     <string name="account_error_email">Das ist keine E-Mail-Adresse.</string>
     <string name="account_error_exists">Für diese Adresse gibt es schon ein Konto. Melde dich stattdessen an.</string>
+    <string name="account_error_mail_limit">Der Server kann im Moment keine Bestätigungsmails mehr verschicken. Das liegt nicht an dir. Bitte versuche es in einer Stunde nochmals.</string>
+    <string name="account_error_mail_refused">Der Server konnte keine Bestätigungsmail an diese Adresse schicken. Bitte versuche es später nochmals.</string>
     <string name="account_error_rate">Zu viele Versuche. Bitte warte einen Moment.</string>
     <string name="account_error_signed_out">Du bist nicht mehr angemeldet. Bitte melde dich nochmals an.</string>
     <string name="account_error_unconfirmed">Bestätige zuerst deine Adresse: Öffne den Link in der Mail, die du bekommen hast.</string>

@@ -94,6 +94,8 @@ class FakeServer : HttpPoster {
     var time = 1_795_400_000_000L
     var tokenSeconds = 3600L
     val calls = HashMap<String, Int>()
+    /** The server has sent all the mails it may for now: a new account that needs one is refused. */
+    var mailsSpent = false
     /** Where the last sign-up asked the confirmation mail to lead back to, if it named a page. */
     var returnTo: String? = null
 
@@ -175,6 +177,8 @@ class FakeServer : HttpPoster {
                 if ("@" !in email) throw AuthRefusal(400, "validation_failed")
                 if (text("password").length < 6) throw AuthRefusal(422, "weak_password")
                 if (email in users) throw AuthRefusal(422, "user_already_exists")
+                // The mail service that comes with Supabase sends very few mails per hour.
+                if (confirmEmail && mailsSpent) throw AuthRefusal(429, "over_email_send_rate_limit")
                 val user = User(UUID.randomUUID().toString(), text("password"), confirmed = !confirmEmail)
                 users[email] = user
                 // With confirmation asked for, Supabase answers with the user and signs nobody in.

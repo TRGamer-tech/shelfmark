@@ -877,6 +877,26 @@ class AppFlowTest {
         waitFor { fakeServer.calls["signup"] == 1 }
     }
 
+    @Test fun aServerThatMaySendNoMoreMailsSaysSoInsteadOfBlamingTheReader() {
+        useServer()
+        fakeServer.confirmEmail = true
+        fakeServer.mailsSpent = true
+        start(onboarded = false)
+        waitForTag("onboarding")
+        type("accountEmail", benEmail)
+        type("accountPassword", benPassword)
+        tap("signUp")
+        waitForTag("accountProblem")
+        waitForText("Der Server kann im Moment keine Bestätigungsmails mehr verschicken. Das liegt nicht an dir.")
+        assertTrue(compose.onAllNodesWithText("Zu viele Versuche", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(!fakeServer.hasAccount(benEmail))
+        // An hour later, or with confirmation switched off on the server, the same tap works.
+        fakeServer.mailsSpent = false
+        fakeServer.confirmEmail = false
+        tap("signUp")
+        waitFor { runBlocking { container.settings.current() }.signedIn }
+    }
+
     @Test fun comingBackFromTheConfirmationMailSignsInWithoutAnotherTap() {
         useServer()
         fakeServer.confirmEmail = true

@@ -9,6 +9,8 @@
     <string name="account_error_credentials">E-mail or password is not right.</string>
     <string name="account_error_email">That is not an e-mail address.</string>
     <string name="account_error_exists">There is an account for this address already. Sign in instead.</string>
+    <string name="account_error_mail_limit">The server cannot send any more confirmation mails right now. This is not your fault. Please try again in an hour.</string>
+    <string name="account_error_mail_refused">The server could not send a confirmation mail to this address. Please try again later.</string>
     <string name="account_error_rate">Too many attempts. Please wait a moment.</string>
     <string name="account_error_signed_out">You are no longer signed in. Please sign in again.</string>
     <string name="account_error_unconfirmed">Confirm your address first: open the link in the mail you got.</string>
