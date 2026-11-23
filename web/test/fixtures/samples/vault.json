@@ -1,0 +1,220 @@
+{
+  "exportedAt": 1795400000000,
+  "books": [
+    {
+      "id": 1,
+      "title": "Der Vorleser",
+      "authors": "Bernhard Schlink",
+      "isbn": "9783257229530",
+      "publisher": "Diogenes",
+      "publishedYear": "1997",
+      "language": "de",
+      "pageCount": 206,
+      "format": "PAPERBACK",
+      "description": "Sie ist reizbar, rätselhaft und viel älter als er.",
+      "coverUrl": "https://covers.openlibrary.org/b/id/10527919-L.jpg",
+      "status": "READ",
+      "rating": 4.5,
+      "spice": 2,
+      "review": "Leise und hart zugleich.",
+      "startedOn": 20768,
+      "finishedOn": 20777,
+      "currentPage": 206,
+      "readCount": 1,
+      "favorite": true,
+      "genres": "Roman",
+      "tags": "Schule, Klassiker",
+      "addedAt": 1791944000000,
+      "updatedAt": 1795140800000
+    },
+    {
+      "id": 2,
+      "title": "Der Prozess",
+      "authors": "Franz Kafka",
+      "pageCount": 256,
+      "format": "PAPERBACK",
+      "status": "READING",
+      "lendable": false,
+      "startedOn": 20778,
+      "currentPage": 120,
+      "addedAt": 1793672000000,
+      "updatedAt": 1795400000000
+    },
+    {
+      "id": 3,
+      "title": "Dune",
+      "subtitle": "Der Wüstenplanet",
+      "authors": "Frank Herbert",
+      "pageCount": 896,
+      "format": "HARDCOVER",
+      "lentTo": "Ben",
+      "lentSince": 20779,
+      "series": "Dune",
+      "seriesPosition": 1.0,
+      "addedAt": 1794536000000,
+      "updatedAt": 1795313600000
+    },
+    {
+      "id": 1795400000000123,
+      "title": "Babel",
+      "authors": "R. F. Kuang",
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lendable": false,
+      "addedAt": 1795400000000,
+      "updatedAt": 1795400000000
+    },
+    {
+      "id": 5,
+      "title": "Momo",
+      "authors": "Michael Ende",
+      "pageCount": 480,
+      "format": "AUDIOBOOK",
+      "coverPath": "cover_5.jpg",
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "borrowedFrom": "Clara",
+      "lendable": false,
+      "addedAt": 1795400000000,
+      "updatedAt": 1795400000000
+    }
+  ],
+  "shelves": [
+    {
+      "id": 1,
+      "name": "Lieblinge",
+      "createdAt": 1795400000000
+    },
+    {
+      "id": 2,
+      "name": "Urlaub",
+      "position": 1,
+      "createdAt": 1795400000000
+    }
+  ],
+  "links": [
+    {
+      "bookId": 1,
+      "shelfId": 1
+    },
+    {
+      "bookId": 3,
+      "shelfId": 1
+    }
+  ],
+  "quotes": [
+    {
+      "id": 1,
+      "bookId": 1,
+      "text": "Ich habe damals nichts offenbart, was ich hätte verschweigen müssen.",
+      "page": 129,
+      "note": "Kapitel 7",
+      "createdAt": 1795400000000
+    }
+  ],
+  "sessions": [
+    {
+      "id": 1,
+      "bookId": 2,
+      "startedAt": 1795313600000,
+      "endPage": 60,
+      "minutes": 75.0
+    },
+    {
+      "id": 2,
+      "bookId": 2,
+      "startedAt": 1795400000000,
+      "startPage": 60,
+      "endPage": 120,
+      "minutes": 80.0,
+      "note": "Im Zug"
+    }
+  ],
+  "notes": [
+    {
+      "id": 1,
+      "bookId": 2,
+      "title": "Figuren",
+      "text": "K. hat keinen Vornamen, nur einen Buchstaben.",
+      "page": 14,
+      "createdAt": 1795400000000
+    }
+  ],
+  "goals": [
+    {
+      "id": 1,
+      "target": 12,
+      "startDay": 0,
+      "endDay": 0,
+      "repeat": "YEARLY",
+      "createdAt": 1795400000000
+    }
+  ],
+  "purchases": [
+    {
+      "id": 1,
+      "bookId": 1,
+      "day": 20750,
+      "price": 14.9,
+      "currency": "CHF",
+      "store": "Orell Füssli"
+    }
+  ],
+  "ornaments": [
+    {
+      "id": 1,
+      "shelfKey": "READING",
+      "kind": "CANDLE",
+      "position": 1
+    },
+    {
+      "id": 2,
+      "shelfKey": "list_1",
+      "kind": "CAT",
+      "position": 2
+    }
+  ],
+  "requests": [
+    {
+      "id": "req-1",
+      "incoming": true,
+      "bookRemoteId": 3,
+      "bookTitle": "Dune",
+      "bookAuthors": "Frank Herbert",
+      "peerId": "22222222-2222-4222-8222-222222222222",
+      "peerName": "Ben",
+      "note": "Für die Ferien?",
+      "status": "ACCEPTED",
+      "createdAt": 1795227200000,
+      "answeredAt": 1795313600000
+    },
+    {
+      "id": "req-2",
+      "incoming": false,
+      "bookRemoteId": 7,
+      "bookTitle": "Emma",
+      "peerId": "22222222-2222-4222-8222-222222222222",
+      "peerName": "Ben",
+      "createdAt": 1795400000000
+    }
+  ],
+  "prefs": {
+    "profileName": "Anna",
+    "shareRatings": false,
+    "minutesPerPage": 2.0,
+    "theme": "custom:moor",
+    "customThemes": [
+      {
+        "id": "moor",
+        "name": "Moor",
+        "background": -15723248,
+        "card": -14932964,
+        "accent": -8665985,
+        "text": -1511192
+      }
+    ],
+    "viewMode": "SPINES",
+    "sort": "TITLE",
+    "motion": false
+  }
+}

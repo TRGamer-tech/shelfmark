@@ -1,0 +1,421 @@
+{
+ "@context": "http://lobid.org/resources/context.jsonld",
+ "id": "http://lobid.org/resources/search?q=vorleser+AND+schlink&filter=type:Book&format=json&size=4",
+ "totalItems": 86,
+ "member": [
+  {
+   "@context": "http://lobid.org/resources/context.jsonld",
+   "id": "http://lobid.org/resources/990114370120206441#!",
+   "type": [
+    "BibliographicResource",
+    "Book"
+   ],
+   "medium": [
+    {
+     "label": "Print",
+     "id": "http://rdaregistry.info/termList/RDAproductionMethod/1010"
+    }
+   ],
+   "title": "Bernhard Schlink, Der Vorleser",
+   "almaMmsId": "990114370120206441",
+   "hbzId": "HT013110642",
+   "deprecatedUri": "http://lobid.org/resources/HT013110642#!",
+   "isbn": [
+    "3888055210",
+    "9783888055218"
+   ],
+   "oclcNumber": [
+    "76186634"
+   ],
+   "alternativeTitle": [
+    "Der Vorleser"
+   ],
+   "otherTitleInformation": [
+    "Kommentare, Diskussionsaspekte und Anregungen für produktionsorientiertes Lesen"
+   ],
+   "edition": [
+    "1. Aufl"
+   ],
+   "publication": [
+    {
+     "dateStatement": "2000",
+     "startDate": "2000",
+     "type": [
+      "PublicationEvent"
+     ],
+     "location": [
+      "Hollfeld"
+     ],
+     "publishedBy": [
+      "Beyer"
+     ]
+    }
+   ],
+   "natureOfContent": [
+    {
+     "label": "Lehrmittel",
+     "id": "https://d-nb.info/gnd/4074111-4"
+    }
+   ],
+   "subjectslabels": [
+    "Schlink, Bernhard: Der Vorleser",
+    "Deutschunterricht"
+   ],
+   "isPartOf": [
+    {
+     "hasSuperordinate": [
+      {
+       "id": "http://lobid.org/resources/HT007307847#!",
+       "label": "Blickpunkt"
+      }
+     ],
+     "numbering": "521",
+     "type": [
+      "IsPartOfRelation"
+     ]
+    }
+   ],
+   "tableOfContents": [
+    {
+     "label": "Inhaltsverzeichnis",
+     "id": "https://digitale-objekte.hbz-nrw.de/storage2/2025/08/16/file_58/9961056.pdf"
+    }
+   ],
+   "containsExampleOfWork": [
+    {
+     "label": "Der Vorleser",
+     "creatorOfWork": "Schlink, Bernhard 1944-",
+     "type": [
+      "Work"
+     ]
+    }
+   ],
+   "language": [
+    {
+     "id": "http://id.loc.gov/vocabulary/iso639-2/ger",
+     "label": "Deutsch"
+    }
+   ],
+   "extent": "57 S. : graph. Darst. ; 17 cm",
+   "note": [
+    "Literaturangaben"
+   ],
+   "bibliographicLevel": {
+    "label": "Monograph/Item",
+    "id": "https://www.loc.gov/marc/bibliographic/bdleader.html#Monograph_Item"
+   },
+   "responsibilityStatement": [
+    "Cerstin Urban"
+   ],
+   "contribution": [
+    {
+     "agent": {
+      "label": "Urban, Cerstin",
+      "type": [
+       "Person"
+      ]
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    },
+    {
+     "agent": {
+      "gndIdentifier": "115673784",
+      "id": "https://d-nb.info/gnd/115673784",
+      "label": "Schlink, Bernhard",
+      "type": [
+       "Person"
+      ],
+      "dateOfBirth": "1944"
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    }
+   ]
+  },
+  {
+   "@context": "http://lobid.org/resources/context.jsonld",
+   "id": "http://lobid.org/resources/990171792930206441#!",
+   "type": [
+    "BibliographicResource",
+    "Book"
+   ],
+   "medium": [
+    {
+     "label": "Print",
+     "id": "http://rdaregistry.info/termList/RDAproductionMethod/1010"
+    }
+   ],
+   "title": "Erläuterungen zu Bernhard Schlink, Der Vorleser",
+   "almaMmsId": "990171792930206441",
+   "hbzId": "HT015736509",
+   "deprecatedUri": "http://lobid.org/resources/HT015736509#!",
+   "isbn": [
+    "9783804417557",
+    "3804417558"
+   ],
+   "oclcNumber": [
+    "228139710"
+   ],
+   "alternativeTitle": [
+    "Der Vorleser"
+   ],
+   "edition": [
+    "6. Aufl"
+   ],
+   "publication": [
+    {
+     "dateStatement": "2008",
+     "startDate": "2008",
+     "type": [
+      "PublicationEvent"
+     ],
+     "location": [
+      "Hollfeld"
+     ],
+     "publishedBy": [
+      "Bange"
+     ]
+    }
+   ],
+   "natureOfContent": [
+    {
+     "label": "Lehrmittel",
+     "id": "https://d-nb.info/gnd/4074111-4"
+    }
+   ],
+   "subjectslabels": [
+    "Schlink, Bernhard: Der Vorleser",
+    "Deutschunterricht"
+   ],
+   "isPartOf": [
+    {
+     "hasSuperordinate": [
+      {
+       "id": "http://lobid.org/resources/HT002161684#!",
+       "label": "Königs Erläuterungen und Materialien"
+      }
+     ],
+     "numbering": "403",
+     "type": [
+      "IsPartOfRelation"
+     ]
+    }
+   ],
+   "tableOfContents": [
+    {
+     "label": "Inhaltsverzeichnis",
+     "id": "https://digitale-objekte.hbz-nrw.de/storage/2012/12/04/file_58/4792592.pdf"
+    }
+   ],
+   "containsExampleOfWork": [
+    {
+     "label": "Der Vorleser",
+     "creatorOfWork": "Schlink, Bernhard 1944-",
+     "type": [
+      "Work"
+     ]
+    }
+   ],
+   "language": [
+    {
+     "id": "http://id.loc.gov/vocabulary/iso639-2/ger",
+     "label": "Deutsch"
+    }
+   ],
+   "extent": "111 S. ; 16 cm",
+   "note": [
+    "Literatur-, URL-Verz. und Filmogr. S. 107 - 111"
+   ],
+   "bibliographicLevel": {
+    "label": "Monograph/Item",
+    "id": "https://www.loc.gov/marc/bibliographic/bdleader.html#Monograph_Item"
+   },
+   "responsibilityStatement": [
+    "von Magret Möckel"
+   ],
+   "contribution": [
+    {
+     "agent": {
+      "gndIdentifier": "123444756",
+      "id": "https://d-nb.info/gnd/123444756",
+      "label": "Möckel, Magret",
+      "type": [
+       "Person"
+      ],
+      "dateOfBirth": "1952"
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    },
+    {
+     "agent": {
+      "gndIdentifier": "115673784",
+      "id": "https://d-nb.info/gnd/115673784",
+      "label": "Schlink, Bernhard",
+      "type": [
+       "Person"
+      ],
+      "dateOfBirth": "1944"
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    }
+   ]
+  },
+  {
+   "@context": "http://lobid.org/resources/context.jsonld",
+   "id": "http://lobid.org/resources/990109708730206441#!",
+   "type": [
+    "BibliographicResource",
+    "Book"
+   ],
+   "medium": [
+    {
+     "label": "Print",
+     "id": "http://rdaregistry.info/termList/RDAproductionMethod/1010"
+    }
+   ],
+   "title": "Erläuterungen zu Bernhard Schlink, Der Vorleser",
+   "almaMmsId": "990109708730206441",
+   "hbzId": "HT012819448",
+   "deprecatedUri": "http://lobid.org/resources/HT012819448#!",
+   "isbn": [
+    "380441687X",
+    "9783804416871"
+   ],
+   "oclcNumber": [
+    "611092609"
+   ],
+   "alternativeTitle": [
+    "Der Vorleser / Bernhard Schlink"
+   ],
+   "edition": [
+    "1. Aufl"
+   ],
+   "publication": [
+    {
+     "dateStatement": "2000",
+     "startDate": "2000",
+     "type": [
+      "PublicationEvent"
+     ],
+     "location": [
+      "Hollfeld"
+     ],
+     "publishedBy": [
+      "Bange"
+     ]
+    }
+   ],
+   "natureOfContent": [
+    {
+     "label": "Lehrmittel",
+     "id": "https://d-nb.info/gnd/4074111-4"
+    }
+   ],
+   "subjectslabels": [
+    "Schlink, Bernhard: Der Vorleser",
+    "Deutschunterricht"
+   ],
+   "isPartOf": [
+    {
+     "hasSuperordinate": [
+      {
+       "id": "http://lobid.org/resources/HT001252925#!",
+       "label": "Königs Erläuterungen und Materialien"
+      }
+     ],
+     "numbering": "403",
+     "type": [
+      "IsPartOfRelation"
+     ]
+    }
+   ],
+   "tableOfContents": [
+    {
+     "label": "Inhaltsverzeichnis",
+     "id": "https://digitale-objekte.hbz-nrw.de/storage2/2025/08/11/file_173/9935266.pdf"
+    }
+   ],
+   "containsExampleOfWork": [
+    {
+     "label": "Der Vorleser",
+     "creatorOfWork": "Schlink, Bernhard 1944-",
+     "type": [
+      "Work"
+     ]
+    }
+   ],
+   "language": [
+    {
+     "id": "http://id.loc.gov/vocabulary/iso639-2/ger",
+     "label": "Deutsch"
+    }
+   ],
+   "extent": "104 S.",
+   "bibliographicLevel": {
+    "label": "Monograph/Item",
+    "id": "https://www.loc.gov/marc/bibliographic/bdleader.html#Monograph_Item"
+   },
+   "responsibilityStatement": [
+    "von Magret Möckel"
+   ],
+   "contribution": [
+    {
+     "agent": {
+      "label": "Möckel, Magret",
+      "type": [
+       "Person"
+      ]
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    },
+    {
+     "agent": {
+      "gndIdentifier": "115673784",
+      "id": "https://d-nb.info/gnd/115673784",
+      "label": "Schlink, Bernhard",
+      "type": [
+       "Person"
+      ],
+      "dateOfBirth": "1944"
+     },
+     "role": {
+      "id": "http://id.loc.gov/vocabulary/relators/aut",
+      "label": "Autor/in"
+     },
+     "type": [
+      "Contribution"
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,383 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<zs:searchRetrieveResponse xmlns:zs="http://www.loc.gov/zing/srw/"><zs:version>1.1</zs:version><zs:numberOfRecords>7</zs:numberOfRecords><zs:records><zs:record><zs:recordSchema>marcxml</zs:recordSchema><zs:recordPacking>xml</zs:recordPacking><zs:recordData><record xmlns="http://www.loc.gov/MARC21/slim">
+  <leader>     cam a22     2c 4500</leader>
+  <controlfield tag="001">1924437333</controlfield>
+  <controlfield tag="003">DE-627</controlfield>
+  <controlfield tag="005">20260706102202.0</controlfield>
+  <controlfield tag="007">tu</controlfield>
+  <controlfield tag="008">250502s2025    sz |||||      00| ||ger c</controlfield>
+  <datafield tag="015" ind1=" " ind2=" ">
+    <subfield code="a">25,N15</subfield>
+    <subfield code="2">dnb</subfield>
+  </datafield>
+  <datafield tag="015" ind1=" " ind2=" ">
+    <subfield code="a">26,A24</subfield>
+    <subfield code="2">dnb</subfield>
+  </datafield>
+  <datafield tag="016" ind1="7" ind2=" ">
+    <subfield code="a">1362348996</subfield>
+    <subfield code="2">DE-101</subfield>
+  </datafield>
+  <datafield tag="020" ind1=" " ind2=" ">
+    <subfield code="a">9783257073690</subfield>
+    <subfield code="q"> : Festeinband : circa EUR 19.00 (DE), circa EUR 19.60 (AT), circa CHF 26.00 (freier Preis)</subfield>
+    <subfield code="9">978-3-257-07369-0</subfield>
+  </datafield>
+  <datafield tag="024" ind1="3" ind2=" ">
+    <subfield code="a">9783257073690</subfield>
+  </datafield>
+  <datafield tag="028" ind1="5" ind2="2">
+    <subfield code="a">562/07369</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(DE-627)1924437333</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(DE-599)DNB1362348996</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(OCoLC)1594642989</subfield>
+  </datafield>
+  <datafield tag="040" ind1=" " ind2=" ">
+    <subfield code="a">DE-627</subfield>
+    <subfield code="b">ger</subfield>
+    <subfield code="c">DE-627</subfield>
+    <subfield code="e">rda</subfield>
+  </datafield>
+  <datafield tag="041" ind1=" " ind2=" ">
+    <subfield code="a">ger</subfield>
+  </datafield>
+  <datafield tag="044" ind1=" " ind2=" ">
+    <subfield code="c">XA-CH</subfield>
+  </datafield>
+  <datafield tag="082" ind1="0" ind2="4">
+    <subfield code="a">830</subfield>
+    <subfield code="a">B</subfield>
+    <subfield code="q">DE-101</subfield>
+  </datafield>
+  <datafield tag="084" ind1=" " ind2=" ">
+    <subfield code="a">18.10</subfield>
+    <subfield code="2">bkl</subfield>
+  </datafield>
+  <datafield tag="084" ind1=" " ind2=" ">
+    <subfield code="a">17.97</subfield>
+    <subfield code="2">bkl</subfield>
+  </datafield>
+  <datafield tag="100" ind1="1" ind2=" ">
+    <subfield code="a">Schlink, Bernhard</subfield>
+    <subfield code="d">1944-</subfield>
+    <subfield code="e">VerfasserIn</subfield>
+    <subfield code="0">(DE-588)115673784</subfield>
+    <subfield code="0">(DE-627)077397622</subfield>
+    <subfield code="0">(DE-576)16292089X</subfield>
+    <subfield code="4">aut</subfield>
+  </datafield>
+  <datafield tag="240" ind1="1" ind2="4">
+    <subfield code="a">Der Vorleser</subfield>
+    <subfield code="0">(DE-588)4535518-6</subfield>
+    <subfield code="0">(DE-627)266220517</subfield>
+    <subfield code="0">(DE-576)213450380</subfield>
+  </datafield>
+  <datafield tag="245" ind1="1" ind2="4">
+    <subfield code="a">Der Vorleser</subfield>
+    <subfield code="b">Roman</subfield>
+    <subfield code="c">Bernhard Schlink</subfield>
+  </datafield>
+  <datafield tag="264" ind1=" " ind2="1">
+    <subfield code="a">Zürich</subfield>
+    <subfield code="b">Diogenes</subfield>
+    <subfield code="c">[2025]</subfield>
+  </datafield>
+  <datafield tag="300" ind1=" " ind2=" ">
+    <subfield code="a">206 Seiten</subfield>
+    <subfield code="c">19 cm</subfield>
+  </datafield>
+  <datafield tag="336" ind1=" " ind2=" ">
+    <subfield code="a">Text</subfield>
+    <subfield code="b">txt</subfield>
+    <subfield code="2">rdacontent</subfield>
+  </datafield>
+  <datafield tag="337" ind1=" " ind2=" ">
+    <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+    <subfield code="b">n</subfield>
+    <subfield code="2">rdamedia</subfield>
+  </datafield>
+  <datafield tag="338" ind1=" " ind2=" ">
+    <subfield code="a">Band</subfield>
+    <subfield code="b">nc</subfield>
+    <subfield code="2">rdacarrier</subfield>
+  </datafield>
+  <datafield tag="490" ind1="0" ind2=" ">
+    <subfield code="a">Modern classics</subfield>
+  </datafield>
+  <datafield tag="655" ind1=" " ind2="7">
+    <subfield code="a">Fiktionale Darstellung</subfield>
+    <subfield code="0">(DE-588)1071854844</subfield>
+    <subfield code="0">(DE-627)82648378X</subfield>
+    <subfield code="0">(DE-576)43337439X</subfield>
+    <subfield code="2">gnd-content</subfield>
+  </datafield>
+  <datafield tag="689" ind1="0" ind2="0">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4018202-2</subfield>
+    <subfield code="0">(DE-627)104270705</subfield>
+    <subfield code="0">(DE-576)208923209</subfield>
+    <subfield code="a">Frau</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="0" ind2="1">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4167616-6</subfield>
+    <subfield code="0">(DE-627)105423890</subfield>
+    <subfield code="0">(DE-576)209909978</subfield>
+    <subfield code="a">Liebesbeziehung</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="0" ind2="2">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4072431-1</subfield>
+    <subfield code="0">(DE-627)10609520X</subfield>
+    <subfield code="0">(DE-576)209186984</subfield>
+    <subfield code="a">Heranwachsender</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="0" ind2=" ">
+    <subfield code="5">DE-101</subfield>
+  </datafield>
+  <datafield tag="689" ind1="1" ind2="0">
+    <subfield code="D">g</subfield>
+    <subfield code="0">(DE-588)4011889-7</subfield>
+    <subfield code="0">(DE-627)104732423</subfield>
+    <subfield code="0">(DE-576)208896201</subfield>
+    <subfield code="a">Deutschland</subfield>
+    <subfield code="g">Bundesrepublik</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="1" ind2="1">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4032352-3</subfield>
+    <subfield code="0">(DE-627)10626219X</subfield>
+    <subfield code="0">(DE-576)208996451</subfield>
+    <subfield code="a">Konzentrationslager</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="1" ind2="2">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4342624-4</subfield>
+    <subfield code="0">(DE-627)153672412</subfield>
+    <subfield code="0">(DE-576)21143602X</subfield>
+    <subfield code="a">Aufseherin</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="1" ind2="3">
+    <subfield code="D">s</subfield>
+    <subfield code="0">(DE-588)4057803-3</subfield>
+    <subfield code="0">(DE-627)106149431</subfield>
+    <subfield code="0">(DE-576)209123753</subfield>
+    <subfield code="a">Strafverfolgung</subfield>
+    <subfield code="2">gnd</subfield>
+  </datafield>
+  <datafield tag="689" ind1="1" ind2=" ">
+    <subfield code="5">DE-101</subfield>
+  </datafield>
+  <datafield tag="710" ind1="2" ind2=" ">
+    <subfield code="a">Diogenes Verlag</subfield>
+    <subfield code="e">Verlag</subfield>
+    <subfield code="0">(DE-588)2009154-0</subfield>
+    <subfield code="0">(DE-627)101645236</subfield>
+    <subfield code="0">(DE-576)191641006</subfield>
+    <subfield code="4">pbl</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257800043</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257692174</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257070668</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257261349</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257229530</subfield>
+  </datafield>
+  <datafield tag="776" ind1="1" ind2=" ">
+    <subfield code="z">9783257600421</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="n">Tonträger-Ausgabe</subfield>
+    <subfield code="z">9783257800043</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="z">9783257692174</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="n">Druck-Ausgabe</subfield>
+    <subfield code="z">9783257070668</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="n">Druck-Ausgabe</subfield>
+    <subfield code="z">9783257261349</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="n">Druck-Ausgabe</subfield>
+    <subfield code="z">9783257229530</subfield>
+  </datafield>
+  <datafield tag="776" ind1="0" ind2="8">
+    <subfield code="i">Erscheint auch als</subfield>
+    <subfield code="n">Online-Ausgabe</subfield>
+    <subfield code="z">9783257600421</subfield>
+  </datafield>
+  <datafield tag="856" ind1="4" ind2="2">
+    <subfield code="u">https://deposit.dnb.de/cgi-bin/dokserv?id=b24b809e658b467daf580e28f1a6b7b1</subfield>
+    <subfield code="m">X:MVB</subfield>
+    <subfield code="q">text/html</subfield>
+    <subfield code="x">Verlag</subfield>
+    <subfield code="3">Inhaltstext</subfield>
+    <subfield code="7">1</subfield>
+  </datafield>
+  <datafield tag="924" ind1="0" ind2=" ">
+    <subfield code="a">4980071074</subfield>
+    <subfield code="b">DE-Ma9</subfield>
+    <subfield code="9">Ma 9</subfield>
+    <subfield code="c">GBV</subfield>
+    <subfield code="d">c</subfield>
+    <subfield code="g">2026.00239:1</subfield>
+    <subfield code="h">FH</subfield>
+  </datafield>
+  <datafield tag="936" ind1="b" ind2="k">
+    <subfield code="a">18.10</subfield>
+    <subfield code="j">Deutsche Literatur</subfield>
+    <subfield code="0">(DE-627)106405047</subfield>
+  </datafield>
+  <datafield tag="936" ind1="b" ind2="k">
+    <subfield code="a">17.97</subfield>
+    <subfield code="j">Texte eines einzelnen Autors</subfield>
+    <subfield code="0">(DE-627)181571714</subfield>
+  </datafield>
+  <datafield tag="951" ind1=" " ind2=" ">
+    <subfield code="a">BO</subfield>
+  </datafield>
+</record></zs:recordData><zs:recordPosition>1</zs:recordPosition></zs:record><zs:record><zs:recordSchema>marcxml</zs:recordSchema><zs:recordPacking>xml</zs:recordPacking><zs:recordData><record xmlns="http://www.loc.gov/MARC21/slim">
+  <leader>     cam a22     2c 4500</leader>
+  <controlfield tag="001">1849499632</controlfield>
+  <controlfield tag="003">DE-627</controlfield>
+  <controlfield tag="005">20250113003339.0</controlfield>
+  <controlfield tag="007">tu</controlfield>
+  <controlfield tag="008">230615s2018    gw |||||      00| ||ger c</controlfield>
+  <datafield tag="020" ind1=" " ind2=" ">
+    <subfield code="a">9783257229530</subfield>
+    <subfield code="9">978-3-257-22953-0</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(DE-627)1849499632</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(DE-599)KXP1849499632</subfield>
+  </datafield>
+  <datafield tag="035" ind1=" " ind2=" ">
+    <subfield code="a">(OCoLC)1246208668</subfield>
+  </datafield>
+  <datafield tag="040" ind1=" " ind2=" ">
+    <subfield code="a">DE-627</subfield>
+    <subfield code="b">ger</subfield>
+    <subfield code="c">DE-627</subfield>
+    <subfield code="e">rda</subfield>
+  </datafield>
+  <datafield tag="041" ind1=" " ind2=" ">
+    <subfield code="a">ger</subfield>
+    <subfield code="h">ger</subfield>
+  </datafield>
+  <datafield tag="044" ind1=" " ind2=" ">
+    <subfield code="c">XA-DE</subfield>
+  </datafield>
+  <datafield tag="084" ind1=" " ind2=" ">
+    <subfield code="a">LIT 280</subfield>
+    <subfield code="2">sfb</subfield>
+  </datafield>
+  <datafield tag="100" ind1="1" ind2=" ">
+    <subfield code="8">1\p</subfield>
+    <subfield code="a">Schlink, Bernhard</subfield>
+    <subfield code="d">1944-</subfield>
+    <subfield code="e">VerfasserIn</subfield>
+    <subfield code="0">(DE-588)115673784</subfield>
+    <subfield code="0">(DE-627)077397622</subfield>
+    <subfield code="0">(DE-576)16292089X</subfield>
+    <subfield code="4">aut</subfield>
+  </datafield>
+  <datafield tag="245" ind1="1" ind2="4">
+    <subfield code="a">Der Vorleser</subfield>
+    <subfield code="b">Roman</subfield>
+    <subfield code="c">Bernhard Schlink</subfield>
+  </datafield>
+  <datafield tag="264" ind1=" " ind2="1">
+    <subfield code="a">Zürich</subfield>
+    <subfield code="b">Diogenes</subfield>
+    <subfield code="c">2018</subfield>
+  </datafield>
+  <datafield tag="300" ind1=" " ind2=" ">
+    <subfield code="a">206 Seiten</subfield>
+  </datafield>
+  <datafield tag="336" ind1=" " ind2=" ">
+    <subfield code="a">Text</subfield>
+    <subfield code="b">txt</subfield>
+    <subfield code="2">rdacontent</subfield>
+  </datafield>
+  <datafield tag="337" ind1=" " ind2=" ">
+    <subfield code="a">ohne Hilfsmittel zu benutzen</subfield>
+    <subfield code="b">n</subfield>
+    <subfield code="2">rdamedia</subfield>
+  </datafield>
+  <datafield tag="338" ind1=" " ind2=" ">
+    <subfield code="a">Band</subfield>
+    <subfield code="b">nc</subfield>
+    <subfield code="2">rdacarrier</subfield>
+  </datafield>
+  <datafield tag="490" ind1="0" ind2=" ">
+    <subfield code="a">Diogenes-Taschenbuch</subfield>
+    <subfield code="v">22953</subfield>
+  </datafield>
+  <datafield tag="520" ind1=" " ind2=" ">
+    <subfield code="a">Als 15jähriger verliebt sich Michael in eine ältere Frau. Es entwickelt sich eine heimliche Liebesbeziehung bis Hannah eines Tages verschwindet. Jahre später sieht er sie als Angeklagte in einem Naziverbrecher-Prozess wieder</subfield>
+  </datafield>
+  <datafield tag="883" ind1=" " ind2=" ">
+    <subfield code="8">1\p</subfield>
+    <subfield code="a">cgwrk</subfield>
+    <subfield code="d">20241001</subfield>
+    <subfield code="q">DE-101</subfield>
+    <subfield code="u">https://d-nb.info/provenance/plan#cgwrk</subfield>
+  </datafield>
+  <datafield tag="924" ind1="0" ind2=" ">
+    <subfield code="a">4338149000</subfield>
+    <subfield code="b">DE-115</subfield>
+    <subfield code="9">115</subfield>
+    <subfield code="c">GBV</subfield>
+    <subfield code="d">c</subfield>
+    <subfield code="g">Schlin, B</subfield>
+    <subfield code="h">Stadtbibliothek</subfield>
+  </datafield>
+  <datafield tag="924" ind1="0" ind2=" ">
+    <subfield code="a">4507449235</subfield>
+    <subfield code="b">DE-M504151</subfield>
+    <subfield code="9">M 504151</subfield>
+    <subfield code="c">BSZ</subfield>
+    <subfield code="d">d</subfield>
+  </datafield>
+  <datafield tag="924" ind1="0" ind2=" ">
+    <subfield code="a">4687451993</subfield>
+    <subfield code="b">DE-M504204</subfield>
+    <subfield code="9">M 504204</subfield>
+    <subfield code="c">BSZ</subfield>
+    <subfield code="d">d</subfield>
+  </datafield>
+  <datafield tag="951" ind1=" " ind2=" ">
+    <subfield code="a">BO</subfield>
+  </datafield>
+</record></zs:recordData><zs:recordPosition>2</zs:recordPosition></zs:record></zs:records><zs:echoedSearchRetrieveRequest><zs:version>1.1</zs:version><zs:query>pica.isb=9783257229530</zs:query><zs:maximumRecords>2</zs:maximumRecords><zs:recordPacking>xml</zs:recordPacking><zs:recordSchema>marcxml</zs:recordSchema></zs:echoedSearchRetrieveRequest></zs:searchRetrieveResponse>

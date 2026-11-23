@@ -39,3 +39,6 @@ keystore.properties
 
 # OS files
 .DS_Store
+
+# Pictures the website tests take of themselves. The ones worth keeping are in docs/screenshots.
+web/e2e/screenshots/

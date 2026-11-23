@@ -1,0 +1,47 @@
+{
+  "app": "shelfmark",
+  "v": 1,
+  "type": "library",
+  "library": {
+    "ownerId": "11111111-1111-4111-8111-111111111111",
+    "ownerName": "Anna",
+    "createdAt": 1795400000000,
+    "includesStatus": false,
+    "includesRatings": false,
+    "books": [
+      {
+        "id": 1,
+        "title": "Der Vorleser",
+        "authors": "Bernhard Schlink",
+        "isbn": "9783257229530",
+        "coverUrl": "https://covers.openlibrary.org/b/id/10527919-L.jpg",
+        "pages": 206,
+        "format": "PAPERBACK",
+        "description": "Sie ist reizbar, rätselhaft und viel älter als er.",
+        "available": true
+      },
+      {
+        "id": 2,
+        "title": "Der Prozess",
+        "authors": "Franz Kafka",
+        "pages": 256,
+        "format": "PAPERBACK"
+      },
+      {
+        "id": 3,
+        "title": "Dune",
+        "authors": "Frank Herbert",
+        "pages": 896,
+        "format": "HARDCOVER"
+      },
+      {
+        "id": 5,
+        "title": "Momo",
+        "authors": "Michael Ende",
+        "pages": 480,
+        "format": "AUDIOBOOK",
+        "ownership": "BORROWED"
+      }
+    ]
+  }
+}
