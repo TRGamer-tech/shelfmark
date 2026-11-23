@@ -14,6 +14,7 @@ import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.LendRequest
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ornament
+import ch.schmidtbit.shelfmark.data.model.OutboxMessage
 import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Quote
@@ -244,6 +245,30 @@ interface SocialDao {
 
     @Query("DELETE FROM friends WHERE id = :id")
     suspend fun deleteFriend(id: String)
+
+    @Query("SELECT * FROM friends WHERE online = 1")
+    suspend fun onlineFriends(): List<Friend>
+
+    @Query("UPDATE friends SET online = 1, serverAt = :at WHERE id = :id")
+    suspend fun markOnline(id: String, at: Long)
+
+    @Query("UPDATE friends SET online = 0, serverAt = 0")
+    suspend fun markAllOffline()
+
+    @Query("SELECT * FROM outbox ORDER BY id")
+    suspend fun outbox(): List<OutboxMessage>
+
+    @Query("SELECT COUNT(*) FROM outbox")
+    fun observeOutboxCount(): Flow<Int>
+
+    @Insert
+    suspend fun enqueue(message: OutboxMessage): Long
+
+    @Query("DELETE FROM outbox WHERE id = :id")
+    suspend fun dequeue(id: Long)
+
+    @Query("DELETE FROM outbox")
+    suspend fun clearOutbox()
 
     @Query("SELECT * FROM lend_requests ORDER BY createdAt DESC")
     fun observeRequests(): Flow<List<LendRequest>>

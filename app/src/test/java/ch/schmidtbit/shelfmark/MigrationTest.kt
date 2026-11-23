@@ -63,6 +63,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO sessions (id, bookId, startedAt, startPage, endPage, minutes, note) VALUES (1, 7, 4000, 0, 50, 60.0, '')")
             db.execSQL("INSERT INTO shelves (id, name, position, createdAt) VALUES (3, 'Favoriten', 0, 5000)")
             db.execSQL("INSERT INTO book_shelf (bookId, shelfId) VALUES (7, 3)")
+            db.execSQL("INSERT INTO friends (id, name, sharedAt, importedAt, includesStatus, includesRatings) VALUES ('friend-1', 'Ben', 6000, 7000, 1, 0)")
         }
 
         val db = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
@@ -83,6 +84,16 @@ class MigrationTest {
             assertEquals(14.9, db.purchases().observeForBook(7).first().single().price, 0.0)
             db.ornaments().insert(ch.schmidtbit.shelfmark.data.model.Ornament(shelfKey = "READ", kind = OrnamentKind.TROPHY, position = 1))
             assertEquals(OrnamentKind.TROPHY, db.ornaments().all().single().kind)
+
+            // Version 3: a friend from before is simply not connected through the server, and there is an outbox.
+            val friend = db.social().getFriend("friend-1")!!
+            assertEquals("Ben", friend.name)
+            assertEquals(false, friend.online)
+            assertEquals(0L, friend.serverAt)
+            db.social().markOnline("friend-1", 99)
+            assertEquals(listOf("friend-1"), db.social().onlineFriends().map { it.id })
+            db.social().enqueue(ch.schmidtbit.shelfmark.data.model.OutboxMessage(toId = "friend-1", payload = "{}"))
+            assertEquals(1, db.social().outbox().size)
         } finally {
             db.close()
         }

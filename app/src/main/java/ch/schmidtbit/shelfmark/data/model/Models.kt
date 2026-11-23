@@ -1,5 +1,6 @@
 package ch.schmidtbit.shelfmark.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -223,6 +224,20 @@ data class Friend(
     val importedAt: Long,
     val includesStatus: Boolean,
     val includesRatings: Boolean,
+    /** True when this friend is connected through the server, so nothing has to be sent by hand. */
+    @ColumnInfo(defaultValue = "0") val online: Boolean = false,
+    /** Version (server time in ms) of the library that was last fetched from the server. */
+    @ColumnInfo(defaultValue = "0") val serverAt: Long = 0,
+)
+
+/** Something for a friend that waits for the next connection to the server. */
+@Entity(tableName = "outbox")
+data class OutboxMessage(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val toId: String,
+    /** The envelope as JSON. */
+    val payload: String,
+    val createdAt: Long = System.currentTimeMillis(),
 )
 
 data class FriendWithCount(

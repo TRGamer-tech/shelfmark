@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.security.SecureRandom
 import java.util.UUID
 
 /** How the library is drawn: covers on shelf boards, spines side by side, or a plain list. */
@@ -39,6 +40,24 @@ data class Settings(
     val timer: TimerState? = null,
     /** Themes the user built from four colours. Selected with the key "custom:" plus the id. */
     val customThemes: List<CustomTheme> = emptyList(),
+    /** Gentle movement on the shelf: flickering candles, drifting dust, books settling in. */
+    val motion: Boolean = true,
+    /** A server of one's own instead of the one the app was built for. Both empty means the built-in one. */
+    val serverUrl: String = "",
+    val serverKey: String = "",
+    /** The user chose to share the library through the server. */
+    val online: Boolean = false,
+    /** What a friend types in to connect with me. Known once connected. */
+    val friendCode: String = "",
+    /** Proves to the server that this phone is this profile. Never leaves the phone except to the server. */
+    val serverSecret: String = "",
+    /** Server address and name the profile was last registered with. */
+    val registeredAs: String = "",
+    /** Fingerprint of the library version the server has. */
+    val publishedHash: String = "",
+    val lastSyncAt: Long = 0,
+    /** Epoch day of the last daily check that keeps the server awake. */
+    val lastPingDay: Long = 0,
 ) {
     companion object {
         const val THEME_SYSTEM = "system"
@@ -102,6 +121,16 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
                 )
             },
             customThemes = decodeThemes(p[CUSTOM_THEMES]),
+            motion = p[MOTION] ?: true,
+            serverUrl = p[SERVER_URL].orEmpty(),
+            serverKey = p[SERVER_KEY].orEmpty(),
+            online = p[ONLINE] ?: false,
+            friendCode = p[FRIEND_CODE].orEmpty(),
+            serverSecret = p[SERVER_SECRET].orEmpty(),
+            registeredAs = p[REGISTERED_AS].orEmpty(),
+            publishedHash = p[PUBLISHED_HASH].orEmpty(),
+            lastSyncAt = p[LAST_SYNC] ?: 0,
+            lastPingDay = p[LAST_PING] ?: 0,
         )
     }
 
@@ -116,6 +145,50 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         }
         return id
     }
+
+    /** Returns the secret that proves this phone's identity to the server, creating it on first use. */
+    suspend fun ensureServerSecret(): String {
+        var secret = ""
+        store.edit { p ->
+            secret = p[SERVER_SECRET].orEmpty().ifBlank {
+                val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+                bytes.joinToString("") { "%02x".format(it) }
+            }
+            p[SERVER_SECRET] = secret
+        }
+        return secret
+    }
+
+    suspend fun setMotion(value: Boolean) { store.edit { it[MOTION] = value } }
+
+    /** Points the app at another server. The link to the old one is forgotten. */
+    suspend fun setServer(url: String, key: String) {
+        store.edit { p ->
+            p[SERVER_URL] = url.trim().trimEnd('/')
+            p[SERVER_KEY] = key.trim()
+            p[ONLINE] = false
+            listOf(FRIEND_CODE, REGISTERED_AS, PUBLISHED_HASH).forEach { p.remove(it) }
+        }
+    }
+
+    suspend fun setOnline(value: Boolean) {
+        store.edit { p ->
+            p[ONLINE] = value
+            if (!value) listOf(FRIEND_CODE, REGISTERED_AS, PUBLISHED_HASH, LAST_SYNC).forEach { p.remove(it) }
+        }
+    }
+
+    suspend fun setRegistered(registeredAs: String, code: String) {
+        store.edit { p ->
+            p[REGISTERED_AS] = registeredAs
+            p[FRIEND_CODE] = code
+        }
+    }
+
+    suspend fun setFriendCode(code: String) { store.edit { it[FRIEND_CODE] = code } }
+    suspend fun setPublishedHash(hash: String) { store.edit { it[PUBLISHED_HASH] = hash } }
+    suspend fun setLastSync(at: Long) { store.edit { it[LAST_SYNC] = at } }
+    suspend fun setLastPingDay(day: Long) { store.edit { it[LAST_PING] = day } }
 
     suspend fun setTheme(key: String) { store.edit { it[THEME] = key } }
     suspend fun setViewMode(value: ViewMode) { store.edit { it[VIEW] = value.name } }
@@ -185,6 +258,16 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val TIMER_STARTED = longPreferencesKey("timer_started")
         val TIMER_PAGE = intPreferencesKey("timer_page")
         val CUSTOM_THEMES = stringPreferencesKey("custom_themes")
+        val MOTION = booleanPreferencesKey("motion")
+        val SERVER_URL = stringPreferencesKey("server_url")
+        val SERVER_KEY = stringPreferencesKey("server_key")
+        val ONLINE = booleanPreferencesKey("online")
+        val FRIEND_CODE = stringPreferencesKey("friend_code")
+        val SERVER_SECRET = stringPreferencesKey("server_secret")
+        val REGISTERED_AS = stringPreferencesKey("registered_as")
+        val PUBLISHED_HASH = stringPreferencesKey("published_hash")
+        val LAST_SYNC = longPreferencesKey("last_sync")
+        val LAST_PING = longPreferencesKey("last_ping_day")
         val themeJson = Json { ignoreUnknownKeys = true }
     }
 }

@@ -19,6 +19,10 @@ import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import ch.schmidtbit.shelfmark.data.repo.CoverStore
 import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
+import ch.schmidtbit.shelfmark.data.repo.ServerSync
+import ch.schmidtbit.shelfmark.data.server.HttpPoster
+import ch.schmidtbit.shelfmark.data.server.OkHttpPoster
+import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
 import ch.schmidtbit.shelfmark.data.model.Book
@@ -41,6 +45,9 @@ class AppContainer(
     lookupOverride: BookLookup? = null,
     settingsStore: DataStore<Preferences>? = null,
     private val coverProbeOverride: ImageProbe? = null,
+    /** The server this build talks to. Tests pass their own, a real build takes it from the build settings. */
+    serverConfig: ServerConfig? = ServerConfig.of(BuildConfig.SERVER_URL, BuildConfig.SERVER_KEY),
+    serverPoster: HttpPoster? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -76,6 +83,9 @@ class AppContainer(
             )
         }
     }
+
+    /** Friends through the server. Does nothing until a server is set up and the user connects. */
+    val server = ServerSync(database, settings, social, serverConfig, serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) })
 
     val coverFinder: CoverFinder by lazy { CoverFinder(lookup, coverProbeOverride ?: OkHttpImageProbe(httpClient)) }
 

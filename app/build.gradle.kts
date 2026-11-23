@@ -20,6 +20,22 @@ val keystoreProps = Properties().apply {
 fun signing(property: String, variable: String): String? =
     keystoreProps.getProperty(property)?.takeIf { it.isNotBlank() } ?: System.getenv(variable)?.takeIf { it.isNotBlank() }
 
+// The server for friends (a Supabase project): its address and its public key. Both are
+// meant to be in every copy of the app, so they are no secrets, but they are not in the
+// repository either. They come from local.properties (shelfmark.serverUrl, shelfmark.serverKey),
+// from -P properties of the same names, or from the environment. Without them the app is
+// built without a server and friends exchange files, or enter a server in the settings.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun server(property: String, variable: String): String =
+    (providers.gradleProperty(property).orNull ?: localProps.getProperty(property) ?: System.getenv(variable)).orEmpty().trim()
+
+val serverUrl = server("shelfmark.serverUrl", "SHELFMARK_SUPABASE_URL").trimEnd('/')
+val serverKey = server("shelfmark.serverKey", "SHELFMARK_SUPABASE_KEY")
+
 val signingStore = signing("storeFile", "SHELFMARK_KEYSTORE_FILE")
 val signingPassword = signing("storePassword", "SHELFMARK_KEYSTORE_PASSWORD")
 
@@ -34,8 +50,10 @@ android {
         minSdk = 26
         targetSdk = 36
         // Raise versionCode with every release, Android refuses to install a lower one over a higher one.
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
+        buildConfigField("String", "SERVER_URL", "\"" + serverUrl.replace("\"", "") + "\"")
+        buildConfigField("String", "SERVER_KEY", "\"" + serverKey.replace("\"", "") + "\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The text recognition library is about 10 MB per processor type. 32 bit Intel
         // phones no longer exist, x86_64 stays for emulators.

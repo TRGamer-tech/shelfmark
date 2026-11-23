@@ -67,7 +67,9 @@ class SocialRepository(private val db: AppDatabase, private val settings: Settin
             val books = ShareCodec.toFriendBooks(library)
             db.withTransaction {
                 // Replacing the friend row cascades to the old snapshot of their books.
-                db.social().upsertFriend(friend)
+                // Whether the friend is connected through the server is not part of a library and stays.
+                val before = db.social().getFriend(friend.id)
+                db.social().upsertFriend(friend.copy(online = before?.online ?: false, serverAt = before?.serverAt ?: 0))
                 db.social().clearFriendBooks(friend.id)
                 db.social().insertFriendBooks(books)
             }
@@ -170,6 +172,8 @@ class SocialRepository(private val db: AppDatabase, private val settings: Settin
     }
 
     suspend fun deleteFriend(id: String) = db.social().deleteFriend(id)
+    suspend fun getFriend(id: String): Friend? = db.social().getFriend(id)
+    suspend fun getRequest(id: String): LendRequest? = db.social().getRequest(id)
     suspend fun deleteRequest(id: String) = db.social().deleteRequest(id)
 
     private suspend fun requestMessage(request: LendRequest, me: String) = LendRequestMsg(

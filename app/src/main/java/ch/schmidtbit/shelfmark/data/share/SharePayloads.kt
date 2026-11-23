@@ -18,6 +18,7 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -130,6 +131,11 @@ object ShareCodec {
     }
 
     fun encode(envelope: Envelope): String = json.encodeToString(Envelope.serializer(), envelope.copy(app = Envelope.APP))
+
+    /** The same content as [encode], as a tree, for sending inside another JSON document. */
+    fun encodeElement(envelope: Envelope): JsonElement = json.encodeToJsonElement(Envelope.serializer(), envelope.copy(app = Envelope.APP))
+
+    fun decodeElement(element: JsonElement): Envelope? = decode(element.toString())
 
     /** Returns null for anything that is not a Shelfmark file. */
     fun decode(text: String): Envelope? {
