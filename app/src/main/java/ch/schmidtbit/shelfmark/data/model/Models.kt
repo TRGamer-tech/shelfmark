@@ -277,6 +277,7 @@ data class FriendBook(
 )
 
 /** A borrow request, either one I sent (incoming = false) or one a friend sent me. */
+@Serializable
 @Entity(tableName = "lend_requests")
 data class LendRequest(
     @PrimaryKey val id: String,

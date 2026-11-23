@@ -6,6 +6,8 @@ import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
 import ch.schmidtbit.shelfmark.data.model.Goal
+import ch.schmidtbit.shelfmark.data.model.LendRequest
+import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ornament
 import ch.schmidtbit.shelfmark.data.model.Purchase
@@ -108,7 +110,25 @@ data class LendAnswerMsg(
     val answeredAt: Long,
 )
 
-/** Full export of the user's own data, used by backup and restore. */
+/**
+ * The settings that belong to the person rather than to one device, so that phone and
+ * website agree on them: the name, what friends may see, the reading speed, the theme.
+ */
+@Serializable
+data class VaultPrefs(
+    val profileName: String = "",
+    val shareStatus: Boolean = true,
+    val shareRatings: Boolean = true,
+    val minutesPerPage: Float = 1.5f,
+    val theme: String = "system",
+    val customThemes: List<CustomTheme> = emptyList(),
+)
+
+/**
+ * Full export of the user's own data. It is the backup file, and it is the document that
+ * an account keeps on the server so that every device shows the same library
+ * (see supabase/README.md).
+ */
 @Serializable
 data class BackupPayload(
     val exportedAt: Long,
@@ -121,6 +141,9 @@ data class BackupPayload(
     val goals: List<Goal> = emptyList(),
     val purchases: List<Purchase> = emptyList(),
     val ornaments: List<Ornament> = emptyList(),
+    /** Borrow requests, mine and those of friends. Kept here so that every device of an account shows them. */
+    val requests: List<LendRequest> = emptyList(),
+    val prefs: VaultPrefs? = null,
 )
 
 object ShareCodec {
