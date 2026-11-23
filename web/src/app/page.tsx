@@ -7,8 +7,8 @@ import { Landing } from "@/components/landing/Landing";
 import { frontMetadata, frontViewport } from "@/components/landing/meta";
 import { newestRelease } from "@/lib/release";
 
-// Built ahead of time, and renewed every ten minutes for the version of the app it names.
-export const revalidate = 600;
+// Built ahead of time, and renewed every five minutes for the version of the app it names.
+export const revalidate = 300;
 
 export const metadata: Metadata = frontMetadata("en");
 export const viewport: Viewport = frontViewport;

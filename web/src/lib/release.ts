@@ -86,31 +86,34 @@ export function releaseListAddress(base: string | undefined): string {
   return root + LIST_PATH;
 }
 
-// What was learned last, kept for as long as this server process lives. It carries the
-// site over the minutes in which GitHub does not answer or has had enough of being asked.
-let remembered: { at: number; release: Release } | null = null;
-const FRESH_MS = 10 * 60_000;
+// The last good answer this server process got. It is only a net for the minutes in which
+// GitHub does not answer or has had enough of being asked, never a reason not to ask:
+// how fresh the answer is, is decided in one place, the cache of the request below, which
+// the page and the download link share. Two memories would let the page name a version
+// while the link still hands out the one before.
+let remembered: Release | null = null;
+/** How long one answer of GitHub is good for, in seconds. */
+const FRESH_SECONDS = 300;
 
 /**
  * Asks GitHub for the newest release. Never throws: when GitHub cannot be asked, the
  * last good answer is given, and null when there never was one. The page then speaks
  * without a version number and the download leads to the list of releases.
  */
-export async function newestRelease(now: number = Date.now()): Promise<Release | null> {
-  if (remembered && now - remembered.at < FRESH_MS) return remembered.release;
+export async function newestRelease(): Promise<Release | null> {
   try {
     const response = await fetch(releaseListAddress(process.env.SHELFMARK_GITHUB_API), {
       headers: { Accept: "application/vnd.github+json" },
-      // The page that shows the version is built ahead of time and renewed at this pace.
-      next: { revalidate: 600 },
+      // Kept by the server for five minutes, for every page and route that asks.
+      next: { revalidate: FRESH_SECONDS },
       signal: AbortSignal.timeout(5000),
     } as RequestInit);
     if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
     const release = pickRelease(await response.json());
-    if (release) remembered = { at: now, release };
-    return release ?? remembered?.release ?? null;
+    if (release) remembered = release;
+    return release ?? remembered;
   } catch {
-    return remembered?.release ?? null;
+    return remembered;
   }
 }
 

@@ -95,34 +95,40 @@ function play(answer: () => Response | Promise<Response>): string[] {
   return asked;
 }
 
-test("GitHub is asked once and the answer is kept for ten minutes", async () => {
-  const asked = play(() => new Response(fixture("github_releases.json"), { status: 200 }));
-  const t0 = 1_800_000_000_000;
-  assert.equal((await newestRelease(t0))?.version, "1.3.0");
-  assert.equal((await newestRelease(t0 + 9 * 60_000))?.version, "1.3.0");
-  assert.equal(asked.length, 1);
-  assert.ok(asked[0].endsWith("/repos/TRGamer-tech/shelfmark/releases?per_page=5"));
-  await newestRelease(t0 + 11 * 60_000);
+test("the list of releases is asked for, with a cache that the page and the link share", async () => {
+  const asked: { address: string; revalidate: unknown }[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit & { next?: { revalidate?: number } }) => {
+    asked.push({ address: String(input), revalidate: init?.next?.revalidate });
+    return new Response(fixture("github_releases.json"), { status: 200 });
+  }) as typeof fetch;
+  assert.equal((await newestRelease())?.version, "1.3.0");
+  assert.equal((await newestRelease())?.version, "1.3.0");
+  // No second memory in front of the request: how fresh the answer is, is decided by its cache alone.
   assert.equal(asked.length, 2);
+  assert.ok(asked[0].address.endsWith("/repos/TRGamer-tech/shelfmark/releases?per_page=5"));
+  assert.equal(asked[0].revalidate, 300);
 });
 
 test("when GitHub cannot be asked there is no release, and nothing is thrown", async () => {
   play(() => {
     throw new TypeError("fetch failed");
   });
-  assert.equal(await newestRelease(1), null);
+  assert.equal(await newestRelease(), null);
   play(() => new Response('{"message":"API rate limit exceeded"}', { status: 403 }));
-  assert.equal(await newestRelease(2), null);
+  assert.equal(await newestRelease(), null);
   play(() => new Response("<html>not json</html>", { status: 200 }));
-  assert.equal(await newestRelease(3), null);
+  assert.equal(await newestRelease(), null);
   // The download then leads to the page that lists the releases.
   assert.equal(RELEASES_PAGE, "https://github.com/TRGamer-tech/shelfmark/releases");
 });
 
 test("the last good answer carries over the time GitHub does not answer", async () => {
   play(() => new Response(fixture("github_releases.json"), { status: 200 }));
-  const t0 = 1_800_000_000_000;
-  await newestRelease(t0);
+  await newestRelease();
   play(() => new Response("{}", { status: 500 }));
-  assert.equal((await newestRelease(t0 + 60 * 60_000))?.version, "1.3.0");
+  assert.equal((await newestRelease())?.version, "1.3.0");
+  play(() => {
+    throw new TypeError("fetch failed");
+  });
+  assert.equal((await newestRelease())?.version, "1.3.0");
 });

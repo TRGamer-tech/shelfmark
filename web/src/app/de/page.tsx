@@ -6,7 +6,7 @@ import { Landing } from "@/components/landing/Landing";
 import { frontMetadata, frontViewport } from "@/components/landing/meta";
 import { newestRelease } from "@/lib/release";
 
-export const revalidate = 600;
+export const revalidate = 300;
 
 export const metadata: Metadata = frontMetadata("de");
 export const viewport: Viewport = frontViewport;

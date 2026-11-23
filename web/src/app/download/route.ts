@@ -4,7 +4,7 @@
 import { NextResponse } from "next/server";
 import { RELEASES_PAGE, newestRelease } from "@/lib/release";
 
-// Asked on every visit. What GitHub said is remembered for ten minutes inside newestRelease.
+// Asked on every visit. What GitHub said is kept for five minutes, see newestRelease.
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {

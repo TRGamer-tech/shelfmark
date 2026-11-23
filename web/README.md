@@ -138,8 +138,9 @@ that file to prove that the app understands what the website writes.
   too old or was used before leads to the sign-in page, which says what to do.
 - `/download` redirects to the newest `.apk` among the releases of the project on
   GitHub, pre-releases included, and to the list of releases when GitHub cannot be
-  asked. The front page names the version and size from the same answer, renewed every
-  ten minutes, and speaks without them when it knows nothing. The build needs no network.
+  asked. The front page names the version and size from the same answer, which is kept
+  for five minutes in one place for both, and speaks without them when it knows nothing.
+  The build needs no network.
 
 ## What the website leaves to the phone
 
