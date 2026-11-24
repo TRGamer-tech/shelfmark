@@ -1,6 +1,7 @@
 package ch.schmidtbit.shelfmark
 
 import android.content.Intent
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -24,7 +25,11 @@ import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.GoalKind
 import ch.schmidtbit.shelfmark.data.model.GoalRepeat
-import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanAction
+import ch.schmidtbit.shelfmark.data.model.LoanNews
+import ch.schmidtbit.shelfmark.data.model.LoanNewsKind
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.Purchase
@@ -36,6 +41,7 @@ import ch.schmidtbit.shelfmark.data.remote.BookSource
 import ch.schmidtbit.shelfmark.data.remote.ImageProbe
 import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
+import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.work.Notifier
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
@@ -49,12 +55,14 @@ import com.github.takahirom.roborazzi.captureScreenRoboImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -185,6 +193,12 @@ class AppFlowTest {
     }
 
     private fun tap(tag: String) { waitForTag(tag); pause(); compose.onAllNodesWithTag(tag).onFirst().performClick() }
+    /** A step of a loan. Its button stays switched off until the step before it is through, and a tap on it then is lost. */
+    private fun tapStep(tag: String) {
+        waitFor { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().firstOrNull()?.let { SemanticsProperties.Disabled !in it.config } == true }
+        tap(tag)
+    }
+
     private fun tapText(text: String) { waitForText(text); pause(); compose.onAllNodesWithText(text, substring = true).onFirst().performClick() }
     private fun type(tag: String, text: String) { waitForTag(tag); compose.onNodeWithTag(tag).performTextInput(text) }
     private fun retype(tag: String, text: String) { waitForTag(tag); compose.onNodeWithTag(tag).performTextReplacement(text) }
@@ -196,11 +210,15 @@ class AppFlowTest {
         compose.mainClock.autoAdvance = false
     }
 
+    /** Scrolls a list to one of its items. The item may only be about to appear, so this waits for it. */
     private fun scrollListTo(listTag: String, tag: String) {
         waitForTag(listTag)
-        compose.mainClock.autoAdvance = true
-        compose.onNodeWithTag(listTag).performScrollToNode(hasTestTag(tag))
-        compose.mainClock.autoAdvance = false
+        waitFor {
+            compose.mainClock.autoAdvance = true
+            val there = runCatching { compose.onNodeWithTag(listTag).performScrollToNode(hasTestTag(tag)) }.isSuccess
+            compose.mainClock.autoAdvance = false
+            there
+        }
     }
 
     private fun openBook(title: String) {
@@ -235,6 +253,59 @@ class AppFlowTest {
     private fun clearShared() = File(app.cacheDir, "shared").listFiles()?.forEach { it.delete() }
 
     private fun shareIntentOf(text: String) = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+
+    private fun hasTag(tag: String, unmerged: Boolean = false) = compose.onAllNodesWithTag(tag, useUnmergedTree = unmerged).fetchSemanticsNodes().isNotEmpty()
+    private fun hasText(text: String) = compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
+
+    private fun loans(): List<Loan> = runBlocking { container.social.loans.first() }
+
+    /** Has the app look at the server now, as the reader would with the button for it. Not waited for: the screens show when it is done. */
+    private fun lookAtServer() { container.launch { container.refreshFriends(force = true) } }
+
+    /** What stands in the notification shade: title and the line below it. */
+    private fun notifications(): Set<Pair<String, String?>> =
+        shadowOf(app.getSystemService(android.app.NotificationManager::class.java)).allNotifications
+            .map { shadowOf(it).contentTitle.toString() to shadowOf(it).contentText?.toString() }.toSet()
+
+    private fun clearNotifications() = app.getSystemService(android.app.NotificationManager::class.java).cancelAll()
+
+    private fun latestToast(): String? = org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+
+    /**
+     * Has the app do [block] and waits for it while the main thread keeps turning. The app's
+     * own coroutines live on the main thread and read the same settings as its sync does.
+     * Blocking that thread until the sync is done ends, about once in twenty tries, with the
+     * sync waiting for a coroutine that waits for the main thread.
+     */
+    private fun <T> appDoes(block: suspend () -> T): T {
+        val work = scope.async { block() }
+        val giveUp = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+        while (!work.isCompleted) {
+            ShadowLooper.idleMainLooper()
+            Thread.sleep(1)
+            check(System.nanoTime() < giveUp) { "The app did not get done with what it was asked to do." }
+        }
+        return runBlocking { work.await() }
+    }
+
+    /**
+     * Gives the app an account of its own and makes [friends] its friends, before the screens
+     * are up. Call after [useServer] and before [start]. Returns the id of the app's account.
+     */
+    private fun signUpWithFriends(name: String, vararg friends: Phone): String = appDoes {
+        container.settings.setProfileName(name)
+        assertTrue(container.server.signUp(myEmail, myPassword) is SyncResult.Done)
+        val code = container.settings.current().friendCode
+        friends.forEach { friend ->
+            if (!friend.settings.current().signedIn) friend.join()
+            friend.server.addFriend(code).getOrThrow()
+        }
+        assertTrue(container.server.sync() is SyncResult.Done)
+        container.settings.current().userId
+    }
+
+    /** A book as it stands on the shelf of the app's account, seen from a friend's phone. */
+    private fun Phone.onMyShelf(me: String, title: String) = runBlocking { social.friendBooks(me).first().first { it.title == title } }
 
     /** A friend's phone, reduced to its data layer. */
     private inner class Friend(name: String) {
@@ -482,7 +553,10 @@ class AppFlowTest {
         assertEquals("Momo", quote.bookTitle)
     }
 
-    @Test fun iBorrowFromAFriend() {
+    private val oldRequestFile =
+        """{"app":"shelfmark","v":1,"type":"lend_request","request":{"requestId":"req-1","bookId":1,"bookTitle":"Dune","fromId":"b","fromName":"Ben","toId":"a","note":"Für die Ferien?","createdAt":5}}"""
+
+    @Test fun aShelfFromAFileCanBeLookedAtButBorrowingNeedsAccounts() {
         runBlocking { container.settings.setProfileName("Ben") }
         val anna = Friend("Anna")
         runBlocking {
@@ -500,69 +574,57 @@ class AppFlowTest {
         waitForText("Ausleihbar")
         shot("71_friend_shelf")
 
-        // Her rating is visible, and the book can be asked for.
+        // Her rating is visible. Asking for the book is not on offer: a loan lives on the server, between two accounts.
         openBook("Dune")
         waitForTag("friendBookSheet")
         waitForText("Anna besitzt dieses Buch")
         waitForText("Sand überall.")
+        waitForTag("cannotAsk")
+        waitForText("Ausleihen geht von Konto zu Konto. Dieses Regal kam als Datei.")
+        assertTrue(!hasTag("askToBorrow"))
         shot("72_friend_book")
-        clearShared()
-        tap("askToBorrow")
-        val requestFile = lastSharedFile()
-        assertEquals(Intent.ACTION_CHOOSER, shadowOf(app).nextStartedActivity.action)
-        waitForTag("requestState")
-
-        // Anna opens the request and says yes.
-        val received = runBlocking { anna.social.import(requestFile) } as ImportResult.RequestReceived
-        assertEquals("Ben", received.fromName)
-        val answerFile = ShareCodec.encode(runBlocking { anna.social.answerRequest(received.requestId, accept = true) }!!)
-        assertEquals("Ben", runBlocking { anna.db.books().all() }.first { it.title == "Dune" }.lentTo)
-
-        // Her answer arrives here.
-        scenario!!.onActivity { it.deliver(shareIntentOf(answerFile)) }
-        waitForText("Anna hat Ja gesagt. Du kannst «Dune» ausleihen.")
-        shot("73_answer_received")
-        assertEquals(LendStatus.ACCEPTED, runBlocking { container.social.requests.first() }.single().status)
+        // The book can still be put on the wishlist.
+        tapText("Auf meine Wunschliste")
+        waitFor { books().singleOrNull()?.status == ReadingStatus.WISHLIST }
+        assertEquals(Ownership.NOT_OWNED, book("Dune").ownership)
+        assertTrue(loans().isEmpty())
     }
 
-    @Test fun aFriendBorrowsFromMe() {
-        val myDune = runBlocking {
+    @Test fun myShelfGoesOutAsAFileAndAnOldRequestIsCalledWhatItIs() {
+        runBlocking {
             container.settings.setProfileName("Anna")
             container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
         }
         start()
         tap("tabFriends")
         waitForText("Meine Bibliothek teilen")
+        // The loans are where the borrow requests were.
+        waitForTag("allLoans")
+        waitForText("Ausleihen")
         shot("80_friends")
         clearShared()
         tap("shareLibrary")
         val libraryFile = lastSharedFile()
 
-        // Ben opens my library and asks for Dune.
+        // Ben opens my library and sees what could be borrowed.
         val ben = Friend("Ben")
         val imported = runBlocking { ben.social.import(libraryFile) } as ImportResult.LibraryImported
         assertEquals("Anna", imported.name)
         val dune = runBlocking { ben.social.friendBooks(imported.friendId).first() }.single()
         assertTrue(dune.available)
-        val requestFile = ShareCodec.encode(runBlocking { ben.social.createRequest(dune, "Für die Ferien?") })
 
-        // His request arrives: one question, yes or no.
-        scenario!!.onActivity { it.deliver(shareIntentOf(requestFile)) }
-        waitForTag("requestDialog")
-        waitForText("Ben möchte «Dune» ausleihen. Einverstanden?")
-        waitForText("Für die Ferien?")
-        shot("81_borrow_request")
-        clearShared()
-        tap("dialogYes")
-        val answerFile = lastSharedFile()
-
-        // My copy is now marked as lent to Ben, and Ben gets his yes.
-        waitFor { runBlocking { container.library.getBook(myDune) }!!.lentTo == "Ben" }
-        val answer = runBlocking { ben.social.import(answerFile) } as ImportResult.AnswerReceived
-        assertTrue(answer.accepted)
-        tap("allRequests")
-        waitForText("Zugesagt")
-        shot("82_requests")
+        // His phone still has the version from before the loans, and sends a borrow request as a file.
+        // It is not mistaken for something else, and nothing comes of it.
+        scenario!!.onActivity { it.deliver(shareIntentOf(oldRequestFile)) }
+        waitForTag("importDialog")
+        waitForText("Diese Datei stammt aus einer älteren Version von Shelfmark. Ausleihen geht jetzt von Konto zu Konto, ohne Dateien.")
+        shot("81_old_request_file")
+        tapText("OK")
+        assertEquals("", book("Dune").lentTo)
+        scrollListTo("friends", "allLoans")
+        tap("allLoans")
+        waitForTag("loans")
+        waitForText("Noch keine Ausleihen")
     }
 
     @Test fun statisticsGoalsQuotesAndSettingsScreens() {
@@ -740,6 +802,10 @@ class AppFlowTest {
     private val benEmail = "ben@shelfmark.test"
     private val benPassword = "geheim-ben"
 
+    /** The account of the app itself, where a test does not care about signing up through the screens. */
+    private val myEmail = "ich@shelfmark.test"
+    private val myPassword = "geheim-ich"
+
     @Test fun friendsFindEachOtherThroughTheirAccounts() {
         useServer()
         runBlocking {
@@ -794,21 +860,19 @@ class AppFlowTest {
             waitForText("Ganz wunderbar.")
             clearShared()
             tap("askToBorrow")
-            waitFor { fakeServer.waitingFor(anna.email) == 1 }
+            waitFor { fakeServer.loanStatesOf(anna.email) == listOf("asked") }
             assertTrue(File(app.cacheDir, "shared").listFiles().isNullOrEmpty())
-            waitFor { org.robolectric.shadows.ShadowToast.getTextOfLatestToast() == "Gesendet" }
+            waitForTag("loanState")
+            waitForText("Warte auf Anna.")
 
             // Anna says yes on her phone, and the answer shows up here by itself.
             val asked = runBlocking { anna.server.sync() } as SyncResult.Done
-            assertEquals("Ben", asked.requests.single().fromName)
-            runBlocking { anna.server.send(fakeServer.idOf(benEmail), anna.social.answerRequest(asked.requests.single().requestId, accept = true)!!) }
-            scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            settle()
+            assertEquals("Ben", asked.news.single().loan.peerName)
+            assertNull(runBlocking { anna.server.loanAct(asked.news.single().loan.id, LoanAction.AGREE) })
             // Not runBlocking: the app may be in the middle of a sync of its own, which needs this very thread to go on.
-            container.launch { container.refreshFriends(force = true) }
-            waitFor { runBlocking { container.social.requests.first() }.singleOrNull()?.status == LendStatus.ACCEPTED }
-            // Once it has arrived, the server is told and drops its copy.
-            waitFor { fakeServer.waitingFor(benEmail) == 0 }
+            lookAtServer()
+            waitFor { loans().singleOrNull()?.state == LoanState.AGREED }
+            waitForText("Anna hat Ja gesagt. Das Buch ist für dich reserviert.")
         } finally {
             anna.close()
         }
@@ -818,7 +882,7 @@ class AppFlowTest {
     @Test fun aFriendIsAddedByCode() {
         useServer()
         val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
-        runBlocking {
+        appDoes {
             container.settings.setProfileName("Ben")
             anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
             anna.join()
@@ -1064,23 +1128,587 @@ class AppFlowTest {
         waitForTag("accountCard")
     }
 
-    @Test fun aRequestThatArrivesInTheBackgroundIsAnnounced() {
+    @Test fun iBorrowABookFromAFriendAndGiveItBack() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", pageCount = 474, description = "Schön, klug und reich.", lendable = true))
+            anna.join()
+        }
+        signUpWithFriends("Ben", anna)
+        try {
+            start()
+            tap("tabFriends")
+            scrollListTo("friends", "friendCard")
+            tap("friendCard")
+            waitForText("Ausleihbar")
+            openBook("Emma")
+            waitForTag("friendBookSheet")
+
+            // I ask, with a few words.
+            type("borrowNote", "Über die Feiertage?")
+            tap("askToBorrow")
+            waitFor { fakeServer.loanStatesOf(anna.email) == listOf("asked") }
+            waitForTag("loanState")
+            waitForText("Warte auf Anna.")
+            waitForText("«Über die Feiertage?»")
+            // From here on there is nothing to ask twice, only a question to take back.
+            assertTrue(!hasTag("askToBorrow"))
+            waitForTag("loan_withdraw")
+            shot("73_loan_asked")
+            val id = loans().single().id
+
+            // Anna says yes, back in three weeks. The book is reserved, and how the handover goes is said.
+            val due = Dates.today() + 21
+            runBlocking {
+                assertEquals("Über die Feiertage?", (anna.server.sync() as SyncResult.Done).news.single().loan.note)
+                assertNull(anna.server.loanAct(id, LoanAction.AGREE, due = due))
+            }
+            lookAtServer()
+            waitForText("Anna hat Ja gesagt. Das Buch ist für dich reserviert.")
+            waitForText("Zurück bis ${Dates.format(due)}")
+            waitForText("Macht die Übergabe unter euch ab. Zuerst bestätigt Anna, dann du.")
+            waitFor { ("Anna hat Ja gesagt zu «Emma»" to null) in notifications() }
+            assertTrue(books().isEmpty())
+
+            // She says she handed it over. Now it is my turn, and the phone says so.
+            runBlocking { assertNull(anna.server.loanAct(id, LoanAction.HAND)) }
+            lookAtServer()
+            waitForText("Anna sagt, das Buch sei dir übergeben worden. Hast du es?")
+            // One notification per loan: the newer step takes the place of the older one.
+            waitFor { notifications() == setOf<Pair<String, String?>>("Anna sagt, «Emma» sei dir übergeben worden" to "Öffne Shelfmark, um zu bestätigen.") }
+            waitForTag("loan_receive")
+            waitForTag("loan_not_received")
+            shot("74_loan_handed")
+
+            // Away from her shelf the question is not forgotten: a number on the tab, and the loan on top of the friends.
+            back()
+            waitFor { hasTag("loansBadge", unmerged = true) }
+            scrollListTo("friends", "loan_receive")
+            waitForText("Wartet auf deine Antwort")
+            waitForText("«Emma» von Anna")
+            tapStep("loan_receive")
+
+            // The book is mine to read: it stands on my shelf as borrowed.
+            waitFor { books().singleOrNull()?.ownership == Ownership.BORROWED }
+            val copy = book("Emma")
+            assertEquals("Anna", copy.borrowedFrom)
+            assertEquals(id, copy.loanId)
+            assertEquals("Schön, klug und reich.", copy.description)
+            waitFor { !hasTag("loansBadge", unmerged = true) }
+            waitFor { !hasTag("loanCard") }
+            // Anna's own book says who has it, once I said that I do.
+            runBlocking {
+                anna.server.sync()
+                assertEquals("Ben", anna.library.allBooks().single().lentTo)
+            }
+            // Her shelf tells me since when I have it, and how giving it back goes.
+            scrollListTo("friends", "friendCard")
+            tap("friendCard")
+            waitForText("Ausleihbar")
+            openBook("Emma")
+            waitForTag("friendBookSheet")
+            // The day is the day I said so, by the server's clock.
+            waitForText("Ausgeliehen von Anna seit ${Dates.format(Dates.dayOf(loans().single().receivedAt!!))}.")
+            waitForText("Wenn du das Buch zurückgibst, sag es hier. Anna bestätigt es dann.")
+            waitForTag("loan_give_back")
+
+            // On my shelf, and on its page: the loan is where "borrowed from" used to be typed in.
+            back()
+            tap("tabLibrary")
+            settle()
+            openBook("Emma")
+            waitForTag("bookOverview")
+            scrollListTo("bookOverview", "bookLoan")
+            waitForText("Ausgeliehen von Anna seit")
+            waitForText("Zurück bis ${Dates.format(due)}")
+            assertTrue(!hasTag("borrowedFrom"))
+            shot("75_borrowed_book")
+
+            // I give it back and say so. Until Anna has it, it is borrowed.
+            scrollListTo("bookOverview", "loan_give_back")
+            tapStep("loan_give_back")
+            waitFor { fakeServer.loanStatesOf(anna.email) == listOf("given_back") }
+            waitForText("Du hast gesagt, du hast es zurückgegeben. Warte auf die Bestätigung von Anna.")
+            waitForTag("loan_undo_give_back")
+            assertEquals(Ownership.BORROWED, book("Emma").ownership)
+
+            // She has it back. My copy stays as read, not mine.
+            runBlocking {
+                anna.server.sync()
+                assertNull(anna.server.loanAct(id, LoanAction.TAKE_BACK))
+                assertEquals("", anna.library.allBooks().single().lentTo)
+            }
+            lookAtServer()
+            waitFor { book("Emma").ownership == Ownership.NOT_OWNED }
+            waitForText("an Anna zurückgegeben.")
+            waitFor { ("Anna hat «Emma» zurück" to null) in notifications() }
+            assertEquals("Anna", book("Emma").borrowedFrom)
+            assertEquals(1, books().size)
+            shot("76_read_not_mine")
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun aFriendBorrowsABookFromMe() {
+        useServer()
+        val ben = Phone(app, folder, "Ben", fakeServer, serverConfig)
+        val myDune = runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        val me = signUpWithFriends("Anna", ben)
+        // Ben asks while my phone is in my pocket.
+        runBlocking { assertNull(ben.server.loanAsk(ben.onMyShelf(me, "Dune"), "Für die Ferien?")) }
+        try {
+            start()
+            // Opening the app is enough to hear of it: a notification, and a number on the tab.
+            waitFor { ("Ben möchte «Dune» ausleihen" to "Öffne Shelfmark, um zu bestätigen.") in notifications() }
+            waitFor { hasTag("loansBadge", unmerged = true) }
+            val id = loans().single().id
+            tap("tabFriends")
+            scrollListTo("friends", "loanCard")
+            waitForText("Wartet auf deine Antwort")
+            scrollListTo("friends", "loan_agree")
+            waitForText("«Dune» für Ben")
+            waitForText("Ben möchte dieses Buch ausleihen.")
+            waitForText("«Für die Ferien?»")
+            shot("82_loan_question")
+
+            // Yes, and back by a day: four weeks from now is what the calendar offers.
+            tapStep("loan_agree")
+            waitForTag("dueDialog")
+            waitForText("«Dune» an Ben verleihen?")
+            waitForText("Das Buch ist für Ben reserviert, bis du es übergibst.")
+            waitForText("Kein festes Datum")
+            tap("dueByDate")
+            tap("dueDayOk")
+            val due = Dates.today() + 28
+            waitFor { loans().single().let { it.state == LoanState.AGREED && it.dueOn == due } }
+            // Reserved is not lent: my book has not moved, but nobody else can ask for it.
+            assertEquals("", book("Dune").lentTo)
+            waitFor { !hasTag("loansBadge", unmerged = true) }
+            // My phone tells the server a moment after the tap, and Ben's shelf of my books follows.
+            waitFor { runBlocking { ben.server.sync(); !ben.onMyShelf(me, "Dune").available } }
+
+            // All loans are one tap away, sorted by what there is to do.
+            scrollListTo("friends", "allLoans")
+            tap("allLoans")
+            waitForTag("loans")
+            waitForText("Unterwegs")
+            waitForText("Reserviert für Ben.")
+            waitForText("Zurück bis ${Dates.format(due)}")
+            waitForTag("loan_cancel")
+            // The day can be changed for as long as the loan runs, also to none at all, and back.
+            tapStep("loan_set_due")
+            waitForTag("dueDialog")
+            waitForText("Bis wann möchtest du es zurück?")
+            tap("dueOpen")
+            waitFor { loans().single().dueOn == null }
+            waitForText("Kein festes Datum")
+            tapStep("loan_set_due")
+            tap("dueByDate")
+            tap("dueDayOk")
+            waitFor { loans().single().dueOn == due }
+            waitForText("Zurück bis ${Dates.format(due)}")
+            tapStep("loan_hand")
+            waitFor { loans().single().state == LoanState.HANDED }
+            waitForText("Du hast gesagt, du hast es übergeben. Warte auf die Bestätigung von Ben.")
+            waitForTag("loan_undo_hand")
+            assertEquals("", book("Dune").lentTo)
+
+            // Ben has it. Now it is lent, and my book says so.
+            runBlocking {
+                ben.server.sync()
+                assertNull(ben.server.loanAct(id, LoanAction.RECEIVE))
+            }
+            lookAtServer()
+            waitFor { book("Dune").lentTo == "Ben" }
+            // Since the day he said so, by the server's clock.
+            val since = Dates.dayOf(loans().single().receivedAt!!)
+            assertEquals(since, book("Dune").lentSince)
+            assertEquals(id, book("Dune").loanId)
+            waitForText("Verliehen an Ben seit ${Dates.format(since)}.")
+            waitFor { ("Ben hat «Dune» jetzt" to null) in notifications() }
+            shot("87_loan_lent")
+
+            // The page of my book shows the loan where the controls for lending by hand were.
+            tap("loanBook")
+            waitForTag("bookOverview")
+            scrollListTo("bookOverview", "bookLoan")
+            waitForText("Verliehen an Ben seit")
+            waitForTag("loan_close")
+            assertTrue(!hasTag("gotItBack") && !hasTag("lendable"))
+            assertTrue(!hasText("Als verliehen markieren"))
+            // A book that is out cannot be deleted: the loan would point at nothing.
+            compose.onAllNodesWithContentDescription("Mehr").onFirst().performClick()
+            tapText("Buch löschen")
+            waitForTag("deleteRefused")
+            waitForText("Dieses Buch gehört zu einer Ausleihe. Schliesse zuerst die Ausleihe ab")
+            tapText("OK")
+            waitFor { !hasTag("deleteRefused") }
+            assertEquals(1, books().size)
+
+            // He says he gave it back. I confirm, and the book is free again.
+            runBlocking { assertNull(ben.server.loanAct(id, LoanAction.GIVE_BACK)) }
+            lookAtServer()
+            waitForText("Ben sagt, das Buch sei zurückgegeben. Hast du es?")
+            waitFor { ("Ben sagt, «Dune» sei zurückgegeben" to "Öffne Shelfmark, um zu bestätigen.") in notifications() }
+            waitForTag("loan_not_returned")
+            shot("88_loan_back")
+            scrollListTo("bookOverview", "loan_take_back")
+            tapStep("loan_take_back")
+            waitFor { runBlocking { container.library.getBook(myDune) }!!.let { it.lentTo == "" && it.loanId == "" && it.lentSince == null } }
+            waitForTag("lendable")
+            waitForText("Als verliehen markieren")
+            assertEquals(listOf("returned"), fakeServer.loanStatesOf(myEmail))
+            // His copy stays with him as read, not his.
+            runBlocking {
+                ben.server.sync()
+                val copy = ben.library.allBooks().single()
+                assertEquals(Ownership.NOT_OWNED, copy.ownership)
+                assertEquals("Anna", copy.borrowedFrom)
+            }
+        } finally {
+            ben.close()
+        }
+    }
+
+    // A dialog with a text field: see the note on ownListsCanBeCreatedAndFilled.
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun sayingNoCanComeWithAReason() {
+        useServer()
+        val ben = Phone(app, folder, "Ben", fakeServer, serverConfig)
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        val me = signUpWithFriends("Anna", ben)
+        runBlocking { assertNull(ben.server.loanAsk(ben.onMyShelf(me, "Dune"), "")) }
+        try {
+            start()
+            tap("tabFriends")
+            scrollListTo("friends", "loan_decline")
+            tapStep("loan_decline")
+            waitForText("Ben absagen?")
+            type("loanReason", "Das lese ich gerade selbst.")
+            tap("loanConfirm")
+            waitFor { fakeServer.loanStatesOf(myEmail) == listOf("declined") }
+            // Ben reads why.
+            runBlocking {
+                assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.DECLINED), (ben.server.sync() as SyncResult.Done).news.map { it.kind })
+                assertEquals("Das lese ich gerade selbst.", ben.social.loans.first().single().reason)
+            }
+            // With me it is among the loans that are over, until I put it away.
+            waitFor { !hasTag("loanCard") }
+            scrollListTo("friends", "allLoans")
+            tap("allLoans")
+            waitForTag("loans")
+            waitForText("Früher")
+            waitForText("Du hast Ben abgesagt.")
+            waitForText("Grund: Das lese ich gerade selbst.")
+            tapStep("loan_hide")
+            waitFor { loans().isEmpty() }
+            waitForText("Noch keine Ausleihen")
+            // The book never moved.
+            assertEquals("", book("Dune").lentTo)
+        } finally {
+            ben.close()
+        }
+    }
+
+    // Dialogs with a text field: see the note on ownListsCanBeCreatedAndFilled.
+    @Config(sdk = [35], qualifiers = "de")
+    @Test fun aYesCanBeTakenBackAndABookThatIsOutLookedAfterByHand() {
+        useServer()
+        val ben = Phone(app, folder, "Ben", fakeServer, serverConfig)
+        val myDune = runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        val me = signUpWithFriends("Anna", ben)
+        fun benAsks(): String = runBlocking {
+            assertNull(ben.server.loanAsk(ben.onMyShelf(me, "Dune"), ""))
+            ben.social.loans.first().first().id
+        }
+        fun dune() = runBlocking { container.library.getBook(myDune)!! }
+        /** From the question to "handed over", on the screen with all the loans. */
+        fun sayYesAndHandOver(id: String) {
+            lookAtServer()
+            waitFor { loans().firstOrNull { it.id == id }?.state == LoanState.ASKED }
+            scrollListTo("loans", "loan_agree")
+            tapStep("loan_agree")
+            // No day is an answer like any other.
+            tap("dueOpen")
+            waitFor { loans().first { it.id == id }.let { it.state == LoanState.AGREED && it.dueOn == null } }
+            scrollListTo("loans", "loan_hand")
+            tapStep("loan_hand")
+            waitFor { loans().first { it.id == id }.state == LoanState.HANDED }
+        }
+        val first = benAsks()
+        try {
+            start()
+            tap("tabFriends")
+            scrollListTo("friends", "loan_agree")
+            tapStep("loan_agree")
+            tap("dueOpen")
+            waitFor { loans().singleOrNull()?.state == LoanState.AGREED }
+            scrollListTo("friends", "allLoans")
+            tap("allLoans")
+            waitForTag("loans")
+            waitForText("Reserviert für Ben.")
+            waitForText("Kein festes Datum")
+
+            // Then I need the book myself after all, and say so.
+            tapStep("loan_cancel")
+            waitForText("Zusage zurücknehmen?")
+            type("loanReason", "Ich brauche es doch selbst.")
+            tap("loanConfirm")
+            waitFor { fakeServer.loanStatesOf(myEmail) == listOf("cancelled") }
+            waitForText("Du hast die Zusage zurückgenommen.")
+            waitForText("Grund: Ich brauche es doch selbst.")
+            runBlocking {
+                ben.server.sync()
+                assertEquals("Ich brauche es doch selbst.", ben.social.loans.first().single().reason)
+            }
+            assertEquals(first, loans().single().id)
+
+            // The next time he gets it. It comes back without him ever saying so, and I close the loan myself.
+            val second = benAsks()
+            sayYesAndHandOver(second)
+            runBlocking {
+                ben.server.sync()
+                assertNull(ben.server.loanAct(second, LoanAction.RECEIVE))
+            }
+            lookAtServer()
+            waitFor { dune().loanId == second }
+            scrollListTo("loans", "loan_close")
+            tapStep("loan_close")
+            waitForText("Ben hat noch nicht gesagt, dass das Buch zurückgegeben wurde. Die Ausleihe trotzdem abschliessen?")
+            tap("loanConfirm")
+            waitFor { dune().let { it.lentTo == "" && it.loanId == "" } }
+            assertEquals(listOf("cancelled", "returned"), fakeServer.loanStatesOf(myEmail))
+
+            // The third time he has it, he deletes his account, and the loan is gone with it.
+            // The book is still with him: its page offers what it offers for a book lent by hand.
+            val third = benAsks()
+            sayYesAndHandOver(third)
+            runBlocking {
+                ben.server.sync()
+                assertNull(ben.server.loanAct(third, LoanAction.RECEIVE))
+            }
+            lookAtServer()
+            waitFor { dune().loanId == third }
+            runBlocking { assertTrue(ben.server.deleteAccount()) }
+            lookAtServer()
+            waitFor { loans().isEmpty() }
+            waitForText("Noch keine Ausleihen")
+            assertEquals("Ben", dune().lentTo)
+            assertEquals(third, dune().loanId)
+            back()
+            tap("tabLibrary")
+            settle()
+            openBook("Dune")
+            waitForTag("bookOverview")
+            scrollListTo("bookOverview", "gotItBack")
+            waitForText("Verliehen an Ben seit")
+            assertTrue(!hasTag("bookLoan"))
+            tap("gotItBack")
+            waitFor { dune().let { it.lentTo == "" && it.loanId == "" && it.lentSince == null } }
+            waitForTag("lendable")
+            // Saying that the book is something else than it was ends what such a loan left on it, too.
+            runBlocking { container.library.modify(myDune) { it.copy(lentTo = "Ben", loanId = third) } }
+            waitForTag("gotItBack")
+            scrollListTo("bookOverview", "own_NOT_OWNED")
+            tap("own_NOT_OWNED")
+            waitFor { dune().let { it.ownership == Ownership.NOT_OWNED && it.loanId == "" } }
+        } finally {
+            ben.close()
+        }
+    }
+
+    @Test fun whoComesSecondIsToldThatTheBookIsTaken() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        val cleo = Phone(app, folder, "Cleo", fakeServer, serverConfig)
+        runBlocking {
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen"))
+            anna.join()
+            cleo.join()
+            cleo.server.addFriend(anna.settings.current().friendCode).getOrThrow()
+        }
+        signUpWithFriends("Ben", anna)
+        try {
+            start()
+            tap("tabFriends")
+            scrollListTo("friends", "friendCard")
+            tap("friendCard")
+            waitForText("Ausleihbar")
+
+            // Cleo and I both ask for Emma. Anna says yes to Cleo.
+            openBook("Emma")
+            waitForTag("friendBookSheet")
+            tap("askToBorrow")
+            waitFor { fakeServer.loanStatesOf(myEmail) == listOf("asked") }
+            runBlocking {
+                assertNull(cleo.server.loanAsk(cleo.social.friendBooks(anna.id).first().first { it.title == "Emma" }, ""))
+                anna.server.sync()
+                assertNull(anna.server.loanAct(cleo.social.loans.first().single().id, LoanAction.AGREE))
+            }
+            lookAtServer()
+            // No waiting list: it went to somebody else, and I can ask again later.
+            waitForText("Jemand anderes hat es bekommen. Frag später nochmals.")
+            waitForText("Dieses Buch kann im Moment nicht ausgeliehen werden.")
+            assertTrue(!hasTag("askToBorrow"))
+            waitFor { ("«Emma» ging an jemand anderen" to null) in notifications() }
+            assertTrue(loans().single().taken)
+            shot("77_loan_taken")
+            back()
+
+            // Persuasion goes to Cleo a moment before I ask, on a device of Anna's that has not
+            // told anybody yet: my copy of her shelf still shows it as free. The server knows better.
+            runBlocking {
+                assertNull(cleo.server.loanAsk(cleo.social.friendBooks(anna.id).first().first { it.title == "Persuasion" }, ""))
+                val asAnna = ServerApi(serverConfig, fakeServer, anna.settings.current().accessToken)
+                asAnna.loanAct(asAnna.sync(emptyMap()).loans.first { it.title == "Persuasion" }.id, LoanAction.AGREE)
+            }
+            scrollListTo("friends", "friendCard")
+            tap("friendCard")
+            waitForText("Ausleihbar")
+            openBook("Persuasion")
+            waitForTag("friendBookSheet")
+            tap("askToBorrow")
+            waitFor { latestToast() == "Dieses Buch ist für jemand anderen reserviert oder verliehen." }
+            assertEquals(1, loans().size)
+            assertTrue(books().isEmpty())
+        } finally {
+            anna.close()
+            cleo.close()
+        }
+    }
+
+    @Test fun aBookThatIsDueIsRemindedOfOnce() {
+        useServer()
+        // Her phone lives in the same days as mine.
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig, clockDay = { Dates.today() })
+        runBlocking {
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.join()
+        }
+        val me = signUpWithFriends("Ben", anna)
+        val today = Dates.today()
+        // I have had Emma for a while, and today is the day Anna wanted it back by.
+        val id = appDoes {
+            assertNull(container.server.loanAsk(container.social.friendBooks(anna.id).first().single(), ""))
+            val id = container.social.loans.first().single().id
+            anna.server.sync()
+            assertNull(anna.server.loanAct(id, LoanAction.AGREE, due = today))
+            assertNull(anna.server.loanAct(id, LoanAction.HAND))
+            clearNotifications()
+            assertNull(container.server.loanAct(id, LoanAction.RECEIVE))
+            id
+        }
+        try {
+            // The phone says so, once.
+            assertEquals(setOf<Pair<String, String?>>("«Emma» ist bei Anna fällig" to "Heute fällig"), notifications())
+            clearNotifications()
+            appDoes { assertTrue(container.server.sync() is SyncResult.Done) }
+            assertTrue(notifications().isEmpty())
+            // Anna is reminded as well, in her words. Her phone is not the one with a screen here.
+            val hers = runBlocking { (anna.server.sync() as SyncResult.Done).due.single() }
+            assertEquals(1, Notifier.announce(app, SyncResult.Done(due = listOf(hers))))
+            assertEquals(setOf<Pair<String, String?>>("Ben wollte «Emma» bis jetzt zurückbringen" to "Heute fällig"), notifications())
+            clearNotifications()
+
+            // She moves the day, to one that is past already: another day, another reminder.
+            appDoes {
+                assertNull(anna.server.loanAct(id, LoanAction.SET_DUE, due = today - 3))
+                assertTrue(container.server.sync() is SyncResult.Done)
+            }
+            val late = "War am ${Dates.format(today - 3)} fällig"
+            assertEquals(setOf("Anna hat das Datum für «Emma» geändert" to null, "«Emma» ist bei Anna fällig" to late), notifications())
+
+            // Tapping it leads to the loans, where the book stands as overdue.
+            start(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_LOANS))
+            waitForTag("loans")
+            waitForText("Ausgeliehen")
+            waitForText("«Emma» von Anna")
+            waitForText(late)
+            waitForTag("loan_give_back")
+            shot("78_loan_overdue")
+            assertEquals(me, runBlocking { anna.social.loans.first().single().peerId })
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun whatAFriendDoesToALoanIsAnnounced() {
         val manager = app.getSystemService(android.app.NotificationManager::class.java)
-        val news = SyncResult.Done(
-            requests = listOf(ImportResult.RequestReceived("r1", "Anna", "Dune")),
-            answers = listOf(ImportResult.AnswerReceived(true, "Clara", "Emma")),
-        )
+        fun loan(id: String, lender: Boolean, peer: String, title: String, state: LoanState, reason: String = "") =
+            Loan(id = id, lender = lender, peerId = "p-$peer", peerName = peer, bookId = 1, title = title, state = state, reason = reason)
+        val asked = loan("loan-1", lender = true, peer = "Ben", title = "Dune", state = LoanState.ASKED)
+        val taken = loan("loan-2", lender = false, peer = "Clara", title = "Emma", state = LoanState.DECLINED, reason = "taken")
+        val news = SyncResult.Done(news = listOf(LoanNews(asked, LoanNewsKind.ASKED), LoanNews(taken, LoanNewsKind.TAKEN)))
         // Without the permission nothing is shown, and nothing breaks.
         assertEquals(0, Notifier.announce(app, news))
         shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         assertEquals(2, Notifier.announce(app, news))
-        val shown = shadowOf(manager).allNotifications.map { shadowOf(it).contentTitle.toString() to shadowOf(it).contentText.toString() }.toSet()
-        assertEquals(setOf("Anna möchte ein Buch ausleihen" to "Dune", "Clara hat Ja gesagt" to "Emma"), shown)
+        // A step that waits for my own tap says so. News that is only news does not.
+        assertEquals(setOf("Ben möchte «Dune» ausleihen" to "Öffne Shelfmark, um zu bestätigen.", "«Emma» ging an jemand anderen" to null), notifications())
         assertEquals(0, Notifier.announce(app, SyncResult.Done()))
 
-        // Tapping the notification leads to the requests.
-        start(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_REQUESTS))
-        waitForText("Noch keine Ausleih-Anfragen")
+        // The next step of the same loan takes the place of the last one: one notification per loan.
+        val handed = loan("loan-3", lender = false, peer = "Anna", title = "Momo", state = LoanState.HANDED)
+        assertEquals(1, Notifier.announce(app, SyncResult.Done(news = listOf(LoanNews(handed, LoanNewsKind.HANDED)))))
+        assertEquals(1, Notifier.announce(app, SyncResult.Done(news = listOf(LoanNews(asked.copy(state = LoanState.WITHDRAWN), LoanNewsKind.WITHDRAWN)))))
+        assertEquals(
+            setOf("Ben fragt nicht mehr nach «Dune»" to null, "«Emma» ging an jemand anderen" to null, "Anna sagt, «Momo» sei dir übergeben worden" to "Öffne Shelfmark, um zu bestätigen."),
+            notifications(),
+        )
+        // A tap that was taken back has no words. What was said about it is taken back with it.
+        assertEquals(0, Notifier.announce(app, SyncResult.Done(news = listOf(LoanNews(handed.copy(state = LoanState.AGREED), null)))))
+        assertEquals(2, shadowOf(manager).allNotifications.size)
+        // Somebody who gave no name is still somebody.
+        clearNotifications()
+        Notifier.announce(app, SyncResult.Done(news = listOf(LoanNews(asked.copy(peerName = ""), LoanNewsKind.ASKED))))
+        assertEquals(setOf<Pair<String, String?>>("Jemand möchte «Dune» ausleihen" to "Öffne Shelfmark, um zu bestätigen."), notifications())
+
+        // Tapping a notification leads to the loans.
+        start(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_LOANS))
+        waitForTag("loans")
+        waitForText("Noch keine Ausleihen")
+    }
+
+    @Test fun inFrontTheAppAsksTheServerOnceAMinuteAndInTheBackgroundNotAtAll() {
+        useServer()
+        val ben = Phone(app, folder, "Ben", fakeServer, serverConfig)
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        val me = signUpWithFriends("Anna", ben)
+        fun asked() = fakeServer.calls["shelfmark_sync"] ?: 0
+        val before = asked()
+        try {
+            start()
+            // Coming to the front asks at once.
+            waitFor { asked() > before }
+            // The app also saves a change to the library a few seconds after it. That is over before the minute is.
+            ShadowLooper.idleMainLooper(6, TimeUnit.SECONDS)
+            waitFor { !container.server.status.value.running }
+            settle()
+            val first = asked()
+            // Ben asks for a book. Nobody touches my phone, and a minute later it knows.
+            runBlocking { assertNull(ben.server.loanAsk(ben.onMyShelf(me, "Dune"), "")) }
+            ShadowLooper.idleMainLooper(61, TimeUnit.SECONDS)
+            waitFor { asked() > first }
+            waitFor { loans().singleOrNull()?.state == LoanState.ASKED }
+            waitFor { hasTag("loansBadge", unmerged = true) }
+            waitFor { !container.server.status.value.running }
+            settle()
+
+            // Out of sight the app asks nothing, however long.
+            scenario!!.moveToState(Lifecycle.State.CREATED)
+            val inBackground = asked()
+            ShadowLooper.idleMainLooper(10, TimeUnit.MINUTES)
+            settle()
+            assertEquals(inBackground, asked())
+            // Back in front it asks right away.
+            scenario!!.moveToState(Lifecycle.State.RESUMED)
+            waitFor { asked() > inBackground }
+        } finally {
+            ben.close()
+        }
     }
 
     @Test fun myOwnListsAreShelvesBelowTheOthers() {

@@ -2,8 +2,6 @@ package ch.schmidtbit.shelfmark
 
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookShelf
-import ch.schmidtbit.shelfmark.data.model.LendRequest
-import ch.schmidtbit.shelfmark.data.model.LendStatus
 import ch.schmidtbit.shelfmark.data.model.Ornament
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.data.model.Quote
@@ -21,8 +19,8 @@ import org.junit.Test
 class VaultMergeTest {
     private fun book(id: Long, title: String, updatedAt: Long = 100, rating: Float = 0f) = Book(id = id, title = title, rating = rating, addedAt = 1, updatedAt = updatedAt)
     private fun vault(vararg books: Book, shelves: List<Shelf> = emptyList(), links: List<BookShelf> = emptyList(), quotes: List<Quote> = emptyList(),
-                      ornaments: List<Ornament> = emptyList(), requests: List<LendRequest> = emptyList(), prefs: VaultPrefs? = null) =
-        BackupPayload(exportedAt = 0, books = books.toList(), shelves = shelves, links = links, quotes = quotes, ornaments = ornaments, requests = requests, prefs = prefs)
+                      ornaments: List<Ornament> = emptyList(), prefs: VaultPrefs? = null) =
+        BackupPayload(exportedAt = 0, books = books.toList(), shelves = shelves, links = links, quotes = quotes, ornaments = ornaments, prefs = prefs)
 
     @Test fun whatOnlyOneSideTouchedIsTaken() {
         val base = vault(book(1, "Emma"), book(2, "Dune"), book(3, "Momo"))
@@ -75,14 +73,10 @@ class VaultMergeTest {
         assertEquals(4f, merged.books.first { it.id == 2L }.rating)
     }
 
-    @Test fun anAnswerBeatsAQuestionAndSettingsFollowWhoChangedThem() {
-        val open = LendRequest(id = "r", incoming = true, bookRemoteId = 1, bookTitle = "Emma", peerId = "p", peerName = "Ben", createdAt = 5)
-        val answered = open.copy(status = LendStatus.ACCEPTED, answeredAt = 9)
-        val base = vault(requests = listOf(open), prefs = VaultPrefs(profileName = "Anna"))
-        val local = vault(requests = listOf(answered), prefs = VaultPrefs(profileName = "Anna"))
-        val remote = vault(requests = listOf(open), prefs = VaultPrefs(profileName = "Anna B."))
-        assertEquals(LendStatus.ACCEPTED, VaultMerge.merge(base, local, remote).requests.single().status)
-        assertEquals(LendStatus.ACCEPTED, VaultMerge.merge(base, remote, local).requests.single().status)
+    @Test fun settingsFollowWhoChangedThem() {
+        val base = vault(prefs = VaultPrefs(profileName = "Anna"))
+        val local = vault(prefs = VaultPrefs(profileName = "Anna"))
+        val remote = vault(prefs = VaultPrefs(profileName = "Anna B."))
         assertEquals("Anna B.", VaultMerge.merge(base, local, remote).prefs!!.profileName)
         assertEquals("Anna B.", VaultMerge.merge(base, remote, local).prefs!!.profileName)
         assertNull(VaultMerge.merge(null, vault(), vault()).prefs)

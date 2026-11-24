@@ -6,7 +6,6 @@ import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
 import ch.schmidtbit.shelfmark.data.model.Goal
-import ch.schmidtbit.shelfmark.data.model.LendRequest
 import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ornament
@@ -25,9 +24,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Everything Shelfmark users exchange travels as one small JSON file with this wrapper:
- * a library snapshot, a request to borrow a book, or the answer to such a request.
- * The files go through whatever messenger the friends already use, so no server is involved.
+ * What Shelfmark writes into a file, and what an account publishes for friends, travels as
+ * one small JSON document with this wrapper: a library snapshot, or a backup. A shelf can
+ * be shown to somebody as a file through any messenger. Borrowing needs both sides signed
+ * in, because a loan is a record on the server (see supabase/README.md).
  */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -36,17 +36,20 @@ data class Envelope(
     @EncodeDefault val v: Int = VERSION,
     val type: String,
     val library: SharedLibrary? = null,
-    val request: LendRequestMsg? = null,
-    val answer: LendAnswerMsg? = null,
     val backup: BackupPayload? = null,
 ) {
     companion object {
         const val APP = "shelfmark"
         const val VERSION = 1
         const val TYPE_LIBRARY = "library"
-        const val TYPE_REQUEST = "lend_request"
-        const val TYPE_ANSWER = "lend_answer"
         const val TYPE_BACKUP = "backup"
+
+        /**
+         * Borrow requests and their answers used to be files of these types. Nothing writes
+         * them any more. They are still known by name, so that somebody who opens one is
+         * told what it is instead of "not a Shelfmark file".
+         */
+        val OLD_REQUEST_TYPES = setOf("lend_request", "lend_answer")
     }
 }
 
@@ -72,7 +75,7 @@ data class SharedBook(
     val format: BookFormat = BookFormat.UNKNOWN,
     val description: String = "",
     val ownership: Ownership = Ownership.OWNED,
-    /** True when the owner would lend it and it is not out on loan. */
+    /** True when the owner would lend it, and it is neither lent out nor promised to somebody. */
     val available: Boolean = false,
     val status: ReadingStatus? = null,
     val shelves: List<String> = emptyList(),
@@ -81,33 +84,6 @@ data class SharedBook(
     val review: String = "",
     val startedOn: Long? = null,
     val finishedOn: Long? = null,
-)
-
-@Serializable
-data class LendRequestMsg(
-    val requestId: String,
-    val bookId: Long,
-    val bookTitle: String,
-    val bookAuthors: String = "",
-    val isbn: String = "",
-    val fromId: String,
-    val fromName: String,
-    val toId: String,
-    val note: String = "",
-    val createdAt: Long,
-)
-
-@Serializable
-data class LendAnswerMsg(
-    val requestId: String,
-    val accepted: Boolean,
-    val bookTitle: String,
-    /** The owner who answered. */
-    val fromId: String,
-    val fromName: String,
-    /** The friend who asked. */
-    val toId: String,
-    val answeredAt: Long,
 )
 
 /**
@@ -147,8 +123,6 @@ data class BackupPayload(
     val goals: List<Goal> = emptyList(),
     val purchases: List<Purchase> = emptyList(),
     val ornaments: List<Ornament> = emptyList(),
-    /** Borrow requests, mine and those of friends. Kept here so that every device of an account shows them. */
-    val requests: List<LendRequest> = emptyList(),
     val prefs: VaultPrefs? = null,
 )
 
@@ -169,8 +143,21 @@ object ShareCodec {
     /** The library as the document an account keeps on the server. Fields that have their default value are left out. */
     fun encodeVault(payload: BackupPayload): JsonElement = json.encodeToJsonElement(BackupPayload.serializer(), payload)
 
-    /** Reads a vault document, also one written by a newer app or by the website. Null when it is not one. */
-    fun decodeVault(element: JsonElement): BackupPayload? = runCatching { json.decodeFromJsonElement(BackupPayload.serializer(), element) }.getOrNull()
+    /** The format of the vault document this version writes and reads. A document that names none is of format 1. */
+    const val VAULT_FORMAT = 1
+
+    /**
+     * Reads a vault document, also one written by the website. Fields this app does not know
+     * are left behind, the borrow requests of older versions among them. Null when this
+     * version cannot read the document for what it is: it is damaged, of a newer format, or
+     * uses a word (a status, a format, an ornament) that a newer version invented. Such a
+     * word could only be dropped or turned into another one here, and neither is reading.
+     */
+    fun decodeVault(element: JsonElement): BackupPayload? {
+        val format = ((element as? JsonObject)?.get("format") as? JsonPrimitive)?.content?.toIntOrNull() ?: 1
+        if (format > VAULT_FORMAT) return null
+        return runCatching { json.decodeFromJsonElement(BackupPayload.serializer(), element) }.getOrNull()
+    }
 
     /** Returns null for anything that is not a Shelfmark file. */
     fun decode(text: String): Envelope? {
@@ -184,7 +171,10 @@ object ShareCodec {
         }.getOrNull()
     }
 
-    /** Builds the snapshot friends receive. Private details are only included when the owner opted in. */
+    /**
+     * Builds the snapshot friends receive. Private details are only included when the owner opted in.
+     * [held] are the ids of the books a loan has reserved or out: nobody else can ask for those.
+     */
     fun buildLibrary(
         ownerId: String,
         ownerName: String,
@@ -194,6 +184,7 @@ object ShareCodec {
         includeStatus: Boolean,
         includeRatings: Boolean,
         now: Long = System.currentTimeMillis(),
+        held: Set<Long> = emptySet(),
     ): SharedLibrary {
         val shelfNames = shelves.associate { it.id to it.name }
         val shelvesByBook = links.groupBy({ it.bookId }, { shelfNames[it.shelfId] }).mapValues { it.value.filterNotNull() }
@@ -211,7 +202,7 @@ object ShareCodec {
                     format = b.format,
                     description = b.description,
                     ownership = b.ownership,
-                    available = b.availableToLend,
+                    available = b.availableToLend && b.id !in held,
                     status = if (includeStatus) b.status else null,
                     shelves = if (includeStatus) shelvesByBook[b.id].orEmpty() else emptyList(),
                     rating = if (includeRatings) b.rating else 0f,

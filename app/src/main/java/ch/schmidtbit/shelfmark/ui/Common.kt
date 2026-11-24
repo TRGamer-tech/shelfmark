@@ -12,7 +12,6 @@ import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
-import ch.schmidtbit.shelfmark.data.model.LendStatus
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.repo.SortOrder
@@ -51,13 +50,6 @@ fun Ownership.labelRes(): Int = when (this) {
     Ownership.OWNED -> R.string.ownership_owned
     Ownership.BORROWED -> R.string.ownership_borrowed
     Ownership.NOT_OWNED -> R.string.ownership_not_owned
-}
-
-@StringRes
-fun LendStatus.labelRes(): Int = when (this) {
-    LendStatus.PENDING -> R.string.request_pending
-    LendStatus.ACCEPTED -> R.string.request_accepted
-    LendStatus.DECLINED -> R.string.request_declined
 }
 
 @StringRes

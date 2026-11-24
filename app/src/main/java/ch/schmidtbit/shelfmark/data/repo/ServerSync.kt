@@ -1,9 +1,13 @@
 package ch.schmidtbit.shelfmark.data.repo
 
+import androidx.room.withTransaction
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Friend
-import ch.schmidtbit.shelfmark.data.model.LendStatus
-import ch.schmidtbit.shelfmark.data.model.OutboxMessage
+import ch.schmidtbit.shelfmark.data.model.FriendBook
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanAction
+import ch.schmidtbit.shelfmark.data.model.LoanNews
+import ch.schmidtbit.shelfmark.data.model.LoanRules
 import ch.schmidtbit.shelfmark.data.server.AuthApi
 import ch.schmidtbit.shelfmark.data.server.AuthException
 import ch.schmidtbit.shelfmark.data.server.HttpPoster
@@ -12,14 +16,13 @@ import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.server.Session
 import ch.schmidtbit.shelfmark.data.server.SyncAnswer
+import ch.schmidtbit.shelfmark.data.server.VaultAnswer
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
-import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import ch.schmidtbit.shelfmark.data.share.VaultPrefs
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,10 +36,13 @@ sealed interface SyncResult {
     /** No server is built in, or nobody is signed in. */
     data object Off : SyncResult
 
-    /** [requests] and [answers] are the ones that were new this time, e.g. to tell the user about. */
+    /**
+     * [news] are the loans the other side changed since this device last looked. [due] are
+     * the books that should be back by now and that this device has not yet reminded of.
+     */
     data class Done(
-        val requests: List<ImportResult.RequestReceived> = emptyList(),
-        val answers: List<ImportResult.AnswerReceived> = emptyList(),
+        val news: List<LoanNews> = emptyList(),
+        val due: List<Loan> = emptyList(),
         val libraries: Int = 0,
     ) : SyncResult
 
@@ -59,9 +65,11 @@ data class SyncStatus(val running: Boolean = false, val error: String? = null)
  * Everything that involves the account: signing in, keeping the library the same on every
  * device and on the website (the "vault"), and friends.
  *
- * Friends work as with files. The server holds the library snapshot each person shares
- * and passes borrow requests and their answers on, and whatever arrives goes through
- * [SocialRepository.import], exactly as if the file had been opened by hand.
+ * A friend's shelf arrives as it would in a file: the server holds the snapshot each person
+ * shares, and it goes through [SocialRepository.import] as if the file had been opened by
+ * hand. Loans are different. A loan is one record on the server that lender and borrower
+ * both read, this device only remembers what it last heard, and the books of the library
+ * follow from it (see [LoanBooks]).
  */
 class ServerSync(
     private val db: AppDatabase,
@@ -83,9 +91,14 @@ class ServerSync(
     private val work: CoroutineDispatcher = Dispatchers.Default,
     /** The address of the website, without a slash at the end. Empty when the build knows none. */
     private val website: String = "",
+    /**
+     * Hears what a look at the server brought that the reader should be told: news about
+     * loans, and books that are due. Every look reports here, whoever started it and
+     * whatever they do with its result, so that nothing is said twice and nothing is lost.
+     */
+    private val announce: (SyncResult.Done) -> Unit = {},
 ) {
     val status = MutableStateFlow(SyncStatus())
-    val waiting: Flow<Int> = db.social().observeOutboxCount()
 
     /** Whether this build has a server at all. Without one the app works with files only. */
     val available: Boolean get() = config != null
@@ -140,7 +153,7 @@ class ServerSync(
         if (!sameAccount) {
             baseFile.delete()
             db.social().markAllOffline()
-            db.social().clearOutbox()
+            db.social().clearLoans()
         }
         settings.setSession(session.accessToken, session.refreshToken, session.expiresAt, session.email, session.userId.takeIf { !sameAccount })
         status.value = SyncStatus()
@@ -198,7 +211,9 @@ class ServerSync(
     private suspend fun forget() {
         settings.clearSession()
         db.social().markAllOffline()
-        db.social().clearOutbox()
+        // Loans are read from the server by whoever is signed in. Signed out, a book that was
+        // lent or borrowed through one is a book lent or borrowed by hand.
+        db.social().clearLoans()
         status.value = SyncStatus()
     }
 
@@ -257,7 +272,7 @@ class ServerSync(
             try {
                 val api = ServerApi(config, poster, token() ?: return@withLock SyncResult.Off)
                 val remote = api.vaultPull(0)
-                val theirs = remote.payload?.let(ShareCodec::decodeVault)
+                val theirs = read(remote, known = 0)
                 if (keep == Keep.ACCOUNT && theirs != null) adopt(theirs, remote.revision) else push(api, snapshot(), remote.revision)
                 null
             } catch (e: ServerException) {
@@ -287,7 +302,22 @@ class ServerSync(
             s = settings.current()
         }
 
-        // 3. The part of the library friends may see, when it differs from what the server has.
+        // 3. What is new from friends, and where the loans stand.
+        val known = db.social().onlineFriends().associate { it.id to it.serverAt }
+        val answer = api.sync(known)
+        if (answer.code.isNotBlank() && answer.code != s.friendCode) settings.setFriendCode(answer.code)
+        // The first look at the loans of an account has nothing to compare with, and tells no news.
+        val done = take(answer, first = !s.loansSeen)
+        if (!s.loansSeen) settings.setLoansSeen()
+        // Said right away. Whatever goes wrong further down, the reader has heard it, and it will not be news again.
+        if (done.news.isNotEmpty() || done.due.isNotEmpty()) announce(done)
+
+        // 4. The books follow the loans. That is a change to the library like any other,
+        // and goes to the account so that the other devices do not have to work it out again.
+        if (followLoans()) vault(api)
+
+        // 5. The part of the library friends may see, when it differs from what the server has.
+        // After the loans, because a book that is promised to somebody cannot be asked for.
         val shared = social.exportLibrary(s.shareStatus, s.shareRatings)
         val fingerprint = fingerprint(ShareCodec.encode(shared.copy(library = shared.library?.copy(createdAt = 0))))
         if (fingerprint != s.publishedHash) {
@@ -295,30 +325,6 @@ class ServerSync(
             settings.setPublishedHash(fingerprint)
         }
 
-        // 4. What I wrote to friends while there was no connection.
-        for (message in db.social().outbox()) {
-            val payload = ShareCodec.decode(message.payload)
-            try {
-                if (payload != null) api.send(message.toId, ShareCodec.encodeElement(payload))
-            } catch (e: ServerException) {
-                // Not friends any more, or too large: this one will never arrive, drop it. Anything else stops the run.
-                if (e.reason !in setOf("not_friends", "too_large", "bad_request")) throw e
-            }
-            db.social().dequeue(message.id)
-        }
-
-        // 5. What is new from friends.
-        val known = db.social().onlineFriends().associate { it.id to it.serverAt }
-        val answer = api.sync(known)
-        if (answer.code.isNotBlank() && answer.code != s.friendCode) settings.setFriendCode(answer.code)
-        val done = take(answer)
-        if (answer.messages.isNotEmpty()) {
-            // Tell the server which messages arrived, so it can delete them.
-            val knownNow = db.social().onlineFriends().associate { it.id to it.serverAt }
-            api.sync(knownNow, answer.messages.map { it.id })
-            // A request that just came in belongs to the library, and so to the other devices.
-            vault(api)
-        }
         settings.setLastSync(now())
         return done
     }
@@ -370,7 +376,7 @@ class ServerSync(
         if (s.vaultRevision == 0L) {
             // This device and this account have never been in step.
             val remote = api.vaultPull(0)
-            val theirs = remote.payload?.let(ShareCodec::decodeVault)
+            val theirs = read(remote, known = 0)
             when {
                 theirs == null || theirs.isEmpty() -> push(api, local, remote.revision)
                 local.isEmpty() -> adopt(theirs, remote.revision)
@@ -381,19 +387,35 @@ class ServerSync(
 
         val changedHere = fingerprint(local) != s.vaultHash
         val remote = api.vaultPull(s.vaultRevision)
-        val theirs = remote.payload?.let(ShareCodec::decodeVault)
+        val theirs = read(remote, known = s.vaultRevision)
         when {
             // The server has what we last saw (or lost it altogether): only our own changes matter.
             theirs == null -> if (changedHere || remote.revision != s.vaultRevision) push(api, local, remote.revision)
             !changedHere -> adopt(theirs, remote.revision)
             else -> {
                 val merged = VaultMerge.merge(loadBase(), local, theirs)
-                backup.restore(merged, withRequests = true)
+                backup.restore(merged)
                 merged.prefs?.let { settings.applyPrefs(it) }
                 push(api, snapshot(), remote.revision)
             }
         }
         return null
+    }
+
+    /**
+     * The library the account holds, or null where there is nothing to read: the account has
+     * none yet, or this device has that very revision already. A library that is there and
+     * that this version cannot read stops everything: it is never taken for an empty one,
+     * and nothing is written over it (see "A library a client cannot read is never
+     * replaced" in supabase/README.md).
+     */
+    private fun read(remote: VaultAnswer, known: Long): BackupPayload? {
+        val payload = remote.payload
+        if (payload == null) {
+            if (remote.revision != 0L && remote.revision != known) throw ServerException(UNREADABLE, 200)
+            return null
+        }
+        return ShareCodec.decodeVault(payload) ?: throw ServerException(UNREADABLE, 200)
     }
 
     private suspend fun snapshot(): BackupPayload {
@@ -411,7 +433,7 @@ class ServerSync(
 
     /** Takes over the library of the account. */
     private suspend fun adopt(theirs: BackupPayload, revision: Long) {
-        backup.restore(theirs, withRequests = true)
+        backup.restore(theirs)
         theirs.prefs?.let { settings.applyPrefs(it) }
         // What is here now, as this app writes it, is what later changes are measured against.
         val mine = snapshot()
@@ -428,7 +450,7 @@ class ServerSync(
     private fun loadBase(): BackupPayload? =
         runCatching { ShareCodec.decodeVault(Json.parseToJsonElement(baseFile.readText())) }.getOrNull()
 
-    private suspend fun take(answer: SyncAnswer): SyncResult.Done {
+    private suspend fun take(answer: SyncAnswer, first: Boolean): SyncResult.Done {
         var libraries = 0
         for (entry in answer.libraries) {
             val envelope = ShareCodec.decodeElement(entry.payload) ?: continue
@@ -451,36 +473,82 @@ class ServerSync(
         }
         db.social().onlineFriends().filter { it.id !in serverIds }.forEach { db.social().deleteFriend(it.id) }
 
-        val requests = ArrayList<ImportResult.RequestReceived>()
-        val answers = ArrayList<ImportResult.AnswerReceived>()
-        for (message in answer.messages) {
-            val envelope = ShareCodec.decodeElement(message.payload) ?: continue
-            // Nobody can ask or answer in somebody else's name.
-            val honest = envelope.request?.fromId == message.from || envelope.answer?.fromId == message.from
-            if (!honest) continue
-            val newRequest = envelope.request?.let { social.getRequest(it.requestId) == null } ?: false
-            val openAnswer = envelope.answer?.let { social.getRequest(it.requestId)?.status == LendStatus.PENDING } ?: false
-            when (val result = social.import(envelope)) {
-                is ImportResult.RequestReceived -> if (newRequest) requests += result
-                is ImportResult.AnswerReceived -> if (openAnswer) answers += result
-                else -> Unit
+        // The loans are what the server says, no more and no less. What only this phone
+        // knows about one (that it reminded of the day) stays with it.
+        val before = db.social().loans().associateBy { it.id }
+        val loans = answer.loans.map { it.copy(dueSaid = before[it.id]?.dueSaid) }
+        if (loans.toSet() != before.values.toSet()) {
+            db.withTransaction {
+                db.social().clearLoans()
+                db.social().upsertLoans(loans)
             }
         }
-        return SyncResult.Done(requests, answers, libraries)
+        val news = if (first) emptyList() else loans
+            .filter { !it.byMe && it.updatedAt > (before[it.id]?.updatedAt ?: 0) }
+            .map { LoanNews(it, LoanRules.news(it, before[it.id])) }
+        // A reminder is given once per loan and day it was due on. Another day is another reminder.
+        val day = today()
+        val due = loans.filter { it.dueBy(day) && it.dueSaid != it.dueOn }
+        due.forEach { db.social().markDueSaid(it.id) }
+        return SyncResult.Done(news, due, libraries)
+    }
+
+    /** Brings the books in line with the loans (see [LoanBooks]). True when a book had to change. */
+    private suspend fun followLoans(): Boolean {
+        val loans = db.social().loans()
+        if (loans.isEmpty()) return false
+        val shared = loans.filter { !it.lender && it.state.out }.mapNotNull { db.social().findFriendBook(it.peerId, it.bookId) }
+        val changed = LoanBooks.follow(db.books().all(), loans, shared, now())
+        if (changed.isEmpty()) return false
+        db.withTransaction {
+            changed.forEach { book -> if (db.books().get(book.id) == null) db.books().insert(book) else db.books().update(book) }
+        }
+        return true
+    }
+
+    // ---- loans ----
+
+    /**
+     * Asks a friend for one of the books on their shelf. Returns null when the question
+     * is with them, otherwise the reason it is not: "taken" when the book went to somebody
+     * else in the meantime, "network", or what else the server said.
+     */
+    suspend fun loanAsk(book: FriendBook, note: String): String? = withContext(work) {
+        loanStep { api -> api.loanAsk(book, note.trim()) }
+    }
+
+    /**
+     * Takes one step of a loan (see [LoanRules.actions] for which are open). [due] goes with
+     * a yes and with another day: the epoch day the book is wanted back by, or null for no
+     * fixed date. Returns null when it is done, otherwise the reason it is not: "not_allowed"
+     * when the loan has moved on in the meantime, in which case the loans were fetched again
+     * and show where it stands.
+     */
+    suspend fun loanAct(loanId: String, action: LoanAction, due: Long? = null, reason: String = ""): String? = withContext(work) {
+        loanStep(putAway = action == LoanAction.HIDE) { api -> api.loanAct(loanId, action, due, reason.trim()) }
+    }
+
+    private suspend fun loanStep(putAway: Boolean = false, step: suspend (ServerApi) -> Loan): String? {
+        val config = config ?: return NO_SERVER
+        val failed = try {
+            val token = mutex.withLock { token() } ?: return "signed_out"
+            val loan = step(ServerApi(config, poster, token))
+            // The screens show the step at once, before the rest has caught up.
+            if (putAway) db.social().deleteLoan(loan.id)
+            else db.social().upsertLoans(listOf(loan.copy(dueSaid = db.social().getLoan(loan.id)?.dueSaid)))
+            null
+        } catch (e: ServerException) {
+            e.reason
+        } catch (e: IOException) {
+            NETWORK
+        }
+        // The books follow the loan, and what friends may ask for changes with it. After a
+        // refusal too: the loan is not where this device thought it was.
+        if (failed != NETWORK) sync()
+        return failed
     }
 
     // ---- friends ----
-
-    /** True when something for [peerId] can go through the server instead of the share sheet. */
-    suspend fun canReach(peerId: String): Boolean =
-        config != null && settings.current().signedIn && db.social().getFriend(peerId)?.online == true
-
-    /** Sends [envelope] to a friend. Returns true when it left right away, false when it waits for a connection. */
-    suspend fun send(toId: String, envelope: Envelope): Boolean {
-        val queued = db.social().enqueue(OutboxMessage(toId = toId, payload = ShareCodec.encode(envelope), createdAt = now()))
-        sync()
-        return db.social().outbox().none { it.id == queued }
-    }
 
     /** Connects with the owner of [code]. Returns their name, or the reason it did not work. */
     suspend fun addFriend(code: String): Result<String> = withContext(work) { addFriendNow(code) }
@@ -555,5 +623,8 @@ class ServerSync(
     companion object {
         const val NETWORK = "network"
         const val NO_SERVER = "no_server"
+
+        /** The library on the account is one this version cannot read. Nothing is written until an update can. */
+        const val UNREADABLE = "unreadable"
     }
 }

@@ -78,7 +78,6 @@ import androidx.navigation.toRoute
 import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
-import ch.schmidtbit.shelfmark.data.model.LendStatus
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
 import ch.schmidtbit.shelfmark.ui.add.ScanScreen
@@ -88,7 +87,7 @@ import ch.schmidtbit.shelfmark.ui.detail.TimerScreen
 import ch.schmidtbit.shelfmark.ui.edit.EditScreen
 import ch.schmidtbit.shelfmark.ui.friends.FriendLibraryScreen
 import ch.schmidtbit.shelfmark.ui.friends.FriendsScreen
-import ch.schmidtbit.shelfmark.ui.friends.RequestsScreen
+import ch.schmidtbit.shelfmark.ui.friends.LoansScreen
 import ch.schmidtbit.shelfmark.ui.library.LibraryScreen
 import ch.schmidtbit.shelfmark.ui.library.LibraryViewModel
 import ch.schmidtbit.shelfmark.ui.lists.ListsScreen
@@ -105,9 +104,9 @@ import ch.schmidtbit.shelfmark.ui.nav.FriendsRoute
 import ch.schmidtbit.shelfmark.ui.nav.GoalsRoute
 import ch.schmidtbit.shelfmark.ui.nav.LibraryRoute
 import ch.schmidtbit.shelfmark.ui.nav.ListsRoute
+import ch.schmidtbit.shelfmark.ui.nav.LoansRoute
 import ch.schmidtbit.shelfmark.ui.nav.QuoteRoute
 import ch.schmidtbit.shelfmark.ui.nav.QuotesRoute
-import ch.schmidtbit.shelfmark.ui.nav.RequestsRoute
 import ch.schmidtbit.shelfmark.ui.nav.ScanRoute
 import ch.schmidtbit.shelfmark.ui.nav.SearchRoute
 import ch.schmidtbit.shelfmark.ui.nav.SettingsRoute
@@ -165,7 +164,8 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     val libraryViewModel = containerViewModel { LibraryViewModel(it) }
     val entry by nav.currentBackStackEntryAsState()
     val destination = entry?.destination
-    val pendingRequests by container.social.pendingIncoming.collectAsStateWithLifecycle(initialValue = 0)
+    // Loans in which the next tap is the reader's own.
+    val waitingLoans by container.social.waitingLoans.collectAsStateWithLifecycle(initialValue = 0)
     var adding by rememberSaveable { mutableStateOf(false) }
     val back: () -> Unit = { nav.popBackStack() }
 
@@ -191,8 +191,8 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                             selected = destination?.hasRoute(tab.type) == true,
                             onClick = { openTab(tab.route) },
                             icon = {
-                                if (tab.route == FriendsRoute && pendingRequests > 0) {
-                                    BadgedBox(badge = { Badge { Text(pendingRequests.toString()) } }) { Icon(tab.icon, contentDescription = null) }
+                                if (tab.route == FriendsRoute && waitingLoans > 0) {
+                                    BadgedBox(badge = { Badge(Modifier.testTag("loansBadge")) { Text(waitingLoans.toString()) } }) { Icon(tab.icon, contentDescription = null) }
                                 } else {
                                     Icon(tab.icon, contentDescription = null)
                                 }
@@ -239,7 +239,9 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             composable<RecapRoute> { RecapScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
             composable<MilestonesRoute> { MilestonesScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
             composable<QuotesRoute> { QuotesScreen(onAdd = { nav.navigate(QuoteRoute()) }, onEdit = { nav.navigate(QuoteRoute(quoteId = it)) }) }
-            composable<FriendsRoute> { FriendsScreen(onOpenFriend = { nav.navigate(FriendRoute(it)) }, onRequests = { nav.navigate(RequestsRoute) }) }
+            composable<FriendsRoute> {
+                FriendsScreen(onOpenFriend = { nav.navigate(FriendRoute(it)) }, onLoans = { nav.navigate(LoansRoute) }, onOpenBook = { nav.navigate(BookRoute(it)) })
+            }
             composable<BookRoute>(
                 enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) scaleIn(tween(TRANSITION_MS), initialScale = 0.93f) else EnterTransition.None },
                 popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) scaleOut(tween(TRANSITION_MS), targetScale = 0.93f) else ExitTransition.None },
@@ -269,7 +271,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             composable<TimerRoute> { stackEntry -> TimerScreen(stackEntry.toRoute<TimerRoute>().bookId, onBack = back) }
             composable<GoalsRoute> { GoalsScreen(onBack = back) }
             composable<FriendRoute> { stackEntry -> FriendLibraryScreen(stackEntry.toRoute<FriendRoute>().id, onBack = back) }
-            composable<RequestsRoute> { RequestsScreen(onBack = back) }
+            composable<LoansRoute> { LoansScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
             composable<SettingsRoute> { SettingsScreen(onBack = back) }
         }
     }
@@ -294,10 +296,11 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
         }
     }
 
-    // Every time the app comes to the front it looks whether friends wrote.
+    // In front, the app looks at the server right away and then once a minute: the other
+    // side of a loan may tap at any time. Out of sight it asks nothing.
     LifecycleResumeEffect(Unit) {
-        importer.refresh()
-        onPauseOrDispose { }
+        val watching = container.launch { container.watchServer() }
+        onPauseOrDispose { watching.cancel() }
     }
 
     // Files and text that other apps hand to Shelfmark. The work runs in the app scope:
@@ -311,7 +314,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             nav.navigate(QuoteRoute())
         }
         when (received.action) {
-            Notifier.ACTION_OPEN_REQUESTS -> nav.navigate(RequestsRoute)
+            Notifier.ACTION_OPEN_LOANS -> nav.navigate(LoansRoute) { launchSingleTop = true }
             Intent.ACTION_VIEW -> received.data?.let(importer::open)
             Intent.ACTION_SEND -> {
                 val stream = IntentCompat.getParcelableExtra(received, Intent.EXTRA_STREAM, Uri::class.java)
@@ -360,7 +363,6 @@ private fun AddOption(icon: ImageVector, title: String, hint: String, tag: Strin
 private fun ImportDialogs(nav: NavHostController) {
     val container = LocalContainer.current
     val importer = LocalImporter.current
-    val requests by container.social.requests.collectAsStateWithLifecycle(initialValue = emptyList())
     val outcome = importer.outcome ?: return
     val close = { importer.outcome = null }
 
@@ -386,42 +388,6 @@ private fun ImportDialogs(nav: NavHostController) {
                 stringResource(R.string.import_library_text, result.name, pluralStringResource(R.plurals.book_count, result.bookCount, result.bookCount)),
                 stringResource(R.string.import_library_open),
             ) { nav.navigate(FriendRoute(result.friendId)) }
-            is ImportResult.RequestReceived -> {
-                val request = requests.firstOrNull { it.id == result.requestId }
-                if (request == null || request.status == LendStatus.PENDING) {
-                    AlertDialog(
-                        onDismissRequest = close,
-                        title = { Text(stringResource(R.string.import_request_title)) },
-                        text = {
-                            Column {
-                                Text(stringResource(R.string.request_question, result.fromName.ifBlank { stringResource(R.string.friends_someone) }, result.bookTitle))
-                                if (!request?.note.isNullOrBlank()) Text("„${request?.note}“", modifier = Modifier.padding(top = 8.dp))
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = { close(); importer.answer(result.requestId, true) }, modifier = Modifier.testTag("dialogYes")) { Text(stringResource(R.string.action_yes)) }
-                        },
-                        dismissButton = {
-                            Row {
-                                TextButton(onClick = close) { Text(stringResource(R.string.action_later)) }
-                                TextButton(onClick = { close(); importer.answer(result.requestId, false) }, modifier = Modifier.testTag("dialogNo")) { Text(stringResource(R.string.action_no)) }
-                            }
-                        },
-                        modifier = Modifier.testTag("requestDialog"),
-                    )
-                } else {
-                    info(stringResource(R.string.import_request_title), stringResource(R.string.import_request_answered), stringResource(R.string.requests_title)) { nav.navigate(RequestsRoute) }
-                }
-            }
-            is ImportResult.AnswerReceived -> info(
-                stringResource(R.string.import_answer_title),
-                stringResource(
-                    if (result.accepted) R.string.import_answer_yes else R.string.import_answer_no,
-                    result.fromName.ifBlank { stringResource(R.string.friends_someone) },
-                    result.bookTitle,
-                ),
-                stringResource(R.string.requests_title),
-            ) { nav.navigate(RequestsRoute) }
             is ImportResult.BackupFound -> close()
             is ImportResult.Rejected -> info(
                 stringResource(R.string.import_failed_title),
@@ -429,9 +395,8 @@ private fun ImportDialogs(nav: NavHostController) {
                     when (result.reason) {
                         RejectReason.NOT_SHELFMARK -> R.string.import_not_shelfmark
                         RejectReason.OWN_LIBRARY -> R.string.import_own_library
-                        RejectReason.NOT_FOR_ME -> R.string.import_not_for_me
-                        RejectReason.UNKNOWN_REQUEST -> R.string.import_unknown_request
                         RejectReason.NEWER_VERSION -> R.string.import_newer_version
+                        RejectReason.OLD_REQUEST -> R.string.import_old_request
                     },
                 ),
             )

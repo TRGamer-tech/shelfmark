@@ -57,6 +57,8 @@ data class Settings(
     /** Fingerprint of the library as it was at that moment, to notice changes made here since. */
     val vaultHash: String = "",
     val lastSyncAt: Long = 0,
+    /** This device has looked at the loans of the account before, so a change to one can be told from one that was always there. */
+    val loansSeen: Boolean = false,
     /** Epoch day of the last daily check that keeps the server awake. */
     val lastPingDay: Long = 0,
 ) {
@@ -134,6 +136,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             vaultRevision = p[VAULT_REVISION] ?: 0,
             vaultHash = p[VAULT_HASH].orEmpty(),
             lastSyncAt = p[LAST_SYNC] ?: 0,
+            loansSeen = p[LOANS_SEEN] ?: false,
             lastPingDay = p[LAST_PING] ?: 0,
         )
     }
@@ -167,6 +170,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
                 p[USER_ID] = userId
                 listOf(FRIEND_CODE, HELLO_NAME, PUBLISHED_HASH, VAULT_HASH, LAST_SYNC).forEach { p.remove(it) }
                 p.remove(VAULT_REVISION)
+                p.remove(LOANS_SEEN)
             }
         }
     }
@@ -179,6 +183,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         store.edit { p ->
             listOf(ACCESS_TOKEN, REFRESH_TOKEN, ACCOUNT_EMAIL, FRIEND_CODE, HELLO_NAME, PUBLISHED_HASH).forEach { p.remove(it) }
             listOf(TOKEN_EXPIRES, LAST_SYNC).forEach { p.remove(it) }
+            p.remove(LOANS_SEEN)
         }
     }
 
@@ -215,6 +220,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setFriendCode(code: String) { store.edit { it[FRIEND_CODE] = code } }
     suspend fun setPublishedHash(hash: String) { store.edit { it[PUBLISHED_HASH] = hash } }
     suspend fun setLastSync(at: Long) { store.edit { it[LAST_SYNC] = at } }
+    suspend fun setLoansSeen() { store.edit { it[LOANS_SEEN] = true } }
     suspend fun setLastPingDay(day: Long) { store.edit { it[LAST_PING] = day } }
 
     suspend fun setTheme(key: String) { store.edit { it[THEME] = key } }
@@ -294,6 +300,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val VAULT_REVISION = longPreferencesKey("vault_revision")
         val VAULT_HASH = stringPreferencesKey("vault_hash")
         val LAST_SYNC = longPreferencesKey("last_sync")
+        val LOANS_SEEN = booleanPreferencesKey("loans_seen")
         val LAST_PING = longPreferencesKey("last_ping_day")
         val themeJson = Json { ignoreUnknownKeys = true }
     }

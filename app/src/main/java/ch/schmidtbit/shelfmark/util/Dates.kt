@@ -1,6 +1,8 @@
 package ch.schmidtbit.shelfmark.util
 
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
@@ -10,6 +12,9 @@ object Dates {
     private const val DAY_MS = 86_400_000L
 
     fun today(): Long = LocalDate.now().toEpochDay()
+
+    /** The day a moment (milliseconds since 1970) falls on where the reader is. */
+    fun dayOf(millis: Long, zone: ZoneId = ZoneId.systemDefault()): Long = Instant.ofEpochMilli(millis).atZone(zone).toLocalDate().toEpochDay()
 
     fun format(epochDay: Long?, locale: Locale = Locale.getDefault()): String =
         epochDay?.let {

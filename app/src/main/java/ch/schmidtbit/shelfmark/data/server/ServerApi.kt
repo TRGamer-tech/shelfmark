@@ -1,9 +1,15 @@
 package ch.schmidtbit.shelfmark.data.server
 
+import ch.schmidtbit.shelfmark.data.model.BookFormat
+import ch.schmidtbit.shelfmark.data.model.FriendBook
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanAction
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -11,6 +17,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
@@ -106,26 +113,31 @@ class OkHttpPoster(private val client: OkHttpClient) : HttpPoster {
 
 /**
  * The server said no. [reason] is one of the words the server functions use
- * (signed_out, unknown_code, own_code, not_friends, too_large, full, bad_request, conflict),
+ * (signed_out, unknown_code, own_code, not_friends, too_large, full, bad_request, conflict,
+ * and for loans taken, not_allowed, unknown_loan, invalid, outdated),
  * "expired" for a sign-in that has to be renewed, "setup" when the project does not have
- * the Shelfmark functions, "key" for a project key that is not accepted, or "http_NNN".
+ * the Shelfmark functions (or not the one that was called, because its schema.sql is an
+ * older one), "key" for a project key that is not accepted, or "http_NNN".
  */
 class ServerException(val reason: String, val status: Int) : IOException("Server: $reason ($status)")
 
 data class Registration(val id: String, val code: String, val name: String)
 data class RemoteFriend(val id: String, val name: String)
 data class RemoteLibrary(val owner: String, val at: Long, val payload: JsonElement)
-data class RemoteMessage(val id: String, val from: String, val at: Long, val payload: JsonElement)
 
 data class SyncAnswer(
     val id: String,
     val code: String,
     val friends: List<RemoteFriend>,
     val libraries: List<RemoteLibrary>,
-    val messages: List<RemoteMessage>,
+    /** Every loan I am part of and have not put away, the newest question first. */
+    val loans: List<Loan>,
 )
 
-/** The library of an account as the server holds it. [payload] is null when the caller has this revision already. */
+/**
+ * The library of an account as the server holds it. [payload] is null when the caller has
+ * this revision already, and when the account has no library yet (revision 0).
+ */
 data class VaultAnswer(val revision: Long, val payload: JsonElement?)
 
 /**
@@ -160,32 +172,67 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
         call("shelfmark_publish", buildJsonObject { put("p_library", library) })
     }
 
-    suspend fun send(to: String, payload: JsonElement) {
-        call("shelfmark_send", buildJsonObject { put("p_to", to); put("p_payload", payload) })
+    /**
+     * Asks a friend for one of their books. [book] is the book as their shared library shows it.
+     * Asking again for a book I already asked for gives back the question that is still open.
+     * Refused with "taken" when the book is reserved for somebody or out.
+     */
+    suspend fun loanAsk(book: FriendBook, note: String): Loan {
+        val answer = call(
+            "shelfmark_loan_ask",
+            buildJsonObject {
+                put("p_friend", book.friendId)
+                put("p_book", book.remoteId)
+                put("p_info", buildJsonObject {
+                    put("title", book.title)
+                    put("authors", book.authors)
+                    put("isbn", book.isbn)
+                    put("coverUrl", book.coverUrl)
+                    put("pageCount", book.pageCount)
+                    put("format", book.format.name)
+                })
+                put("p_note", note)
+            },
+        )
+        return readLoan(answer) ?: throw ServerException("bad_answer", 200)
     }
 
-    /** [known] maps a friend's id to the library version this phone has, [ack] names messages that were handled. */
-    suspend fun sync(known: Map<String, Long>, ack: List<String> = emptyList()): SyncAnswer {
+    /**
+     * One step of a loan. [due] counts for saying yes and for another day: the epoch day the
+     * book is wanted back by, null for no fixed date. [reason] goes with a no or a yes taken back.
+     * Refused with "not_allowed" when the loan has moved on and this step no longer fits.
+     */
+    suspend fun loanAct(loanId: String, action: LoanAction, due: Long? = null, reason: String = ""): Loan {
         val answer = call(
-            "shelfmark_sync",
+            "shelfmark_loan_act",
             buildJsonObject {
-                put("p_known", JsonObject(known.mapValues { JsonPrimitive(it.value) }))
-                put("p_ack", JsonArray(ack.map { JsonPrimitive(it) }))
+                put("p_loan", loanId)
+                put("p_action", action.word)
+                put("p_due", due)
+                put("p_reason", reason)
             },
-        ).jsonObject
+        )
+        return readLoan(answer) ?: throw ServerException("bad_answer", 200)
+    }
+
+    /** [known] maps a friend's id to the library version this phone has. */
+    suspend fun sync(known: Map<String, Long>): SyncAnswer {
+        val answer = call("shelfmark_sync", buildJsonObject { put("p_known", JsonObject(known.mapValues { JsonPrimitive(it.value) })) }).jsonObject
         return SyncAnswer(
             id = answer.text("id"),
             code = answer.text("code"),
             friends = answer.list("friends").map { RemoteFriend(it.text("id"), it.text("name")) },
             libraries = answer.list("libraries").map { RemoteLibrary(it.text("owner"), it.getValue("at").jsonPrimitive.long, it.getValue("payload")) },
-            messages = answer.list("messages").map { RemoteMessage(it.text("id"), it.text("from"), it.getValue("at").jsonPrimitive.long, it.getValue("payload")) },
+            // A server from before the loans sends none, and that reads as "no loans".
+            loans = answer.list("loans").mapNotNull(::readLoan),
         )
     }
 
     /** My whole library. Costs next to nothing when [known] is still the revision on the server. */
     suspend fun vaultPull(known: Long): VaultAnswer {
         val answer = call("shelfmark_vault_pull", buildJsonObject { put("p_known", known) }).jsonObject
-        return VaultAnswer(answer.getValue("revision").jsonPrimitive.long, answer["payload"]?.takeIf { it is JsonObject })
+        // Whatever is there is handed on, a document or not: what cannot be read must not be taken for "nothing there".
+        return VaultAnswer(answer.getValue("revision").jsonPrimitive.long, answer["payload"]?.takeIf { it !is JsonNull })
     }
 
     /** Saves my library if the server is still at revision [expected]. Returns the new revision. Refused with "conflict" otherwise. */
@@ -232,12 +279,52 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
         )
     }
 
-    private fun JsonObject.text(name: String): String = (get(name) as? JsonPrimitive)?.content.orEmpty()
-    private fun JsonObject.list(name: String): List<JsonObject> = (get(name) as? JsonArray)?.jsonArray?.map { it.jsonObject }.orEmpty()
+    private fun JsonObject.list(name: String): List<JsonObject> = (get(name) as? JsonArray)?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
 
-    private companion object {
-        const val PREFIX = "shelfmark:"
-        val json = Json { ignoreUnknownKeys = true }
+    companion object {
+        private const val PREFIX = "shelfmark:"
+        private val json = Json { ignoreUnknownKeys = true }
+
+        private fun JsonObject.text(name: String): String = (get(name) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content.orEmpty()
+        private fun JsonObject.number(name: String): Long? = (get(name) as? JsonPrimitive)?.longOrNull
+
+        /**
+         * A loan as the server tells it to one of its two sides (see "Loans" in supabase/README.md).
+         * Null for what is no loan, and for a loan in a state this version of the app does not
+         * know: showing that one with the wrong buttons would be worse than not showing it.
+         */
+        fun readLoan(element: JsonElement): Loan? {
+            val tree = element as? JsonObject ?: return null
+            val id = tree.text("id").ifBlank { return null }
+            val state = LoanState.of(tree.text("state")) ?: return null
+            val role = tree.text("role").takeIf { it == "lender" || it == "borrower" } ?: return null
+            val book = tree["book"] as? JsonObject ?: JsonObject(emptyMap())
+            return Loan(
+                id = id,
+                lender = role == "lender",
+                peerId = tree.text("peer"),
+                peerName = tree.text("peerName"),
+                bookId = tree.number("bookId") ?: return null,
+                title = book.text("title"),
+                authors = book.text("authors"),
+                isbn = book.text("isbn"),
+                coverUrl = book.text("coverUrl"),
+                pageCount = book.number("pageCount")?.toInt() ?: 0,
+                format = BookFormat.entries.firstOrNull { it.name == book.text("format") } ?: BookFormat.UNKNOWN,
+                note = tree.text("note"),
+                state = state,
+                reason = tree.text("reason"),
+                dueOn = tree.number("dueOn"),
+                askedAt = tree.number("askedAt") ?: 0,
+                agreedAt = tree.number("agreedAt"),
+                handedAt = tree.number("handedAt"),
+                receivedAt = tree.number("receivedAt"),
+                givenBackAt = tree.number("givenBackAt"),
+                closedAt = tree.number("closedAt"),
+                updatedAt = tree.number("updatedAt") ?: 0,
+                byMe = (tree["byMe"] as? JsonPrimitive)?.content == "true",
+            )
+        }
     }
 }
 

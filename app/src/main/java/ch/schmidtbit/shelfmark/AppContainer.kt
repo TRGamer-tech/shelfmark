@@ -27,11 +27,13 @@ import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
 import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.work.Notifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -109,6 +111,9 @@ class AppContainer(
         poster = serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) },
         baseFile = java.io.File(appContext.filesDir, "vault_base.json"),
         website = website,
+        // Whoever looked at the server (the screen, a tap, the check in the background),
+        // what a friend did to a loan is said in one place.
+        announce = { Notifier.announce(appContext, it) },
     )
 
     /** What was last asked of the user about an account and a device that both hold books. */
@@ -130,7 +135,7 @@ class AppContainer(
         if (serverConfig != null) {
             scope.launch {
                 merge(
-                    database.invalidationTracker.createFlow("books", "shelves", "book_shelf", "quotes", "sessions", "notes", "goals", "purchases", "ornaments", "lend_requests", emitInitialState = false).map { },
+                    database.invalidationTracker.createFlow("books", "shelves", "book_shelf", "quotes", "sessions", "notes", "goals", "purchases", "ornaments", emitInitialState = false).map { },
                     settings.settings.map { listOf(it.profileName, it.shareStatus, it.shareRatings, it.minutesPerPage, it.theme, it.customThemes, it.viewMode, it.sort, it.motion) }.distinctUntilChanged().drop(1).map { },
                 ).debounce(4_000).collect {
                     if (settings.current().signedIn) remember(server.sync())
@@ -148,14 +153,31 @@ class AppContainer(
     private var lastRefresh = 0L
 
     /**
-     * Looks for news from friends and does the daily check-in. Called whenever the app comes
-     * to the front, so it holds back when it ran a moment ago, unless [force] is set.
+     * Looks for news from friends and does the daily check-in. It holds back when it ran
+     * within the last minute, unless [force] is set.
      */
     suspend fun refreshFriends(force: Boolean = false): SyncResult {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (!force && lastRefresh != 0L && now - lastRefresh < 120_000) return SyncResult.Off
+        if (!force && lastRefresh != 0L && now - lastRefresh < WATCH_MS) return SyncResult.Off
         lastRefresh = now
         return remember(server.dailyCheck())
+    }
+
+    /**
+     * Asks the server for news once a minute, for as long as the caller lets it run. A loan
+     * takes two people tapping in turn, and neither should have to leave the app and come
+     * back to see that the other one did. The screen starts this when the app comes to the
+     * front and cancels it when the app leaves: in the background nothing is asked, that is
+     * what the daily check is for.
+     */
+    suspend fun watchServer() {
+        if (!server.available) return
+        while (true) {
+            // Coming to the front again and again (a rotation, a glance at another app) does not ask more often.
+            val wait = lastRefresh + WATCH_MS - android.os.SystemClock.elapsedRealtime()
+            if (lastRefresh != 0L && wait > 0) delay(wait)
+            refreshFriends(force = true)
+        }
     }
 
     /** How far the search for missing covers has come: (books checked, books to check), or null when idle. */
@@ -197,4 +219,8 @@ class AppContainer(
 
     /** The last catalogue hit the user looked at, kept for the preview sheet across rotation. */
     var lastPreview: RemoteBook? = null
+
+    private companion object {
+        const val WATCH_MS = 60_000L
+    }
 }

@@ -36,23 +36,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.widget.Toast
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
-import ch.schmidtbit.shelfmark.data.model.LendRequest
-import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.withDefaultsFor
 import ch.schmidtbit.shelfmark.ui.LocalContainer
-import ch.schmidtbit.shelfmark.ui.LocalImporter
 import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.CoverShelf
@@ -82,8 +83,12 @@ fun FriendLibraryScreen(friendId: String, onBack: () -> Unit) {
     val container = LocalContainer.current
     val friend by remember(friendId) { container.social.friend(friendId) }.collectAsStateWithLifecycle(initialValue = null)
     val books by remember(friendId) { container.social.friendBooks(friendId) }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val requests by container.social.requests.collectAsStateWithLifecycle(initialValue = emptyList())
+    val loans by container.social.loans.collectAsStateWithLifecycle(initialValue = emptyList())
+    val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
     var filter by remember { mutableStateOf<FriendFilter>(FriendFilter.All) }
+    // The book whose sheet is open, by the id it has in the friend's library. The rows here are
+    // written anew, with new numbers, whenever the friend's shelf arrives again, and a loan
+    // makes that happen while the sheet is open.
     var openId by rememberSaveable { mutableStateOf<Long?>(null) }
     val available = LocalShelfColors.current.good
 
@@ -148,28 +153,39 @@ fun FriendLibraryScreen(friendId: String, onBack: () -> Unit) {
             if (visible.isEmpty()) {
                 EmptyHint(stringResource(R.string.library_nothing_matches))
             } else {
-                CoverShelf(sections, { openId = it.key }, contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp))
+                CoverShelf(sections, { item -> openId = books.firstOrNull { it.localId == item.key }?.remoteId }, contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp))
             }
         }
     }
 
-    val open = books.firstOrNull { it.localId == openId }
+    val open = books.firstOrNull { it.remoteId == openId }
     if (open != null && friend != null) {
+        // My loans of this very book, the newest first. An open one is where things stand,
+        // one that is over is what came of asking the last time.
+        val mine = loans.filter { !it.lender && it.peerId == friendId && it.bookId == open.remoteId }
         FriendBookSheet(
             friend = friend!!,
             book = open,
-            request = requests.firstOrNull { !it.incoming && it.peerId == friendId && it.bookRemoteId == open.remoteId },
+            loan = mine.firstOrNull { !it.over } ?: mine.firstOrNull(),
+            // Borrowing goes from account to account: both have to be on the server.
+            cannotAsk = when {
+                container.server.available && settings?.signedIn == false -> R.string.friend_borrow_sign_in
+                settings?.signedIn != true || friend?.online != true -> R.string.friend_borrow_needs_account
+                else -> null
+            },
             onDismiss = { openId = null },
         )
     }
 }
 
+/** [loan] is my newest loan of this book, [cannotAsk] the text that says why borrowing is not on offer here. */
 @Composable
-private fun FriendBookSheet(friend: Friend, book: FriendBook, request: LendRequest?, onDismiss: () -> Unit) {
+private fun FriendBookSheet(friend: Friend, book: FriendBook, loan: Loan?, cannotAsk: Int?, onDismiss: () -> Unit) {
     val container = LocalContainer.current
-    val importer = LocalImporter.current
     val context = LocalContext.current
+    val resources = LocalResources.current
     var note by rememberSaveable { mutableStateOf("") }
+    var asking by remember { mutableStateOf(false) }
     var wished by remember { mutableStateOf(false) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -219,49 +235,59 @@ private fun FriendBookSheet(friend: Friend, book: FriendBook, request: LendReque
                 Text(book.description, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
             }
             Spacer(Modifier.height(20.dp))
+            if (loan != null) {
+                LoanStatus(loan, Modifier.testTag("loanState"))
+                // Who taps first is not obvious, so it is said where the next step is the other's or a joint one.
+                val hint = when (loan.state) {
+                    LoanState.AGREED -> R.string.loan_handover_hint
+                    LoanState.ON_LOAN -> R.string.loan_return_hint
+                    else -> null
+                }
+                if (hint != null) {
+                    Text(
+                        stringResource(hint, loanPeer(resources, loan)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             when {
-                request != null -> Text(
-                    stringResource(
-                        when (request.status) {
-                            LendStatus.PENDING -> R.string.friend_request_sent
-                            LendStatus.ACCEPTED -> R.string.friend_request_accepted
-                            LendStatus.DECLINED -> R.string.friend_request_declined
-                        },
-                        friend.name,
-                    ),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.testTag("requestState"),
+                loan != null && !loan.over -> LoanButtons(loan)
+                !book.available -> Text(
+                    stringResource(R.string.friend_not_available),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                book.available -> {
+                cannotAsk != null -> Text(
+                    stringResource(cannotAsk),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("cannotAsk"),
+                )
+                else -> {
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it.take(200) },
-                        label = { Text(stringResource(R.string.friend_request_note)) },
-                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.friend_borrow_note)) },
+                        modifier = Modifier.fillMaxWidth().testTag("borrowNote"),
                     )
                     Spacer(Modifier.height(8.dp))
                     Button(
+                        enabled = !asking,
                         onClick = {
+                            asking = true
                             container.launch {
-                                val envelope = container.social.createRequest(book, note)
-                                importer.deliver(
-                                    book.friendId,
-                                    envelope,
-                                    baseName = context.getString(R.string.share_request_file, book.title),
-                                    subject = context.getString(R.string.share_request_subject, book.title),
-                                    message = context.getString(R.string.share_request_message, friend.name, book.title),
-                                )
+                                val failed = container.server.loanAsk(book, note)
+                                asking = false
+                                if (failed == null) note = ""
+                                else Toast.makeText(context, context.getString(loanProblemRes(failed), failed), Toast.LENGTH_LONG).show()
                             }
                         },
                         modifier = Modifier.fillMaxWidth().testTag("askToBorrow"),
                     ) { Text(stringResource(R.string.friend_ask_to_borrow)) }
                 }
-                else -> Text(
-                    stringResource(R.string.friend_not_available),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(

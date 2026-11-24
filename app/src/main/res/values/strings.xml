@@ -36,7 +36,6 @@
     <string name="action_later">Later</string>
     <string name="action_more">More</string>
     <string name="action_next">Next</string>
-    <string name="action_no">No</string>
     <string name="action_ok">OK</string>
     <string name="action_open">Open</string>
     <string name="action_retry">Try again</string>
@@ -60,6 +59,7 @@
     <string name="app_name" translatable="false">Shelfmark</string>
     <string name="book_borrowed_from">Borrowed from</string>
     <string name="book_delete">Delete book</string>
+    <string name="book_delete_loan">This book is part of a loan. End the loan first, then the book can be removed.</string>
     <string name="book_delete_text">“%1$s” will be removed together with its quotes, notes and reading sessions.</string>
     <string name="book_delete_title">Delete this book?</string>
     <string name="book_favorite">Favourite</string>
@@ -147,6 +147,7 @@
     <string name="friend_add_to_wishlist">Add to my wishlist</string>
     <string name="friend_ask_to_borrow">Ask to borrow</string>
     <string name="friend_borrow_needs_account">Borrowing works between accounts. This shelf came as a file.</string>
+    <string name="friend_borrow_note">Message (optional)</string>
     <string name="friend_borrow_sign_in">Sign in to ask for a book.</string>
     <string name="friend_borrowed">%1$s has this on loan</string>
     <string name="friend_filter_available">Can be borrowed</string>
@@ -155,10 +156,6 @@
     <string name="friend_not_owned">%1$s does not own this book</string>
     <string name="friend_opinion">What %1$s thinks</string>
     <string name="friend_owns">%1$s owns this book</string>
-    <string name="friend_request_accepted">%1$s said yes</string>
-    <string name="friend_request_declined">%1$s said no</string>
-    <string name="friend_request_note">Message (optional)</string>
-    <string name="friend_request_sent">Request sent, waiting for %1$s</string>
     <string name="friend_wishlisted">On your wishlist</string>
     <string name="friends_change_name">Change</string>
     <string name="friends_empty">No shared libraries yet. Ask a friend to share theirs from Shelfmark, then open the file they send you.</string>
@@ -210,9 +207,6 @@
     <string name="greeting_morning_name">Good morning, %1$s</string>
     <string name="greeting_night">Still up?</string>
     <string name="greeting_night_name">Still up, %1$s?</string>
-    <string name="import_answer_no">%1$s would rather not lend “%2$s” right now.</string>
-    <string name="import_answer_title">Answer received</string>
-    <string name="import_answer_yes">%1$s said yes. You can borrow “%2$s”.</string>
     <string name="import_books_confirm">Import</string>
     <string name="import_books_covers">Lists from other apps rarely come with covers. Shelfmark can look them up now.</string>
     <string name="import_books_done">Import finished</string>
@@ -222,13 +216,9 @@
     <string name="import_library_text">The library of %1$s was imported: %2$s.</string>
     <string name="import_library_title">Library imported</string>
     <string name="import_newer_version">This file comes from a newer version of Shelfmark. Please update the app.</string>
-    <string name="import_not_for_me">This request is addressed to someone else.</string>
     <string name="import_not_shelfmark">This is not a Shelfmark file.</string>
     <string name="import_old_request">This file comes from an older version of Shelfmark. Borrowing now works between accounts, without files.</string>
     <string name="import_own_library">This is your own library. Send the file to a friend instead.</string>
-    <string name="import_request_answered">You have already answered this request.</string>
-    <string name="import_request_title">Borrow request</string>
-    <string name="import_unknown_request">This answer belongs to a request that was not sent from this phone.</string>
     <string name="import_unreadable">The file could not be read.</string>
     <string name="legal_imprint">Imprint</string>
     <string name="legal_privacy">Privacy notice</string>
@@ -271,7 +261,10 @@
     <string name="loan_due_pick">By a date</string>
     <string name="loan_due_title">When would you like it back?</string>
     <string name="loan_due_today">Due back today</string>
+    <string name="loan_error_full">You have too many questions open. Take one back first.</string>
+    <string name="loan_error_gone">This loan no longer exists.</string>
     <string name="loan_error_not_allowed">That is no longer possible, the loan has moved on. Here is where it stands now.</string>
+    <string name="loan_error_not_friends">You two are no longer connected.</string>
     <string name="loan_error_taken">This book is reserved for somebody else or on loan.</string>
     <string name="loan_give_back">I gave it back</string>
     <string name="loan_hand">I handed it over</string>
@@ -293,6 +286,7 @@
     <string name="loan_no_title">Say no to %1$s?</string>
     <string name="loan_not_received">I did not get it</string>
     <string name="loan_not_returned">I did not get it back</string>
+    <string name="loan_note">“%1$s”</string>
     <string name="loan_open_book">Open the book</string>
     <string name="loan_put_away">Put away</string>
     <string name="loan_reason">Reason: %1$s</string>
@@ -332,8 +326,6 @@
     <string name="note_empty">No notes for this book yet.</string>
     <string name="note_text">Note</string>
     <string name="note_title">Title (optional)</string>
-    <string name="notify_answer_no">%1$s said no</string>
-    <string name="notify_answer_yes">%1$s said yes</string>
     <string name="notify_channel">Friends</string>
     <string name="notify_due_borrower">“%2$s” is due back to %1$s</string>
     <string name="notify_due_lender">%1$s was to bring “%2$s” back by now</string>
@@ -351,7 +343,6 @@
     <string name="notify_loan_returned">%1$s has “%2$s” back</string>
     <string name="notify_loan_taken">“%2$s” went to somebody else</string>
     <string name="notify_loan_withdrawn">%1$s no longer asks for “%2$s”</string>
-    <string name="notify_request_title">%1$s would like to borrow a book</string>
     <string name="onboarding_account">Sign in, and your library is the same on every phone and on the website. No account yet? Enter an e-mail address and a password, and create one.</string>
     <string name="onboarding_look">How should it look?</string>
     <string name="onboarding_no_account">Continue without an account</string>
@@ -441,19 +432,6 @@
     <string name="recap_spent">Spent on books</string>
     <string name="recap_title">Recap</string>
     <string name="recap_year">Year</string>
-    <string name="request_accepted">Accepted</string>
-    <string name="request_declined">Declined</string>
-    <string name="request_incoming_line">%1$s asked for “%2$s”</string>
-    <string name="request_outgoing_line">“%1$s” from %2$s</string>
-    <string name="request_pending">Waiting for an answer</string>
-    <string name="request_question">%1$s would like to borrow “%2$s”. Is that OK?</string>
-    <string name="request_resend">Send again</string>
-    <string name="request_resend_answer">Send answer again</string>
-    <string name="requests_empty">No borrow requests yet. Open a friend\'s library and ask for a book.</string>
-    <string name="requests_incoming">Friends asking me</string>
-    <string name="requests_outgoing">My requests</string>
-    <string name="requests_title">Borrow requests</string>
-    <string name="requests_waiting">Waiting for your answer</string>
     <string name="restore_confirm">Replace</string>
     <string name="restore_done_title">Library restored</string>
     <string name="restore_text">This backup replaces your current books, lists, quotes and goals.</string>
@@ -494,12 +472,11 @@
     <string name="server_error_own_code">That is your own code.</string>
     <string name="server_error_setup">The server is not ready for this version of the app yet.</string>
     <string name="server_error_unknown_code">Nobody has this code. A typo, perhaps?</string>
+    <string name="server_error_unreadable">This version of Shelfmark cannot read the library on your account: a newer version saved it, or it is damaged. Nothing was changed. Please update the app.</string>
     <string name="server_friend_added">You and %1$s are friends now</string>
     <string name="server_friend_online">Connected through the server</string>
     <string name="server_last_sync">Up to date as of %1$s</string>
     <string name="server_never_synced">Not synced yet</string>
-    <string name="server_queued">No connection. It will be sent as soon as there is one.</string>
-    <string name="server_sent">Sent</string>
     <string name="server_share_code">Share code</string>
     <string name="server_sync_now">Sync now</string>
     <string name="server_syncing">Looking for news ...</string>
@@ -541,17 +518,10 @@
     <string name="settings_theme">Theme</string>
     <string name="settings_theme_system">System</string>
     <string name="settings_title">Settings</string>
-    <string name="share_answer_file">answer %1$s</string>
-    <string name="share_answer_no">Sorry, I can\'t lend you “%1$s” right now. Open the attached file with Shelfmark.</string>
-    <string name="share_answer_subject">Re: “%1$s”</string>
-    <string name="share_answer_yes">Yes, you can borrow “%1$s”. Open the attached file with Shelfmark.</string>
     <string name="share_chooser">Send with</string>
     <string name="share_library_file">library %1$s</string>
     <string name="share_library_message">Here is my bookshelf. Open the attached file with Shelfmark to browse it. (%1$s)</string>
     <string name="share_library_subject">Bookshelf of %1$s</string>
-    <string name="share_request_file">request %1$s</string>
-    <string name="share_request_message">Hi %1$s, may I borrow “%2$s”? Open the attached file with Shelfmark to answer yes or no.</string>
-    <string name="share_request_subject">May I borrow “%1$s”?</string>
     <string name="share_target_quote">Save as quote</string>
     <string name="sort_added">Recently added</string>
     <string name="sort_author">Author</string>
@@ -659,10 +629,6 @@
     <plurals name="reading_days">
         <item quantity="one">%d reading day</item>
         <item quantity="other">%d reading days</item>
-    </plurals>
-    <plurals name="server_waiting">
-        <item quantity="one">%d message waits for a connection</item>
-        <item quantity="other">%d messages wait for a connection</item>
     </plurals>
     <plurals name="times_read">
         <item quantity="one">Read %d time</item>

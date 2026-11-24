@@ -5,7 +5,8 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
-import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.repo.BackupManager
@@ -25,7 +26,6 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -56,7 +56,7 @@ private class Device(context: Context, folder: TemporaryFolder, name: String) {
     }
 }
 
-/** The whole friend workflow, played between two simulated phones exchanging files. */
+/** What still goes from phone to phone as a file: a shelf to look at, and a backup. */
 @RunWith(RobolectricTestRunner::class)
 class SocialFlowTest {
     @get:Rule val folder = TemporaryFolder()
@@ -67,85 +67,63 @@ class SocialFlowTest {
 
     @After fun tearDown() = devices.forEach { it.close() }
 
-    @Test fun shareLibraryRequestBookAndAnswerYes() = runBlocking {
+    @Test fun aShelfTravelsAsAFile() = runBlocking {
         val anna = device("Anna")
         val ben = device("Ben")
         val duneId = anna.library.addBook(Book(title = "Dune", authors = "Frank Herbert", status = ReadingStatus.READ, rating = 5f))
         anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", lentTo = "Clara"))
+        val momoId = anna.library.addBook(Book(title = "Momo", authors = "Michael Ende"))
 
         // Anna shares her library, Ben opens the file.
         val libraryFile = ShareCodec.encode(anna.social.exportLibrary(includeStatus = true, includeRatings = true))
         val imported = ben.social.import(libraryFile) as ImportResult.LibraryImported
         assertEquals("Anna", imported.name)
-        assertEquals(2, imported.bookCount)
+        assertEquals(3, imported.bookCount)
         val annasBooks = ben.social.friendBooks(imported.friendId).first()
         val dune = annasBooks.first { it.title == "Dune" }
         assertTrue(dune.available)
+        assertEquals(duneId, dune.remoteId)
         assertEquals(5f, dune.rating)
         assertEquals(ReadingStatus.READ, dune.status)
+        // Lent by hand, to somebody without Shelfmark: not to be had right now.
         assertFalse(annasBooks.first { it.title == "Emma" }.available)
+        // A shelf from a file is a shelf to look at. The friend is not connected, and nothing is asked through a file.
+        assertFalse(ben.social.friend(imported.friendId).first()!!.online)
+        assertEquals(0, ben.social.waitingLoans.first())
 
-        // Ben asks for Dune, the request travels to Anna.
-        val requestFile = ShareCodec.encode(ben.social.createRequest(dune, "Für die Ferien?"))
-        assertEquals(LendStatus.PENDING, ben.social.requests.first().single().status)
-        val received = anna.social.import(requestFile) as ImportResult.RequestReceived
-        assertEquals("Ben", received.fromName)
-        assertEquals("Dune", received.bookTitle)
-        assertEquals(1, anna.social.pendingIncoming.first())
-        val incoming = anna.social.requests.first().single()
-        assertTrue(incoming.incoming)
-        assertEquals("Für die Ferien?", incoming.note)
-
-        // Anna says yes: her copy is now marked as lent to Ben.
-        val answerFile = ShareCodec.encode(anna.social.answerRequest(received.requestId, accept = true)!!)
-        assertEquals(0, anna.social.pendingIncoming.first())
-        val lent = anna.library.getBook(duneId)!!
-        assertEquals("Ben", lent.lentTo)
-        assertNotNull(lent.lentSince)
-        assertFalse(lent.availableToLend)
-
-        // Ben opens the answer.
-        val answer = ben.social.import(answerFile) as ImportResult.AnswerReceived
-        assertTrue(answer.accepted)
-        assertEquals("Anna", answer.fromName)
-        assertEquals(LendStatus.ACCEPTED, ben.social.requests.first().single().status)
-
-        // Opening the request file a second time must not reopen the question.
-        anna.social.import(requestFile)
-        assertEquals(LendStatus.ACCEPTED, anna.social.requests.first().single().status)
-    }
-
-    @Test fun answeringNoLeavesTheBookAvailable() = runBlocking {
-        val anna = device("Anna")
-        val ben = device("Ben")
-        val id = anna.library.addBook(Book(title = "Dune"))
-        val friend = ben.social.import(ShareCodec.encode(anna.social.exportLibrary(true, true))) as ImportResult.LibraryImported
-        val book = ben.social.friendBooks(friend.friendId).first().single()
-        val request = anna.social.import(ShareCodec.encode(ben.social.createRequest(book, ""))) as ImportResult.RequestReceived
-        val answer = ben.social.import(ShareCodec.encode(anna.social.answerRequest(request.requestId, accept = false)!!)) as ImportResult.AnswerReceived
-        assertFalse(answer.accepted)
-        assertEquals(LendStatus.DECLINED, ben.social.requests.first().single().status)
-        assertTrue(anna.library.getBook(id)!!.availableToLend)
+        // A book that a loan between friends has reserved or out is taken, though the book itself does not say so yet.
+        fun loanOf(bookId: Long, state: LoanState) = Loan(id = "loan-$bookId", lender = true, peerId = "cleo", peerName = "Cleo", bookId = bookId, title = "?", state = state)
+        anna.db.social().upsertLoans(listOf(loanOf(duneId, LoanState.AGREED), loanOf(momoId, LoanState.ASKED)))
+        assertEquals(1, anna.social.waitingLoans.first())
+        val later = anna.social.exportLibrary(includeStatus = true, includeRatings = true).library!!.books.associateBy { it.title }
+        assertFalse(later.getValue("Dune").available)
+        // A question alone takes nothing off the shelf.
+        assertTrue(later.getValue("Momo").available)
+        // What I borrowed is not mine to lend, and a loan of mine as borrower holds none of my books.
+        anna.db.social().upsertLoans(listOf(Loan(id = "loan-x", lender = false, peerId = "cleo", peerName = "Cleo", bookId = momoId, title = "?", state = LoanState.ON_LOAN)))
+        assertTrue(anna.social.exportLibrary(includeStatus = true, includeRatings = true).library!!.books.first { it.title == "Momo" }.available)
     }
 
     @Test fun misdirectedFilesAreRejected() = runBlocking {
         val anna = device("Anna")
         val ben = device("Ben")
-        val clara = device("Clara")
         anna.library.addBook(Book(title = "Dune"))
         val libraryFile = ShareCodec.encode(anna.social.exportLibrary(true, true))
 
         assertEquals(ImportResult.Rejected(RejectReason.OWN_LIBRARY), anna.social.import(libraryFile))
         assertEquals(ImportResult.Rejected(RejectReason.NOT_SHELFMARK), ben.social.import("just some text"))
+        assertEquals(ImportResult.Rejected(RejectReason.NEWER_VERSION), ben.social.import(libraryFile.replaceFirst("\"v\":1", "\"v\":2")))
 
-        val friend = ben.social.import(libraryFile) as ImportResult.LibraryImported
-        val request = ShareCodec.encode(ben.social.createRequest(ben.social.friendBooks(friend.friendId).first().single(), ""))
-        // Clara is not the owner Ben asked.
-        assertEquals(ImportResult.Rejected(RejectReason.NOT_FOR_ME), clara.social.import(request))
-        // An answer to a request Clara never made.
-        val received = anna.social.import(request) as ImportResult.RequestReceived
-        val answer = ShareCodec.encode(anna.social.answerRequest(received.requestId, true)!!)
-        assertEquals(ImportResult.Rejected(RejectReason.UNKNOWN_REQUEST), clara.social.import(answer))
+        // A borrow request and its answer, as files of a version from before the loans: said to be
+        // from an older version, whoever they were meant for, and nothing comes of them.
+        val request = """{"app":"shelfmark","v":1,"type":"lend_request","request":{"requestId":"req-1","bookId":1,"bookTitle":"Dune","fromId":"b","fromName":"Ben","toId":"a","note":"?","createdAt":5}}"""
+        val answer = """{"app":"shelfmark","v":1,"type":"lend_answer","answer":{"requestId":"req-1","accepted":true,"bookTitle":"Dune","fromId":"a","fromName":"Anna","toId":"b","answeredAt":9}}"""
+        assertEquals(ImportResult.Rejected(RejectReason.OLD_REQUEST), anna.social.import(request))
+        assertEquals(ImportResult.Rejected(RejectReason.OLD_REQUEST), ben.social.import(answer))
+        assertTrue(anna.social.loans.first().isEmpty())
+        assertTrue(anna.library.getBook(anna.library.allBooks().single().id)!!.lentTo.isBlank())
+        // A Shelfmark file of a kind nobody ever wrote is simply none.
+        assertEquals(ImportResult.Rejected(RejectReason.NOT_SHELFMARK), ben.social.import("""{"app":"shelfmark","v":1,"type":"something_else"}"""))
     }
 
     @Test fun reimportingALibraryReplacesTheOldSnapshot() = runBlocking {

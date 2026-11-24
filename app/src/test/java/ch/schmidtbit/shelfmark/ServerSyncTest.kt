@@ -5,14 +5,21 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.FriendBook
-import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanAction
+import ch.schmidtbit.shelfmark.data.model.LoanNewsKind
+import ch.schmidtbit.shelfmark.data.model.LoanRules
+import ch.schmidtbit.shelfmark.data.model.LoanState
+import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import ch.schmidtbit.shelfmark.data.repo.CoverStore
 import ch.schmidtbit.shelfmark.data.repo.Keep
 import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
+import ch.schmidtbit.shelfmark.data.repo.LoanBooks
 import ch.schmidtbit.shelfmark.data.repo.ServerSync
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
@@ -24,8 +31,9 @@ import ch.schmidtbit.shelfmark.data.server.OkHttpPoster
 import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.server.ServerException
-import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
+import ch.schmidtbit.shelfmark.ui.friends.loanProblemRes
+import ch.schmidtbit.shelfmark.util.Dates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,13 +41,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -70,8 +78,30 @@ import java.util.UUID
 class FakeServer : HttpPoster {
     private class User(val id: String, val password: String, var confirmed: Boolean)
     private class Profile(var name: String, var code: String)
-    private class Message(val id: String, val to: String, val from: String, val payload: JsonElement, val at: Long)
     private class Vault(var revision: Long, var payload: JsonElement)
+
+    /** A row of shelfmark.loans. */
+    private class LoanRow(
+        val id: String,
+        val lender: String,
+        val borrower: String,
+        val bookId: Long,
+        val book: JsonObject,
+        val note: String,
+        val askedAt: Long,
+        var state: String = "asked",
+        var reason: String = "",
+        var dueOn: Long? = null,
+        var agreedAt: Long? = null,
+        var handedAt: Long? = null,
+        var receivedAt: Long? = null,
+        var givenBackAt: Long? = null,
+        var closedAt: Long? = null,
+        var updatedAt: Long = askedAt,
+        var updatedBy: String? = null,
+        var hiddenByLender: Boolean = false,
+        var hiddenByBorrower: Boolean = false,
+    )
 
     private val users = LinkedHashMap<String, User>()
     private val tokens = HashMap<String, Pair<String, Long>>()
@@ -79,7 +109,7 @@ class FakeServer : HttpPoster {
     private val profiles = LinkedHashMap<String, Profile>()
     private val friendships = HashSet<Pair<String, String>>()
     private val libraries = HashMap<String, Pair<Long, JsonElement>>()
-    private val messages = ArrayList<Message>()
+    private val loans = ArrayList<LoanRow>()
     private val vaults = HashMap<String, Vault>()
     /** Cover photos by their path, "<user id>/<file name>". */
     val pictures = HashMap<String, ByteArray>()
@@ -98,11 +128,14 @@ class FakeServer : HttpPoster {
     var mailsSpent = false
     /** Where the last sign-up asked the confirmation mail to lead back to, if it named a page. */
     var returnTo: String? = null
+    /** A project whose schema.sql is the one from before the loans: it has no functions for them, and its sync names none. */
+    var beforeLoans = false
 
     fun knows(email: String): Boolean = users[email.lowercase()]?.let { it.id in profiles } == true
     fun hasAccount(email: String): Boolean = email.lowercase() in users
     fun idOf(email: String): String = users.getValue(email.lowercase()).id
-    fun waitingFor(email: String): Int = users[email.lowercase()]?.let { user -> messages.count { it.to == user.id } } ?: 0
+    /** The states of the loans somebody is part of, hidden ones included, in the order they were asked. */
+    fun loanStatesOf(email: String): List<String> = users[email.lowercase()]?.let { user -> loans.filter { it.lender == user.id || it.borrower == user.id }.map { it.state } }.orEmpty()
     fun revisionOf(email: String): Long = users[email.lowercase()]?.let { vaults[it.id]?.revision } ?: 0
     fun confirm(email: String) { users.getValue(email.lowercase()).confirmed = true }
     /** Ends every sign-in, as changing the password would. */
@@ -201,9 +234,83 @@ class FakeServer : HttpPoster {
         }
     }
 
+    /** A loan as one of its two sides sees it, like shelfmark.loan_json. */
+    private fun loanJson(loan: LoanRow, me: String): JsonObject {
+        val peer = if (loan.lender == me) loan.borrower else loan.lender
+        return buildJsonObject {
+            put("id", loan.id)
+            put("role", if (loan.lender == me) "lender" else "borrower")
+            put("peer", peer)
+            put("peerName", profiles[peer]?.name.orEmpty())
+            put("bookId", loan.bookId)
+            put("book", loan.book)
+            put("note", loan.note)
+            put("state", loan.state)
+            put("reason", loan.reason)
+            put("dueOn", loan.dueOn)
+            put("askedAt", loan.askedAt)
+            put("agreedAt", loan.agreedAt)
+            put("handedAt", loan.handedAt)
+            put("receivedAt", loan.receivedAt)
+            put("givenBackAt", loan.givenBackAt)
+            put("closedAt", loan.closedAt)
+            put("updatedAt", loan.updatedAt)
+            put("byMe", loan.updatedBy == me)
+        }
+    }
+
+    /** shelfmark_loan_act: who may take which step, and from where. Everything else is "not_allowed". */
+    private fun loanAct(me: String, args: JsonObject, text: (String) -> String, moment: Long): JsonObject {
+        val loan = loans.firstOrNull { it.id == text("p_loan") && (it.lender == me || it.borrower == me) } ?: refuse("unknown_loan")
+        val lender = loan.lender == me
+        val due = (args["p_due"] as? JsonPrimitive)?.longOrNull
+        if (due != null && (due < 0 || due > 100_000)) refuse("invalid")
+        val reason = text("p_reason").trim().take(200)
+        val action = text("p_action")
+        if (action == "hide" && loan.state in OVER) {
+            if (lender) loan.hiddenByLender = true else loan.hiddenByBorrower = true
+            return loanJson(loan, me)
+        }
+        when {
+            lender && action == "agree" && loan.state == "asked" -> {
+                // A book can be promised to one person at a time.
+                if (loans.any { it.lender == me && it.bookId == loan.bookId && it.id != loan.id && it.state in HOLDING }) refuse("taken")
+                loan.state = "agreed"; loan.agreedAt = moment; loan.dueOn = due
+                // Whoever else asked for it is told that it went to somebody else.
+                loans.filter { it.lender == me && it.bookId == loan.bookId && it.id != loan.id && it.state == "asked" }.forEach {
+                    it.state = "declined"; it.reason = "taken"; it.closedAt = moment; it.updatedAt = moment; it.updatedBy = me
+                }
+            }
+            lender && action == "decline" && loan.state == "asked" -> { loan.state = "declined"; loan.reason = reason; loan.closedAt = moment }
+            lender && action == "cancel" && loan.state in setOf("agreed", "handed") -> { loan.state = "cancelled"; loan.reason = reason; loan.closedAt = moment }
+            lender && action == "hand" && loan.state == "agreed" -> { loan.state = "handed"; loan.handedAt = moment }
+            lender && action == "undo_hand" && loan.state == "handed" -> { loan.state = "agreed"; loan.handedAt = null }
+            lender && action == "take_back" && loan.state == "given_back" -> { loan.state = "returned"; loan.closedAt = moment }
+            lender && action == "not_returned" && loan.state == "given_back" -> { loan.state = "on_loan"; loan.givenBackAt = null }
+            lender && action == "close" && loan.state == "on_loan" -> { loan.state = "returned"; loan.closedAt = moment }
+            lender && action == "set_due" && loan.state in HOLDING -> loan.dueOn = due
+            !lender && action == "withdraw" && loan.state in setOf("asked", "agreed") -> { loan.state = "withdrawn"; loan.closedAt = moment }
+            !lender && action == "receive" && loan.state == "handed" -> { loan.state = "on_loan"; loan.receivedAt = moment }
+            !lender && action == "not_received" && loan.state == "handed" -> { loan.state = "agreed"; loan.handedAt = null }
+            !lender && action == "give_back" && loan.state == "on_loan" -> { loan.state = "given_back"; loan.givenBackAt = moment }
+            !lender && action == "undo_give_back" && loan.state == "given_back" -> { loan.state = "on_loan"; loan.givenBackAt = null }
+            else -> refuse("not_allowed")
+        }
+        loan.updatedAt = moment
+        loan.updatedBy = me
+        return loanJson(loan, me)
+    }
+
     private fun run(function: String, args: JsonObject, text: (String) -> String, caller: String?): JsonElement {
         stamp += 10
-        if (function == "shelfmark_ping") return buildJsonObject { put("ok", true); put("schema", 2) }
+        // The moment of this call. Every call has one of its own, as on a server that is not asked twice in a millisecond.
+        val moment = time + stamp
+        if (function == "shelfmark_ping") {
+            // Housekeeping on the way: loans that are over and that both sides have put away.
+            loans.removeAll { it.hiddenByLender && it.hiddenByBorrower }
+            return buildJsonObject { put("ok", true); put("schema", if (beforeLoans) 2 else 3); put("time", moment) }
+        }
+        if (beforeLoans && function.startsWith("shelfmark_loan_")) refuse("missing")
         // Everything else is for somebody who is signed in.
         val me = caller ?: refuse("denied")
         val profile = profiles.getOrPut(me) { Profile("", newCode()) }
@@ -225,19 +332,54 @@ class FakeServer : HttpPoster {
                 val other = text("p_friend")
                 friendships -= me to other
                 friendships -= other to me
-                messages.removeAll { (it.to == me && it.from == other) || (it.to == other && it.from == me) }
+                // Whoever ends the friendship ends the open questions with it: their own are taken back,
+                // the friend's are answered with a no. A book that is reserved or out stays a loan.
+                loans.filter { it.state == "asked" && ((it.lender == me && it.borrower == other) || (it.lender == other && it.borrower == me)) }.forEach {
+                    it.state = if (it.borrower == me) "withdrawn" else "declined"
+                    it.closedAt = moment; it.updatedAt = moment; it.updatedBy = me
+                }
                 buildJsonObject { put("ok", true) }
             }
             "shelfmark_publish" -> { libraries[me] = stamp to args.getValue("p_library"); buildJsonObject { put("at", stamp) } }
-            "shelfmark_send" -> {
-                if ((me to text("p_to")) !in friendships) refuse("not_friends")
-                val message = Message(UUID.randomUUID().toString(), text("p_to"), me, args.getValue("p_payload"), stamp)
-                messages += message
-                buildJsonObject { put("id", message.id) }
+            // The mailbox of the borrow requests is closed. A version of the app from before is told that it is too old.
+            "shelfmark_send" -> refuse("outdated")
+            "shelfmark_loan_ask" -> {
+                val friend = text("p_friend")
+                val bookId = (args["p_book"] as? JsonPrimitive)?.longOrNull
+                if (friend.isBlank() || bookId == null || friend == me) refuse("invalid")
+                if ((me to friend) !in friendships) refuse("not_friends")
+                val info = args["p_info"] as? JsonObject ?: JsonObject(emptyMap())
+                fun word(name: String, limit: Int) = (info[name] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content.orEmpty().take(limit)
+                val title = word("title", 10_000).trim().take(300)
+                if (title.isEmpty()) refuse("invalid")
+                // Asking twice for the same book gives back the question that is still open.
+                loans.firstOrNull { it.lender == friend && it.borrower == me && it.bookId == bookId && it.state !in OVER }?.let { return loanJson(it, me) }
+                // Reserved for somebody, or in somebody's hands.
+                if (loans.any { it.lender == friend && it.bookId == bookId && it.state in HOLDING }) refuse("taken")
+                if (loans.count { it.borrower == me && it.state == "asked" } >= 50) refuse("full")
+                val loan = LoanRow(
+                    id = UUID.randomUUID().toString(),
+                    lender = friend,
+                    borrower = me,
+                    bookId = bookId,
+                    // Only what is known to be there, and no longer than a book needs.
+                    book = buildJsonObject {
+                        put("title", title)
+                        put("authors", word("authors", 300))
+                        put("isbn", word("isbn", 20))
+                        put("coverUrl", word("coverUrl", 600))
+                        put("pageCount", (word("pageCount", 20).toIntOrNull() ?: 0).coerceIn(0, 100_000))
+                        put("format", word("format", 20).ifEmpty { "UNKNOWN" })
+                    },
+                    note = text("p_note").trim().take(300),
+                    askedAt = moment,
+                    updatedBy = me,
+                )
+                loans += loan
+                loanJson(loan, me)
             }
+            "shelfmark_loan_act" -> loanAct(me, args, text, moment)
             "shelfmark_sync" -> {
-                val ack = (args["p_ack"] as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
-                messages.removeAll { it.to == me && it.id in ack }
                 val known = (args["p_known"] as? JsonObject).orEmpty()
                 val friends = friendships.filter { it.first == me }.map { it.second }.sorted()
                 buildJsonObject {
@@ -251,9 +393,14 @@ class FakeServer : HttpPoster {
                             if (at > (known[f]?.jsonPrimitive?.long ?: 0)) add(buildJsonObject { put("owner", f); put("at", at); put("payload", payload) })
                         }
                     })
-                    put("messages", buildJsonArray {
-                        messages.filter { it.to == me }.forEach { m -> add(buildJsonObject { put("id", m.id); put("from", m.from); put("at", m.at); put("payload", m.payload) }) }
+                    // The newest question first, and nothing the caller has put away.
+                    if (!beforeLoans) put("loans", buildJsonArray {
+                        loans.filter { (it.lender == me && !it.hiddenByLender) || (it.borrower == me && !it.hiddenByBorrower) }
+                            .sortedWith(compareByDescending<LoanRow> { it.askedAt }.thenBy { it.id })
+                            .forEach { add(loanJson(it, me)) }
                     })
+                    // A leftover of the mailbox, always empty.
+                    put("messages", buildJsonArray { })
                 }
             }
             "shelfmark_vault_pull" -> {
@@ -277,13 +424,19 @@ class FakeServer : HttpPoster {
                 vaults.remove(me)
                 libraries.remove(me)
                 friendships.removeAll { it.first == me || it.second == me }
-                messages.removeAll { it.to == me || it.from == me }
+                loans.removeAll { it.lender == me || it.borrower == me }
                 users.entries.removeAll { it.value.id == me }
                 tokens.entries.removeAll { it.value.first == me }
                 buildJsonObject { put("ok", true); put("login_kept", false) }
             }
             else -> refuse("missing")
         }
+    }
+
+    private companion object {
+        val OVER = setOf("returned", "declined", "withdrawn", "cancelled")
+        /** The book is reserved or out. */
+        val HOLDING = setOf("agreed", "handed", "on_loan", "given_back")
     }
 }
 
@@ -339,7 +492,40 @@ abstract class ServerStory {
 
     /** A second device of the same person: nothing on it yet, signed in to the same account. */
     protected suspend fun secondDevice(of: Phone, name: String): Phone = phone(name).also { device ->
-        assertTrue(device.server.signIn(of.email, of.password) is SyncResult.Done)
+        val arrived = device.server.signIn(of.email, of.password)
+        assertTrue(arrived is SyncResult.Done)
+        // A device that is new to an account has nothing to compare with: it starts quietly.
+        assertTrue((arrived as SyncResult.Done).news.isEmpty())
+    }
+
+    /** Signs both up and makes them friends. Afterwards each has what the other shares. */
+    protected suspend fun befriend(owner: Phone, vararg others: Phone) {
+        if (!owner.settings.current().signedIn) assertTrue(owner.join() is SyncResult.Done)
+        for (other in others) {
+            if (!other.settings.current().signedIn) assertTrue(other.join() is SyncResult.Done)
+            other.server.addFriend(owner.settings.current().friendCode).getOrThrow()
+        }
+        owner.server.sync()
+    }
+
+    protected suspend fun Phone.loans(): List<Loan> = social.loans.first()
+    protected suspend fun Phone.loan(): Loan = loans().single()
+    protected suspend fun Phone.loan(id: String): Loan = loans().first { it.id == id }
+    /** A book as it stands on a friend's shelf. */
+    protected suspend fun Phone.onShelfOf(friend: Phone, title: String): FriendBook = social.friendBooks(friend.id).first().first { it.title == title }
+    protected suspend fun Phone.news(): List<LoanNewsKind?> = (server.sync() as SyncResult.Done).news.map { it.kind }
+
+    /** Takes a loan from the question to "on loan" by the shortest way, and returns its id. */
+    protected suspend fun lend(lender: Phone, borrower: Phone, title: String, due: Long? = null): String {
+        assertNull(borrower.server.loanAsk(borrower.onShelfOf(lender, title), ""))
+        val id = borrower.loans().first { it.title == title && !it.over }.id
+        lender.server.sync()
+        assertNull(lender.server.loanAct(id, LoanAction.AGREE, due = due))
+        assertNull(lender.server.loanAct(id, LoanAction.HAND))
+        borrower.server.sync()
+        assertNull(borrower.server.loanAct(id, LoanAction.RECEIVE))
+        lender.server.sync()
+        return id
     }
 
     @After fun closePhones() {
@@ -347,13 +533,13 @@ abstract class ServerStory {
         phones.forEach { runBlocking { runCatching { it.server.deleteAccount() } }; it.close() }
     }
 
-    @Test fun twoFriendsShareLibrariesAndLendABook() = runBlocking {
+    @Test fun twoFriendsFindEachOtherAndSeeEachOthersShelves() = runBlocking {
         val anna = phone("Anna")
         val ben = phone("Ben")
         // Nothing happens before somebody signs in.
         assertEquals(SyncResult.Off, anna.server.sync())
 
-        val emma = anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", status = ReadingStatus.READ, rating = 4.5f, lendable = true))
+        anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", status = ReadingStatus.READ, rating = 4.5f, lendable = true))
         anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen", lendable = false))
         assertTrue(anna.join() is SyncResult.Done)
         val annaCode = anna.settings.current().friendCode
@@ -372,37 +558,17 @@ abstract class ServerStory {
         assertEquals(anna.id, annaAtBen.friend.id)
         assertTrue(annaAtBen.friend.online)
         assertEquals(2, annaAtBen.bookCount)
-        val emmaAtBen = ben.social.friendBooks(anna.id).first().first { it.title == "Emma" }
+        val emmaAtBen = ben.onShelfOf(anna, "Emma")
         assertTrue(emmaAtBen.available)
         assertEquals(4.5f, emmaAtBen.rating)
+        assertFalse(ben.onShelfOf(anna, "Persuasion").available)
 
         // Anna did nothing, and has Ben as a friend all the same.
         assertTrue(anna.server.sync() is SyncResult.Done)
         val benAtAnna = anna.social.friends.first().single()
         assertEquals("Ben", benAtAnna.friend.name)
         assertEquals(1, benAtAnna.bookCount)
-        assertTrue(anna.server.canReach(ben.id))
-
-        // Ben asks for Emma. No file, no messenger.
-        assertTrue(ben.server.send(anna.id, ben.social.createRequest(emmaAtBen, "Bitte!")))
-        val arrived = anna.server.sync() as SyncResult.Done
-        assertEquals("Emma", arrived.requests.single().bookTitle)
-        assertEquals("Ben", arrived.requests.single().fromName)
-        val request = anna.social.requests.first().single()
-        assertTrue(request.incoming)
-        assertEquals("Bitte!", request.note)
-        // The server hands a message over once.
-        assertTrue((anna.server.sync() as SyncResult.Done).requests.isEmpty())
-        assertEquals(1, anna.social.requests.first().size)
-
-        // Anna says yes. Her copy is marked as lent, and Ben learns both things.
-        assertTrue(anna.server.send(ben.id, anna.social.answerRequest(request.id, true)!!))
-        assertEquals("Ben", anna.library.getBook(emma)!!.lentTo)
-        val news = ben.server.sync() as SyncResult.Done
-        assertTrue(news.answers.single().accepted)
-        assertEquals(LendStatus.ACCEPTED, ben.social.requests.first().single().status)
-        assertFalse(ben.social.friendBooks(anna.id).first().first { it.title == "Emma" }.available)
-        assertTrue((ben.server.sync() as SyncResult.Done).answers.isEmpty())
+        assertTrue(benAtAnna.friend.online)
 
         // Wrong codes are told apart.
         assertEquals("unknown_code", (ben.server.addFriend("ZZZZZ-ZZZZZ").exceptionOrNull() as ServerException).reason)
@@ -413,12 +579,23 @@ abstract class ServerStory {
         assertNotEquals(annaCode, fresh)
         assertEquals(fresh, anna.settings.current().friendCode)
 
-        // Ben ends the friendship. It ends for Anna too.
+        // Questions that nobody answered end with the friendship. Each of the two has one open, and Ben ends it.
+        assertNull(ben.server.loanAsk(emmaAtBen, ""))
+        assertNull(anna.server.loanAsk(anna.onShelfOf(ben, "Dune"), ""))
         assertTrue(ben.server.removeFriend(anna.id))
         assertTrue(ben.social.friends.first().isEmpty())
-        anna.server.sync()
+        // He who ended it is not told about it: his own question he took back, hers he answered with a no.
+        assertTrue(ben.news().isEmpty())
+        assertEquals(LoanState.WITHDRAWN, ben.loans().first { it.title == "Emma" }.state)
+        assertEquals(LoanState.DECLINED, ben.loans().first { it.title == "Dune" }.state)
+        // It ends for Anna too. She hears the no to her question, and that he no longer asks for her book.
+        val heard = (anna.server.sync() as SyncResult.Done).news.associate { it.loan.title to it.kind }
+        assertEquals(mapOf<String, LoanNewsKind?>("Dune" to LoanNewsKind.DECLINED, "Emma" to LoanNewsKind.WITHDRAWN), heard)
+        assertEquals(LoanState.DECLINED, anna.loans().first { it.title == "Dune" }.state)
+        assertFalse(anna.loans().first { it.title == "Dune" }.taken)
+        assertEquals(LoanState.WITHDRAWN, anna.loans().first { it.title == "Emma" }.state)
         assertTrue(anna.social.friends.first().isEmpty())
-        assertFalse(anna.server.canReach(ben.id))
+        assertEquals("not_friends", ben.server.loanAsk(emmaAtBen, ""))
 
         // Deleting the account takes everything off the server. The books on the phone stay.
         assertTrue(anna.server.deleteAccount())
@@ -428,6 +605,511 @@ abstract class ServerStory {
         assertEquals(listOf("Emma", "Persuasion"), anna.titles())
         assertEquals("unknown_code", (ben.server.addFriend(fresh).exceptionOrNull() as ServerException).reason)
         assertEquals(SyncResult.Failed("invalid_credentials"), anna.server.signIn(anna.email, anna.password))
+    }
+
+    @Test fun aBookIsLentFromTheQuestionToTheDayItIsBack() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val emma = anna.library.addBook(
+            Book(title = "Emma", authors = "Jane Austen", isbn = "9780141439587", pageCount = 474, format = BookFormat.PAPERBACK, description = "Handsome, clever, and rich.", lendable = true),
+        )
+        befriend(anna, ben)
+
+        // Ben asks, with a few words. No file, no messenger.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), " Über die Feiertage? "))
+        val asked = ben.loan()
+        val id = asked.id
+        assertEquals(LoanState.ASKED, asked.state)
+        assertFalse(asked.lender)
+        assertEquals(anna.id, asked.peerId)
+        assertEquals("Anna", asked.peerName)
+        assertEquals("Über die Feiertage?", asked.note)
+        assertTrue(asked.byMe)
+        assertEquals(listOf(LoanAction.WITHDRAW), LoanRules.actions(asked))
+        // Asking again is the same question, not a second one.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        assertEquals(id, ben.loan().id)
+
+        // Anna hears of it, once, and it waits for her.
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.ASKED), anna.news())
+        assertTrue(anna.news().isEmpty())
+        val question = anna.loan()
+        assertTrue(question.lender)
+        assertTrue(question.waitsForMe)
+        assertEquals(emma, question.bookId)
+        assertEquals("Ben", question.peerName)
+        assertEquals("Emma", question.title)
+        assertEquals("9780141439587", question.isbn)
+        assertEquals(474, question.pageCount)
+        assertEquals(BookFormat.PAPERBACK, question.format)
+        assertFalse(question.byMe)
+        assertEquals(1, anna.social.waitingLoans.first())
+
+        // She says yes, back by a day. The book is reserved: not lent yet, but nobody else can ask for it.
+        val due = 20_030L
+        assertNull(anna.server.loanAct(id, LoanAction.AGREE, due = due))
+        assertEquals(LoanState.AGREED, anna.loan().state)
+        assertEquals(0, anna.social.waitingLoans.first())
+        assertEquals("", anna.library.getBook(emma)!!.lentTo)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.AGREED), ben.news())
+        assertEquals(due, ben.loan().dueOn)
+        assertFalse(ben.onShelfOf(anna, "Emma").available)
+        assertTrue(ben.titles().isEmpty())
+
+        // Handing over takes both, the lender first.
+        assertEquals("not_allowed", ben.server.loanAct(id, LoanAction.RECEIVE))
+        assertNull(anna.server.loanAct(id, LoanAction.HAND))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.HANDED), ben.news())
+        assertTrue(ben.loan().waitsForMe)
+        assertEquals(1, ben.social.waitingLoans.first())
+        // Until Ben says that he has it, it is not lent.
+        assertEquals("", anna.library.getBook(emma)!!.lentTo)
+        assertTrue(ben.titles().isEmpty())
+        assertNull(ben.server.loanAct(id, LoanAction.RECEIVE))
+
+        // Now it is on loan, and the books say so on both sides. Ben got a copy on his shelf.
+        val onLoan = ben.loan()
+        assertEquals(LoanState.ON_LOAN, onLoan.state)
+        val copy = ben.library.allBooks().single()
+        assertEquals(LoanBooks.loanBookId(id), copy.id)
+        assertEquals("Emma", copy.title)
+        assertEquals("Jane Austen", copy.authors)
+        assertEquals("9780141439587", copy.isbn)
+        assertEquals(474, copy.pageCount)
+        assertEquals(BookFormat.PAPERBACK, copy.format)
+        // What the loan does not say about the book, the friend's shelf does.
+        assertEquals("Handsome, clever, and rich.", copy.description)
+        assertEquals(Ownership.BORROWED, copy.ownership)
+        assertEquals("Anna", copy.borrowedFrom)
+        assertEquals(id, copy.loanId)
+        assertEquals(ReadingStatus.NONE, copy.status)
+        assertEquals(onLoan.receivedAt, copy.addedAt)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.ON_LOAN), anna.news())
+        val lent = anna.library.getBook(emma)!!
+        assertEquals("Ben", lent.lentTo)
+        assertEquals(Dates.dayOf(onLoan.receivedAt!!), lent.lentSince)
+        assertEquals(id, lent.loanId)
+        // Anna's shelf does not show a borrowed book of Ben's as one of hers to lend.
+        anna.server.sync()
+        assertFalse(anna.onShelfOf(ben, "Emma").available)
+
+        // Looking again changes nothing, and nothing is saved again.
+        val saved = anna.settings.current().vaultRevision to ben.settings.current().vaultRevision
+        assertTrue(anna.news().isEmpty())
+        assertTrue(ben.news().isEmpty())
+        assertEquals(saved, anna.settings.current().vaultRevision to ben.settings.current().vaultRevision)
+
+        // Ben's tablet, the same account: the copy is there, once.
+        val tablet = secondDevice(ben, "Tablet")
+        assertEquals(copy.id, tablet.library.allBooks().single().id)
+        assertEquals(LoanState.ON_LOAN, tablet.loan().state)
+        tablet.server.sync()
+        ben.server.sync()
+        assertEquals(1, ben.library.allBooks().size)
+        assertEquals(1, tablet.library.allBooks().size)
+        // What he notes in it is his, whatever happens to the loan.
+        tablet.library.modify(copy.id) { it.copy(rating = 4f, review = "Gern gelesen.") }
+        tablet.server.sync()
+
+        // Anna gives him more time, and then no fixed day at all.
+        assertNull(anna.server.loanAct(id, LoanAction.SET_DUE, due = due + 14))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.DUE_CHANGED), ben.news())
+        assertEquals(due + 14, ben.loan().dueOn)
+        assertNull(anna.server.loanAct(id, LoanAction.SET_DUE, due = null))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.DUE_CHANGED), ben.news())
+        assertNull(ben.loan().dueOn)
+
+        // Giving back takes both too, the borrower first.
+        assertEquals("not_allowed", anna.server.loanAct(id, LoanAction.TAKE_BACK))
+        assertNull(ben.server.loanAct(id, LoanAction.GIVE_BACK))
+        assertEquals(LoanState.GIVEN_BACK, ben.loan().state)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.GIVEN_BACK), anna.news())
+        assertTrue(anna.loan().waitsForMe)
+        // Until Anna says that she has it back, it is lent.
+        assertEquals("Ben", anna.library.getBook(emma)!!.lentTo)
+        assertEquals(Ownership.BORROWED, ben.library.getBook(copy.id)!!.ownership)
+        assertNull(anna.server.loanAct(id, LoanAction.TAKE_BACK))
+
+        // Her book is free again, and friends can ask for it.
+        val free = anna.library.getBook(emma)!!
+        assertEquals("", free.lentTo)
+        assertNull(free.lentSince)
+        assertEquals("", free.loanId)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.RETURNED), ben.news())
+        assertTrue(ben.onShelfOf(anna, "Emma").available)
+        // His copy stays: read, not mine, with everything he noted in it.
+        tablet.server.sync()
+        for (device in listOf(ben, tablet)) {
+            val kept = device.library.getBook(copy.id)!!
+            assertEquals(device.name, Ownership.NOT_OWNED, kept.ownership)
+            assertEquals(device.name, "Anna", kept.borrowedFrom)
+            assertEquals(device.name, id, kept.loanId)
+            assertEquals(device.name, 4f, kept.rating)
+            assertEquals(device.name, "Gern gelesen.", kept.review)
+        }
+        assertEquals(listOf(LoanAction.HIDE), LoanRules.actions(ben.loan()))
+
+        // Put away, it is gone for the one who put it away, and the book stays as it is.
+        assertNull(ben.server.loanAct(id, LoanAction.HIDE))
+        assertTrue(ben.loans().isEmpty())
+        anna.server.sync()
+        assertEquals(LoanState.RETURNED, anna.loan().state)
+        assertEquals(Ownership.NOT_OWNED, ben.library.getBook(copy.id)!!.ownership)
+        // And he can ask for it again.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        assertNotEquals(id, ben.loan().id)
+    }
+
+    @Test fun aNoCanSayWhyAndAQuestionOrAYesCanBeTakenBack() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+        anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen"))
+        befriend(anna, ben)
+
+        // No, and why.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        val first = ben.loan().id
+        anna.server.sync()
+        assertNull(anna.server.loanAct(first, LoanAction.DECLINE, reason = "  Das lese ich gerade selbst. "))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.DECLINED), ben.news())
+        val no = ben.loan()
+        assertEquals(LoanState.DECLINED, no.state)
+        assertEquals("Das lese ich gerade selbst.", no.reason)
+        assertFalse(no.taken)
+        assertTrue(no.over)
+
+        // The book is still to be had. Ben asks once more, thinks better of it, and takes the question back.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), "Und jetzt?"))
+        val again = ben.loans()
+        assertEquals(2, again.size)
+        // The newest question comes first.
+        assertEquals(LoanState.ASKED, again.first().state)
+        val second = again.first().id
+        assertNotEquals(first, second)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.ASKED), anna.news())
+        assertNull(ben.server.loanAct(second, LoanAction.WITHDRAW))
+        assertEquals(LoanState.WITHDRAWN, ben.loan(second).state)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.WITHDRAWN), anna.news())
+        assertEquals(0, anna.social.waitingLoans.first())
+
+        // A yes with no fixed date, and the yes taken back: the book is free again.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Persuasion"), ""))
+        val third = ben.loans().first().id
+        anna.server.sync()
+        assertNull(anna.server.loanAct(third, LoanAction.AGREE))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.AGREED), ben.news())
+        assertNull(ben.loan(third).dueOn)
+        assertFalse(ben.onShelfOf(anna, "Persuasion").available)
+        assertNull(anna.server.loanAct(third, LoanAction.HAND))
+        assertNull(anna.server.loanAct(third, LoanAction.CANCEL, reason = "Ich brauche es doch selbst."))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.CANCELLED), ben.news())
+        assertEquals(LoanState.CANCELLED, ben.loan(third).state)
+        assertEquals("Ich brauche es doch selbst.", ben.loan(third).reason)
+        assertTrue(ben.onShelfOf(anna, "Persuasion").available)
+
+        // None of this moved a book.
+        assertTrue(ben.titles().isEmpty())
+        assertTrue(anna.library.allBooks().all { it.lentTo.isBlank() && it.loanId.isBlank() })
+
+        // Each side puts away what it has seen enough of.
+        ben.loans().forEach { assertNull(ben.server.loanAct(it.id, LoanAction.HIDE)) }
+        assertTrue(ben.loans().isEmpty())
+        anna.server.sync()
+        assertEquals(3, anna.loans().size)
+    }
+
+    @Test fun whoAsksSecondIsToldThatTheBookIsTaken() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val cleo = phone("Cleo")
+        anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+        befriend(anna, ben, cleo)
+
+        // Two people can ask for one book.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        assertNull(cleo.server.loanAsk(cleo.onShelfOf(anna, "Emma"), ""))
+        val forBen = ben.loan().id
+        val forCleo = cleo.loan().id
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.ASKED, LoanNewsKind.ASKED), anna.news())
+        assertEquals(2, anna.social.waitingLoans.first())
+
+        // Anna says yes to Ben. Cleo is told that it went to somebody else: there is no waiting list.
+        assertNull(anna.server.loanAct(forBen, LoanAction.AGREE))
+        assertEquals(LoanState.AGREED, anna.loan(forBen).state)
+        assertTrue(anna.loan(forCleo).taken)
+        assertEquals(0, anna.social.waitingLoans.first())
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.TAKEN), cleo.news())
+        assertTrue(cleo.loan().taken)
+        assertTrue(cleo.loan().over)
+        // Her shelf of Anna's books says so, and so does asking again.
+        assertFalse(cleo.onShelfOf(anna, "Emma").available)
+        assertEquals("taken", cleo.server.loanAsk(cleo.onShelfOf(anna, "Emma"), ""))
+        assertEquals(1, cleo.loans().size)
+        // What is over cannot be answered any more.
+        assertEquals("not_allowed", anna.server.loanAct(forCleo, LoanAction.AGREE))
+
+        // "I handed it over", "I did not get it": back to reserved, and Anna hears it.
+        assertNull(anna.server.loanAct(forBen, LoanAction.HAND))
+        ben.server.sync()
+        assertNull(ben.server.loanAct(forBen, LoanAction.NOT_RECEIVED))
+        assertEquals(LoanState.AGREED, ben.loan().state)
+        assertNull(ben.loan().handedAt)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.NOT_RECEIVED), anna.news())
+        // A tap taken back is news without words: what was said before is no longer so.
+        assertNull(anna.server.loanAct(forBen, LoanAction.HAND))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.HANDED), ben.news())
+        assertNull(anna.server.loanAct(forBen, LoanAction.UNDO_HAND))
+        assertEquals(listOf<LoanNewsKind?>(null), ben.news())
+        assertEquals(LoanState.AGREED, ben.loan().state)
+        // A book that is reserved has not moved.
+        assertTrue(ben.titles().isEmpty())
+        assertEquals("", anna.library.allBooks().single().lentTo)
+    }
+
+    @Test fun aWishBecomesTheBorrowedCopyAndTheLenderCanCloseALoan() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val emma = anna.library.addBook(Book(title = "Emma", authors = "Jane Austen", isbn = "9780141439587"))
+        val persuasion = anna.library.addBook(Book(title = "Persuasion", authors = "Jane Austen"))
+        // Ben has wanted to read Emma for a while.
+        val wish = ben.library.addBook(Book(title = "Emma", authors = "Jane Austen", status = ReadingStatus.WISHLIST, ownership = Ownership.NOT_OWNED, tags = "Empfehlung von Clara"))
+        befriend(anna, ben)
+
+        // The wish is the copy: no second "Emma" appears.
+        val id = lend(anna, ben, "Emma")
+        val borrowed = ben.library.allBooks().single()
+        assertEquals(wish, borrowed.id)
+        assertEquals(Ownership.BORROWED, borrowed.ownership)
+        assertEquals("Anna", borrowed.borrowedFrom)
+        assertEquals(id, borrowed.loanId)
+        assertEquals("Empfehlung von Clara", borrowed.tags)
+
+        // "I gave it back", "I did not get it back": on loan again.
+        assertNull(ben.server.loanAct(id, LoanAction.GIVE_BACK))
+        anna.server.sync()
+        assertNull(anna.server.loanAct(id, LoanAction.NOT_RETURNED))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.NOT_RETURNED), ben.news())
+        assertEquals(LoanState.ON_LOAN, ben.loan().state)
+        assertNull(ben.loan().givenBackAt)
+        assertEquals("Ben", anna.library.getBook(emma)!!.lentTo)
+        // "I gave it back" can be taken back as well, and that makes no noise.
+        assertNull(ben.server.loanAct(id, LoanAction.GIVE_BACK))
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.GIVEN_BACK), anna.news())
+        assertNull(ben.server.loanAct(id, LoanAction.UNDO_GIVE_BACK))
+        assertEquals(listOf<LoanNewsKind?>(null), anna.news())
+
+        // The book is back on Anna's shelf and Ben never said so: she closes the loan herself.
+        assertEquals("not_allowed", anna.server.loanAct(id, LoanAction.TAKE_BACK))
+        assertNull(anna.server.loanAct(id, LoanAction.CLOSE))
+        assertEquals(LoanState.RETURNED, anna.loan().state)
+        assertEquals("", anna.library.getBook(emma)!!.lentTo)
+        assertEquals(listOf<LoanNewsKind?>(LoanNewsKind.RETURNED), ben.news())
+        val after = ben.library.getBook(wish)!!
+        assertEquals(Ownership.NOT_OWNED, after.ownership)
+        assertEquals(ReadingStatus.WISHLIST, after.status)
+        assertEquals(id, after.loanId)
+
+        // Ben liked the next one so much that he bought it before giving Anna's copy back.
+        // What he says about his book is not overruled by the return.
+        val next = lend(anna, ben, "Persuasion")
+        val second = ben.library.allBooks().first { it.loanId == next }
+        assertNull(ben.server.loanAct(next, LoanAction.GIVE_BACK))
+        ben.library.modify(second.id) { it.copy(ownership = Ownership.OWNED) }
+        anna.server.sync()
+        assertNull(anna.server.loanAct(next, LoanAction.TAKE_BACK))
+        assertEquals("", anna.library.getBook(persuasion)!!.loanId)
+        ben.server.sync()
+        assertEquals(Ownership.OWNED, ben.library.getBook(second.id)!!.ownership)
+        assertEquals(2, ben.library.allBooks().size)
+    }
+
+    @Test fun aBookThatIsDueIsRemindedOfOncePerDayItWasDueOn() = runBlocking {
+        var day = 20_000L
+        val anna = phone("Anna", day = { day })
+        val ben = phone("Ben", day = { day })
+        anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+        befriend(anna, ben)
+        val id = lend(anna, ben, "Emma", due = 20_010)
+
+        // Before the day nobody is reminded of anything.
+        day = 20_009
+        assertTrue((anna.server.sync() as SyncResult.Done).due.isEmpty())
+        assertTrue((ben.server.sync() as SyncResult.Done).due.isEmpty())
+        // On the day both are, once.
+        day = 20_010
+        assertEquals(listOf(id), (ben.server.sync() as SyncResult.Done).due.map { it.id })
+        assertEquals(listOf(id), (anna.server.sync() as SyncResult.Done).due.map { it.id })
+        assertTrue(ben.loan().dueBy(day))
+        assertTrue((ben.server.sync() as SyncResult.Done).due.isEmpty())
+        day = 20_015
+        assertTrue((ben.server.sync() as SyncResult.Done).due.isEmpty())
+        assertTrue((anna.server.sync() as SyncResult.Done).due.isEmpty())
+
+        // Another day is another reminder, when it has come.
+        assertNull(anna.server.loanAct(id, LoanAction.SET_DUE, due = 20_020))
+        assertTrue((ben.server.sync() as SyncResult.Done).due.isEmpty())
+        day = 20_021
+        assertEquals(listOf(id), (ben.server.sync() as SyncResult.Done).due.map { it.id })
+        assertEquals(listOf(id), (anna.server.sync() as SyncResult.Done).due.map { it.id })
+        // Given back but not confirmed, it still counts as out. Once it is back, nothing is due.
+        assertNull(ben.server.loanAct(id, LoanAction.GIVE_BACK))
+        assertTrue(ben.loan().dueBy(day))
+        anna.server.sync()
+        assertNull(anna.server.loanAct(id, LoanAction.TAKE_BACK))
+        assertFalse(anna.loan().dueBy(day))
+        assertTrue((ben.server.sync() as SyncResult.Done).due.isEmpty())
+    }
+
+    @Test fun whenTheOtherAccountIsGoneTheBookIsLentOrBorrowedByHand() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val cleo = phone("Cleo")
+        val emma = anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+        cleo.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+        befriend(anna, ben)
+        befriend(cleo, anna)
+        val lent = lend(anna, ben, "Emma")
+        val borrowed = lend(cleo, anna, "Dune")
+        val dune = anna.library.allBooks().first { it.loanId == borrowed }
+        assertEquals(2, anna.loans().size)
+
+        // Signed out, the loans cannot be read. The books stay as they were.
+        anna.server.signOut()
+        assertTrue(anna.loans().isEmpty())
+        assertEquals("Ben", anna.library.getBook(emma)!!.lentTo)
+        assertEquals(Ownership.BORROWED, anna.library.getBook(dune.id)!!.ownership)
+        // Signed in again they are back, and none of it is news.
+        val back = anna.server.signIn(anna.email, anna.password) as SyncResult.Done
+        assertTrue(back.news.isEmpty())
+        assertEquals(2, anna.loans().size)
+        assertEquals(2, anna.library.allBooks().size)
+
+        // Ben deletes his account, and the loan goes with it. Anna's book is still with him:
+        // it stays lent, and from here on she looks after that by hand.
+        assertTrue(ben.server.deleteAccount())
+        anna.server.sync()
+        assertEquals(listOf(borrowed), anna.loans().map { it.id })
+        val stillLent = anna.library.getBook(emma)!!
+        assertEquals("Ben", stillLent.lentTo)
+        assertEquals(lent, stillLent.loanId)
+        assertNull(anna.db.social().getLoan(stillLent.loanId))
+        assertEquals("unknown_loan", anna.server.loanAct(lent, LoanAction.CLOSE))
+
+        // The same from the other side: Cleo is gone, her book is still on Anna's shelf as borrowed.
+        assertTrue(cleo.server.deleteAccount())
+        anna.server.sync()
+        assertTrue(anna.loans().isEmpty())
+        val stillBorrowed = anna.library.getBook(dune.id)!!
+        assertEquals(Ownership.BORROWED, stillBorrowed.ownership)
+        assertEquals("Cleo", stillBorrowed.borrowedFrom)
+        assertNull(anna.db.social().getLoan(stillBorrowed.loanId))
+    }
+
+    @Test fun aStepThatNoLongerFitsShowsWhereTheLoanStands() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val cleo = phone("Cleo")
+        val emma = anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+        befriend(anna, ben)
+        cleo.join()
+
+        // Anna sees the question. Before she answers, Ben takes it back.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        val id = ben.loan().id
+        anna.server.sync()
+        assertNull(ben.server.loanAct(id, LoanAction.WITHDRAW))
+        assertEquals(LoanState.ASKED, anna.loan().state)
+        assertEquals("not_allowed", anna.server.loanAct(id, LoanAction.AGREE))
+        // Her phone looked again right away, and shows what became of it.
+        assertEquals(LoanState.WITHDRAWN, anna.loan().state)
+
+        // A loan is nobody's business but the two it is between.
+        assertEquals("unknown_loan", cleo.server.loanAct(id, LoanAction.HIDE))
+        assertEquals("unknown_loan", anna.server.loanAct(UUID.randomUUID().toString(), LoanAction.HIDE))
+        // Only friends can ask, and only for a book that has a name.
+        assertEquals("not_friends", cleo.server.loanAsk(FriendBook(friendId = anna.id, remoteId = emma, title = "Emma"), ""))
+        assertEquals("invalid", ben.server.loanAsk(FriendBook(friendId = anna.id, remoteId = emma, title = " "), ""))
+        // A day that is none is refused, and the question stays open.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        val next = ben.loans().first().id
+        anna.server.sync()
+        assertEquals("invalid", anna.server.loanAct(next, LoanAction.AGREE, due = -5))
+        assertEquals(LoanState.ASKED, anna.loan(next).state)
+    }
+
+    @Test fun aVaultFromBeforeTheLoansIsReadWithoutItsRequests() = runBlocking {
+        val anna = phone("Anna")
+        assertTrue(anna.join() is SyncResult.Done)
+        // What a version of the app from before left on the account: a book lent by hand, and the borrow requests.
+        val old = Json.parseToJsonElement(
+            """{"exportedAt":1,"books":[{"id":7,"title":"Emma","lentTo":"Ben","lentSince":20000}],"shelves":[],"links":[],"quotes":[],
+               "requests":[{"id":"req-1","incoming":true,"bookRemoteId":7,"bookTitle":"Emma","peerId":"p","peerName":"Ben","status":"ACCEPTED","createdAt":5,"answeredAt":9}]}""",
+        )
+        val api = ServerApi(config, poster, anna.settings.current().accessToken)
+        api.vaultPush(old, anna.settings.current().vaultRevision)
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        val emma = anna.library.allBooks().single()
+        assertEquals("Emma", emma.title)
+        assertEquals("Ben", emma.lentTo)
+        assertEquals("", emma.loanId)
+        assertTrue(anna.loans().isEmpty())
+        // The next save writes the library as it is now: the requests are not carried along.
+        anna.library.modify(emma.id) { it.copy(rating = 4f) }
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        val saved = api.vaultPull(0).payload!!.jsonObject
+        assertFalse("requests" in saved)
+        assertEquals("Emma", saved.getValue("books").jsonArray.single().jsonObject.getValue("title").jsonPrimitive.content)
+    }
+
+    @Test fun aLibraryThisVersionCannotReadIsNeverReplaced() = runBlocking {
+        val anna = phone("Anna")
+        val emma = anna.library.addBook(Book(title = "Emma"))
+        assertTrue(anna.join() is SyncResult.Done)
+        val api = ServerApi(config, poster, anna.settings.current().accessToken)
+        val strange = listOf(
+            // Saved in a format that a newer version introduced.
+            """{"format":2,"exportedAt":1,"books":[{"id":1,"title":"Dune"}],"shelves":[],"links":[],"quotes":[]}""",
+            // A word this version does not have: it could only drop the book or call it something else.
+            """{"exportedAt":1,"books":[{"id":1,"title":"Dune","status":"LISTENING"}],"shelves":[],"links":[],"quotes":[]}""",
+            // No library at all.
+            """{"exportedAt":1,"books":"all of them"}""",
+        ).map { Json.parseToJsonElement(it) }
+        var rating = 1f
+        for (document in strange) {
+            api.vaultPush(document, api.vaultPull(0).revision)
+            // Whether or not something changed here in the meantime: the sync stops, and says why.
+            for (changedHere in listOf(false, true)) {
+                if (changedHere) anna.library.modify(emma) { it.copy(rating = rating++) }
+                assertEquals(SyncResult.Failed(ServerSync.UNREADABLE), anna.server.sync())
+                assertEquals(ServerSync.UNREADABLE, anna.server.status.value.error)
+                // Nothing was written over it, and the library on the phone is what it was.
+                assertEquals(document, api.vaultPull(0).payload)
+                assertEquals(listOf("Emma"), anna.titles())
+            }
+            // A device that is new to the account does not take it for an empty library either,
+            // whether it has books of its own or none.
+            val full = phone("Voll")
+            full.library.addBook(Book(title = "Momo"))
+            assertEquals(SyncResult.Failed(ServerSync.UNREADABLE), full.server.signIn(anna.email, anna.password))
+            assertEquals(SyncResult.Failed(ServerSync.UNREADABLE), full.server.choose(Keep.DEVICE))
+            assertEquals(listOf("Momo"), full.titles())
+            val empty = phone("Leer")
+            assertEquals(SyncResult.Failed(ServerSync.UNREADABLE), empty.server.signIn(anna.email, anna.password))
+            assertTrue(empty.titles().isEmpty())
+            assertEquals(document, api.vaultPull(0).payload)
+            // Signed out again, so that only Anna's phone is left to tidy up after the test.
+            full.server.signOut()
+            empty.server.signOut()
+        }
+        assertEquals("This version of Shelfmark cannot read the library on your account: a newer version saved it, or it is damaged. Nothing was changed. Please update the app.", context.getString(loanProblemRes(ServerSync.UNREADABLE), ""))
+
+        // Once there is a library it can read, the phone goes on, and what changed here meanwhile is not lost.
+        val readable = Json.parseToJsonElement("""{"exportedAt":1,"books":[{"id":1,"title":"Dune"}],"shelves":[],"links":[],"quotes":[]}""")
+        api.vaultPush(readable, api.vaultPull(0).revision)
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertEquals(listOf("Dune", "Emma"), anna.titles())
+        assertEquals(rating - 1, anna.library.getBook(emma)!!.rating)
     }
 
     @Test fun oneLibraryOnEveryDevice() = runBlocking {
@@ -544,11 +1226,12 @@ abstract class ServerStory {
         anna.library.addBook(Book(title = "Emma"))
         anna.join()
         cleo.join()
-        // Without the code Cleo sees nobody, and cannot write to Anna.
+        // Without the code Cleo sees nobody, and cannot ask Anna for anything.
         assertTrue(cleo.social.friends.first().isEmpty())
         val asCleo = ServerApi(config, poster, cleo.settings.current().accessToken)
-        val refused = runCatching { asCleo.send(anna.id, ShareCodec.encodeElement(Envelope(type = Envelope.TYPE_REQUEST))) }
+        val refused = runCatching { asCleo.loanAsk(FriendBook(friendId = anna.id, remoteId = 1, title = "Emma"), "") }
         assertEquals("not_friends", (refused.exceptionOrNull() as ServerException).reason)
+        assertTrue(asCleo.sync(emptyMap()).loans.isEmpty())
         // Her library is her own: Cleo's is empty of Anna's books, whatever she asks for.
         assertNull(asCleo.vaultPull(0).payload?.toString()?.takeIf { "Emma" in it })
         // Without a sign-in there is no library, no friends, nothing but the daily check.
@@ -680,21 +1363,19 @@ class ServerSyncTest : ServerStory() {
         assertEquals(1L, server.revisionOf(anna.email))
     }
 
-    @Test fun withoutReceptionThingsWaitAndGoOutLater() = runBlocking {
+    @Test fun withoutReceptionNothingIsLostAndNothingIsPretended() = runBlocking {
         val anna = phone("Anna")
         val ben = phone("Ben")
         anna.library.addBook(Book(title = "Emma", lendable = true))
-        anna.join()
-        ben.join()
-        ben.server.addFriend(anna.settings.current().friendCode).getOrThrow()
-        val emma = ben.social.friendBooks(anna.id).first().single()
+        befriend(anna, ben)
+        val emma = ben.onShelfOf(anna, "Emma")
 
         server.offline = true
-        assertFalse(ben.server.send(anna.id, ben.social.createRequest(emma, "")))
-        assertEquals(1, ben.server.waiting.first())
-        assertEquals(ServerSync.NETWORK, ben.server.status.value.error)
+        // A question cannot be put without the server: it says so, and nothing is kept to be sent behind the reader's back.
+        assertEquals(ServerSync.NETWORK, ben.server.loanAsk(emma, ""))
+        assertTrue(ben.loans().isEmpty())
         assertEquals(SyncResult.Failed(ServerSync.NETWORK), ben.server.sync())
-        assertEquals(0, server.waitingFor(anna.email))
+        assertEquals(ServerSync.NETWORK, ben.server.status.value.error)
         // Without reception a friend on the server cannot be removed either, and stays.
         assertFalse(ben.server.removeFriend(anna.id))
         assertEquals(1, ben.social.friends.first().size)
@@ -702,20 +1383,25 @@ class ServerSyncTest : ServerStory() {
         assertFalse(ben.server.deleteAccount())
         assertTrue(ben.settings.current().signedIn)
         assertEquals(SyncResult.Failed(ServerSync.NETWORK), phone("Offline").let { it.server.signIn(anna.email, anna.password) })
-        // What was changed without reception waits too.
+        // What was changed in the library without reception waits.
         ben.library.addBook(Book(title = "Im Funkloch"))
 
         server.offline = false
         assertTrue(ben.server.sync() is SyncResult.Done)
-        assertEquals(0, ben.server.waiting.first())
         assertNull(ben.server.status.value.error)
-        assertEquals(1, server.waitingFor(anna.email))
-        assertEquals(1, (anna.server.sync() as SyncResult.Done).requests.size)
-        assertEquals(0, server.waitingFor(anna.email))
+        assertTrue(server.loanStatesOf(anna.email).isEmpty())
+        assertNull(ben.server.loanAsk(emma, ""))
+        assertEquals(listOf("asked"), server.loanStatesOf(anna.email))
+        // A step that was not taken for want of reception leaves the loan where it was.
+        val id = ben.loan().id
+        server.offline = true
+        assertEquals(ServerSync.NETWORK, ben.server.loanAct(id, LoanAction.WITHDRAW))
+        assertEquals(LoanState.ASKED, ben.loan().state)
+        server.offline = false
         val tablet = secondDevice(ben, "Tablet")
         assertEquals(listOf("Im Funkloch"), tablet.titles())
-        // The request Ben sent is part of his library, so his tablet knows about it too.
-        assertEquals(1, tablet.social.requests.first().size)
+        // The loan is on the server, so his tablet knows it without anything having been passed on.
+        assertEquals(LoanState.ASKED, tablet.loan().state)
     }
 
     @Test fun theDailyCheckRunsOnceADay() = runBlocking {
@@ -747,24 +1433,65 @@ class ServerSyncTest : ServerStory() {
         val ben = phone("Ben")
         val mallory = phone("Mallory")
         anna.library.addBook(Book(title = "Emma", lendable = true))
-        listOf(anna, ben, mallory).forEach { it.join() }
-        ben.server.addFriend(anna.settings.current().friendCode).getOrThrow()
-        mallory.server.addFriend(ben.settings.current().friendCode).getOrThrow()
+        befriend(anna, ben)
+        befriend(ben, mallory)
 
-        // Mallory uploads a "library" that claims to be Anna's, and a request in Anna's name.
+        // Mallory uploads a "library" that claims to be Anna's.
         val asMallory = ServerApi(config, server, mallory.settings.current().accessToken)
         val forged = anna.social.exportLibrary(includeStatus = true, includeRatings = true).let { it.copy(library = it.library!!.copy(books = emptyList())) }
         asMallory.publish(ShareCodec.encodeElement(forged))
-        val dune = ben.library.addBook(Book(title = "Dune", lendable = true))
-        val fake = anna.social.createRequest(FriendBook(friendId = ben.id, remoteId = dune, title = "Dune"), "")
-        asMallory.send(ben.id, ShareCodec.encodeElement(fake))
-
-        val result = ben.server.sync() as SyncResult.Done
-        assertTrue(result.requests.isEmpty())
-        assertTrue(ben.social.requests.first().isEmpty())
-        // Anna's shelf at Ben's is untouched, and the bogus message is gone from the server.
+        assertTrue(ben.server.sync() is SyncResult.Done)
+        // Anna's shelf at Ben's is untouched, and Mallory has not become Anna.
         assertEquals(1, ben.social.friends.first().first { it.friend.id == anna.id }.bookCount)
-        assertEquals(0, server.waitingFor(ben.email))
+        assertEquals(0, ben.social.friends.first().first { it.friend.id == mallory.id }.bookCount)
+
+        // A loan between Anna and Ben is theirs. Mallory cannot answer it, in whoever's name.
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        val id = ben.loan().id
+        assertEquals("unknown_loan", (runCatching { asMallory.loanAct(id, LoanAction.AGREE) }.exceptionOrNull() as ServerException).reason)
+        // And the one who asked cannot say yes for the one who was asked.
+        assertEquals("not_allowed", ben.server.loanAct(id, LoanAction.AGREE))
+        assertEquals(listOf("asked"), server.loanStatesOf(anna.email))
+    }
+
+    @Test fun aServerFromBeforeTheLoansSaysSoInsteadOfBreaking() = runBlocking {
+        server.beforeLoans = true
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        anna.library.addBook(Book(title = "Emma"))
+        befriend(anna, ben)
+        // Everything that the old server can do still works.
+        assertTrue(ben.server.sync() is SyncResult.Done)
+        assertTrue(ben.loans().isEmpty())
+        // What it cannot do is said as what it is: the server is not ready for this version.
+        assertEquals("setup", ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+        assertEquals("The server is not ready for this version of the app yet.", context.getString(loanProblemRes("setup"), "setup"))
+        assertNull(ben.server.status.value.error)
+        // Once schema.sql was run there, asking works.
+        server.beforeLoans = false
+        assertNull(ben.server.loanAsk(ben.onShelfOf(anna, "Emma"), ""))
+    }
+
+    @Test fun everyRefusalOfALoanHasWordsOfItsOwn() = runBlocking {
+        val reasons = listOf("taken", "not_allowed", "unknown_loan", "invalid", "outdated", "not_friends", "full")
+        // What the server says arrives as the reason, whatever the function.
+        for (reason in reasons) {
+            val refusing = HttpPoster { _, _, _ -> HttpAnswer(400, """{"code":"P0001","message":"shelfmark:$reason"}""") }
+            val refused = runCatching { ServerApi(config, refusing, "token").loanAct("loan", LoanAction.AGREE) }.exceptionOrNull() as ServerException
+            assertEquals(reason, refused.reason)
+        }
+        fun words(reason: String) = context.getString(loanProblemRes(reason), reason)
+        assertEquals("This book is reserved for somebody else or on loan.", words("taken"))
+        assertEquals("That is no longer possible, the loan has moved on. Here is where it stands now.", words("not_allowed"))
+        assertEquals("This loan no longer exists.", words("unknown_loan"))
+        assertEquals("This version of Shelfmark is too old for its server. Please update the app.", words("outdated"))
+        assertEquals("The server is not ready for this version of the app yet.", words("setup"))
+        assertEquals("No connection to the server.", words("network"))
+        // What has no words of its own is at least named.
+        assertEquals("The server reported a problem (invalid).", words("invalid"))
+        // An answer that is no loan is not taken for one.
+        val odd = HttpPoster { _, _, _ -> HttpAnswer(200, """{"id":"x","role":"lender","state":"something_new","bookId":1}""") }
+        assertEquals("bad_answer", (runCatching { ServerApi(config, odd, "token").loanAct("x", LoanAction.HIDE) }.exceptionOrNull() as ServerException).reason)
     }
 
     @Test fun keysOfBothKindsAreSentTheWayTheServerWantsThem() = runBlocking {

@@ -11,10 +11,9 @@ import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
 import ch.schmidtbit.shelfmark.data.model.FriendWithCount
 import ch.schmidtbit.shelfmark.data.model.Goal
-import ch.schmidtbit.shelfmark.data.model.LendRequest
+import ch.schmidtbit.shelfmark.data.model.Loan
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ornament
-import ch.schmidtbit.shelfmark.data.model.OutboxMessage
 import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.Quote
@@ -234,6 +233,10 @@ interface SocialDao {
     @Query("SELECT * FROM friend_books WHERE localId = :localId")
     suspend fun getFriendBook(localId: Long): FriendBook?
 
+    /** A friend's book by the id it has in their own library. */
+    @Query("SELECT * FROM friend_books WHERE friendId = :friendId AND remoteId = :remoteId LIMIT 1")
+    suspend fun findFriendBook(friendId: String, remoteId: Long): FriendBook?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertFriend(friend: Friend)
 
@@ -255,39 +258,26 @@ interface SocialDao {
     @Query("UPDATE friends SET online = 0, serverAt = 0")
     suspend fun markAllOffline()
 
-    @Query("SELECT * FROM outbox ORDER BY id")
-    suspend fun outbox(): List<OutboxMessage>
+    /** The newest question first, as the server hands them out. */
+    @Query("SELECT * FROM loans ORDER BY askedAt DESC, id")
+    fun observeLoans(): Flow<List<Loan>>
 
-    @Query("SELECT COUNT(*) FROM outbox")
-    fun observeOutboxCount(): Flow<Int>
+    @Query("SELECT * FROM loans ORDER BY askedAt DESC, id")
+    suspend fun loans(): List<Loan>
 
-    @Insert
-    suspend fun enqueue(message: OutboxMessage): Long
-
-    @Query("DELETE FROM outbox WHERE id = :id")
-    suspend fun dequeue(id: Long)
-
-    @Query("DELETE FROM outbox")
-    suspend fun clearOutbox()
-
-    @Query("SELECT * FROM lend_requests ORDER BY createdAt DESC")
-    fun observeRequests(): Flow<List<LendRequest>>
-
-    @Query("SELECT * FROM lend_requests WHERE id = :id")
-    suspend fun getRequest(id: String): LendRequest?
+    @Query("SELECT * FROM loans WHERE id = :id")
+    suspend fun getLoan(id: String): Loan?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertRequest(request: LendRequest)
+    suspend fun upsertLoans(loans: List<Loan>)
 
-    @Query("DELETE FROM lend_requests WHERE id = :id")
-    suspend fun deleteRequest(id: String)
+    @Query("DELETE FROM loans WHERE id = :id")
+    suspend fun deleteLoan(id: String)
 
-    @Query("SELECT * FROM lend_requests ORDER BY createdAt, id")
-    suspend fun allRequests(): List<LendRequest>
+    @Query("DELETE FROM loans")
+    suspend fun clearLoans()
 
-    @Query("DELETE FROM lend_requests")
-    suspend fun clearRequests()
-
-    @Query("SELECT COUNT(*) FROM lend_requests WHERE incoming = 1 AND status = 'PENDING'")
-    fun observePendingIncoming(): Flow<Int>
+    /** Remembers that the day this loan is due on was said, so that it is said once. */
+    @Query("UPDATE loans SET dueSaid = dueOn WHERE id = :id")
+    suspend fun markDueSaid(id: String)
 }

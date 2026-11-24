@@ -70,6 +70,7 @@ import ch.schmidtbit.shelfmark.ui.components.AnimatedProgress
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
+import ch.schmidtbit.shelfmark.data.model.Loan
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.Purchase
@@ -91,6 +92,8 @@ import ch.schmidtbit.shelfmark.ui.components.SpiceBar
 import ch.schmidtbit.shelfmark.ui.components.formatDuration
 import ch.schmidtbit.shelfmark.ui.coverModel
 import ch.schmidtbit.shelfmark.ui.formatRating
+import ch.schmidtbit.shelfmark.ui.friends.LoanButtons
+import ch.schmidtbit.shelfmark.ui.friends.LoanStatus
 import ch.schmidtbit.shelfmark.ui.labelRes
 import ch.schmidtbit.shelfmark.ui.lists.NameDialog
 import ch.schmidtbit.shelfmark.ui.theme.QuoteStyle
@@ -118,6 +121,7 @@ fun BookScreen(
     val notes by remember(bookId) { library.notesOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val purchases by remember(bookId) { library.purchasesOf(bookId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
+    val loans by container.social.loans.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val book = bookState
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -183,6 +187,7 @@ fun BookScreen(
                     sessions = sessions,
                     purchases = purchases,
                     minutesPerPage = settings?.minutesPerPage ?: 1.5f,
+                    loans = loans,
                     onChange = ::change,
                     onLogSession = { logging = true },
                 )
@@ -205,19 +210,32 @@ fun BookScreen(
         )
     }
     if (confirmDelete && book != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text(stringResource(R.string.book_delete_title)) },
-            text = { Text(stringResource(R.string.book_delete_text, book.title)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    container.launch { library.deleteBook(book.id) }
-                    onBack()
-                }) { Text(stringResource(R.string.action_delete)) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.action_cancel)) } },
-        )
+        // A book that a loan is still about stays: the borrower's copy would be back with the
+        // next look at the server, and the lender's book is what the loan points at.
+        val onLoan = loans.any { !it.over && if (it.lender) it.bookId == book.id else book.loanId.isNotBlank() && it.id == book.loanId }
+        if (onLoan) {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text(stringResource(R.string.book_delete)) },
+                text = { Text(stringResource(R.string.book_delete_loan)) },
+                confirmButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.action_ok)) } },
+                modifier = Modifier.testTag("deleteRefused"),
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text(stringResource(R.string.book_delete_title)) },
+                text = { Text(stringResource(R.string.book_delete_text, book.title)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmDelete = false
+                        container.launch { library.deleteBook(book.id) }
+                        onBack()
+                    }) { Text(stringResource(R.string.action_delete)) }
+                },
+                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.action_cancel)) } },
+            )
+        }
     }
 }
 
@@ -253,6 +271,7 @@ private fun OverviewTab(
     sessions: List<ReadingSession>,
     purchases: List<Purchase>,
     minutesPerPage: Float,
+    loans: List<Loan>,
     onChange: ((Book) -> Book) -> Unit,
     onLogSession: () -> Unit,
 ) {
@@ -329,31 +348,40 @@ private fun OverviewTab(
         }
         item(key = "ownership") {
             SectionCard(stringResource(R.string.book_section_ownership)) {
+                // The loan between friends this book is out on, when this device knows of it:
+                // for my own book the one it was lent through, for a borrowed copy the one it came with.
+                // A book whose loan is not known (the other account is gone, or the loan was put
+                // away) is a book lent or borrowed by hand, and is looked after by hand below.
+                val loan = loans.firstOrNull { book.loanId.isNotBlank() && it.id == book.loanId }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Ownership.entries.forEach { ownership ->
                         FilterChip(
                             selected = book.ownership == ownership,
-                            onClick = { onChange { it.copy(ownership = ownership) } },
+                            // Saying by hand that a book is mine, borrowed or neither ends what a loan that is gone left on it.
+                            onClick = { onChange { it.copy(ownership = ownership, loanId = if (loan == null && ownership != it.ownership) "" else it.loanId) } },
                             label = { Text(stringResource(ownership.labelRes())) },
                             modifier = Modifier.testTag("own_${ownership.name}"),
                         )
                     }
                 }
+                if (loan != null) LoanOfBook(loan)
+                // Who else asks for it, and whom it is promised to.
+                loans.filter { it.lender && it.bookId == book.id && !it.over && it.id != loan?.id }.forEach { LoanOfBook(it) }
                 when (book.ownership) {
-                    Ownership.BORROWED -> {
+                    Ownership.BORROWED -> if (loan == null || loan.lender) {
                         Spacer(Modifier.height(8.dp))
                         AutoSaveField(book.id, book.borrowedFrom, stringResource(R.string.book_borrowed_from), minLines = 1, tag = "borrowedFrom") { text ->
                             container.library.modify(book.id) { it.copy(borrowedFrom = text) }
                         }
                     }
-                    Ownership.OWNED -> {
+                    Ownership.OWNED -> if (loan == null || !loan.lender) {
                         Spacer(Modifier.height(4.dp))
                         if (book.lentTo.isNotBlank()) {
                             Text(
                                 stringResource(R.string.book_lent_to, book.lentTo, Dates.format(book.lentSince)),
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                            TextButton(onClick = { onChange { it.copy(lentTo = "", lentSince = null) } }) {
+                            TextButton(onClick = { onChange { it.copy(lentTo = "", lentSince = null, loanId = "") } }, modifier = Modifier.testTag("gotItBack")) {
                                 Text(stringResource(R.string.book_returned))
                             }
                         } else {
@@ -425,7 +453,7 @@ private fun OverviewTab(
     if (lendTo) {
         NameDialog(stringResource(R.string.book_mark_lent), "", { lendTo = false }) { name ->
             lendTo = false
-            onChange { it.copy(lentTo = name, lentSince = Dates.today()) }
+            onChange { it.copy(lentTo = name, lentSince = Dates.today(), loanId = "") }
         }
     }
     if (newList) {
@@ -436,6 +464,16 @@ private fun OverviewTab(
                 container.library.setOnShelf(book.id, id, true)
             }
         }
+    }
+}
+
+/** A loan on the page of the book it is about: how it stands, and the steps open to the reader. */
+@Composable
+private fun LoanOfBook(loan: Loan) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp).testTag("bookLoan")) {
+        LoanStatus(loan)
+        Spacer(Modifier.height(6.dp))
+        LoanButtons(loan)
     }
 }
 

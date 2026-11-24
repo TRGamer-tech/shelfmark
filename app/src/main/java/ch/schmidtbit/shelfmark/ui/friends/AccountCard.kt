@@ -7,6 +7,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,7 +46,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +63,6 @@ import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.share.ShareFiles
 import ch.schmidtbit.shelfmark.ui.LocalContainer
-import ch.schmidtbit.shelfmark.ui.LocalImporter
 import ch.schmidtbit.shelfmark.ui.WebsitePage
 import ch.schmidtbit.shelfmark.ui.openWebsite
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
@@ -74,30 +73,36 @@ import java.util.Date
 
 /** Says in the user's words why signing in or the server did not do what was asked. */
 @Composable
-fun serverProblem(reason: String): String = stringResource(
-    when (reason) {
-        "network" -> R.string.server_error_network
-        "setup" -> R.string.server_error_setup
-        "key" -> R.string.server_error_key
-        "unknown_code" -> R.string.server_error_unknown_code
-        "own_code" -> R.string.server_error_own_code
-        "full" -> R.string.server_error_full
-        "no_server" -> R.string.server_error_none
-        "signed_out", "expired", "refresh_token_not_found" -> R.string.account_error_signed_out
-        "invalid_credentials" -> R.string.account_error_credentials
-        "user_already_exists", "email_exists" -> R.string.account_error_exists
-        "weak_password" -> R.string.account_error_weak
-        "email_not_confirmed" -> R.string.account_error_unconfirmed
-        "validation_failed", "email_address_invalid" -> R.string.account_error_email
-        // Not the reader's doing: the mail service of the server has sent all it may for now.
-        "over_email_send_rate_limit" -> R.string.account_error_mail_limit
-        "email_address_not_authorized" -> R.string.account_error_mail_refused
-        "over_request_rate_limit" -> R.string.account_error_rate
-        "signup_disabled" -> R.string.account_error_closed
-        else -> R.string.server_error_other
-    },
-    reason,
-)
+fun serverProblem(reason: String): String = stringResource(serverProblemRes(reason), reason)
+
+/** The text for [reason]. It takes the reason itself as its one argument, for the case that there are no better words. */
+@StringRes
+fun serverProblemRes(reason: String): Int = when (reason) {
+    "network" -> R.string.server_error_network
+    // The server has no such function: it was set up for an older version of the app.
+    "setup" -> R.string.server_error_setup
+    // And the other way round: the server has moved on and this app has not.
+    "outdated" -> R.string.server_error_outdated
+    // The library on the account was saved by a newer version, or is damaged. It is left alone.
+    "unreadable" -> R.string.server_error_unreadable
+    "key" -> R.string.server_error_key
+    "unknown_code" -> R.string.server_error_unknown_code
+    "own_code" -> R.string.server_error_own_code
+    "full" -> R.string.server_error_full
+    "no_server" -> R.string.server_error_none
+    "signed_out", "expired", "refresh_token_not_found" -> R.string.account_error_signed_out
+    "invalid_credentials" -> R.string.account_error_credentials
+    "user_already_exists", "email_exists" -> R.string.account_error_exists
+    "weak_password" -> R.string.account_error_weak
+    "email_not_confirmed" -> R.string.account_error_unconfirmed
+    "validation_failed", "email_address_invalid" -> R.string.account_error_email
+    // Not the reader's doing: the mail service of the server has sent all it may for now.
+    "over_email_send_rate_limit" -> R.string.account_error_mail_limit
+    "email_address_not_authorized" -> R.string.account_error_mail_refused
+    "over_request_rate_limit" -> R.string.account_error_rate
+    "signup_disabled" -> R.string.account_error_closed
+    else -> R.string.server_error_other
+}
 
 /** "ABCDEFGHJK" reads better as "ABCDE-FGHJK". */
 fun displayCode(code: String): String = code.chunked(5).joinToString("-")
@@ -135,7 +140,7 @@ fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
                 notice = null
                 container.remember(result)
                 password = ""
-                // A request from a friend should not have to wait until the app is opened.
+                // What a friend does to a loan should not have to wait until the app is opened.
                 if (Build.VERSION.SDK_INT >= 33 && !Notifier.allowed(context)) {
                     runCatching { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
                 }
@@ -227,10 +232,8 @@ fun AccountForm(onSignedIn: ((SyncResult) -> Unit)? = null) {
 @Composable
 fun AccountCard(settings: Settings) {
     val container = LocalContainer.current
-    val importer = LocalImporter.current
     val context = LocalContext.current
     val status by container.server.status.collectAsStateWithLifecycle()
-    val waiting by container.server.waiting.collectAsStateWithLifecycle(initialValue = 0)
     var adding by remember { mutableStateOf(false) }
     var askName by remember { mutableStateOf(false) }
 
@@ -281,22 +284,17 @@ fun AccountCard(settings: Settings) {
             Text(stringResource(R.string.server_add_friend))
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    when {
-                        status.running -> stringResource(R.string.server_syncing)
-                        settings.lastSyncAt > 0 -> stringResource(R.string.server_last_sync, DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(settings.lastSyncAt)))
-                        else -> stringResource(R.string.server_never_synced)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (waiting > 0) {
-                    Text(pluralStringResource(R.plurals.server_waiting, waiting, waiting), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            // Through the importer, so that a request or an answer that just came in is shown at once.
-            IconButton(onClick = { importer.refresh(force = true) }, enabled = !status.running, modifier = Modifier.testTag("syncNow")) {
+            Text(
+                when {
+                    status.running -> stringResource(R.string.server_syncing)
+                    settings.lastSyncAt > 0 -> stringResource(R.string.server_last_sync, DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(settings.lastSyncAt)))
+                    else -> stringResource(R.string.server_never_synced)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { container.launch { container.refreshFriends(force = true) } }, enabled = !status.running, modifier = Modifier.testTag("syncNow")) {
                 Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.server_sync_now))
             }
         }

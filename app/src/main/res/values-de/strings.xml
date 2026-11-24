@@ -36,7 +36,6 @@
     <string name="action_later">Später</string>
     <string name="action_more">Mehr</string>
     <string name="action_next">Weiter</string>
-    <string name="action_no">Nein</string>
     <string name="action_ok">OK</string>
     <string name="action_open">Öffnen</string>
     <string name="action_retry">Nochmals versuchen</string>
@@ -59,6 +58,7 @@
     <string name="add_search_hint">Nach Titel, Autor oder ISBN</string>
     <string name="book_borrowed_from">Ausgeliehen von</string>
     <string name="book_delete">Buch löschen</string>
+    <string name="book_delete_loan">Dieses Buch gehört zu einer Ausleihe. Schliesse zuerst die Ausleihe ab, dann kann das Buch entfernt werden.</string>
     <string name="book_delete_text">«%1$s» wird mit allen Zitaten, Notizen und Lesesitzungen entfernt.</string>
     <string name="book_delete_title">Dieses Buch löschen?</string>
     <string name="book_favorite">Favorit</string>
@@ -146,6 +146,7 @@
     <string name="friend_add_to_wishlist">Auf meine Wunschliste</string>
     <string name="friend_ask_to_borrow">Ausleihen anfragen</string>
     <string name="friend_borrow_needs_account">Ausleihen geht von Konto zu Konto. Dieses Regal kam als Datei.</string>
+    <string name="friend_borrow_note">Nachricht (optional)</string>
     <string name="friend_borrow_sign_in">Melde dich an, um nach einem Buch zu fragen.</string>
     <string name="friend_borrowed">%1$s hat es selbst ausgeliehen</string>
     <string name="friend_filter_available">Ausleihbar</string>
@@ -154,10 +155,6 @@
     <string name="friend_not_owned">%1$s besitzt dieses Buch nicht</string>
     <string name="friend_opinion">Meinung von %1$s</string>
     <string name="friend_owns">%1$s besitzt dieses Buch</string>
-    <string name="friend_request_accepted">%1$s hat Ja gesagt</string>
-    <string name="friend_request_declined">%1$s hat Nein gesagt</string>
-    <string name="friend_request_note">Nachricht (optional)</string>
-    <string name="friend_request_sent">Anfrage gesendet, warte auf %1$s</string>
     <string name="friend_wishlisted">Auf deiner Wunschliste</string>
     <string name="friends_change_name">Ändern</string>
     <string name="friends_empty">Noch keine geteilten Bibliotheken. Bitte jemanden, die eigene Bibliothek aus Shelfmark zu teilen, und öffne dann die Datei, die du erhältst.</string>
@@ -209,9 +206,6 @@
     <string name="greeting_morning_name">Guten Morgen, %1$s</string>
     <string name="greeting_night">Noch wach?</string>
     <string name="greeting_night_name">Noch wach, %1$s?</string>
-    <string name="import_answer_no">%1$s möchte «%2$s» im Moment nicht ausleihen.</string>
-    <string name="import_answer_title">Antwort erhalten</string>
-    <string name="import_answer_yes">%1$s hat Ja gesagt. Du kannst «%2$s» ausleihen.</string>
     <string name="import_books_confirm">Importieren</string>
     <string name="import_books_covers">Listen aus anderen Apps enthalten selten Cover. Shelfmark kann jetzt danach suchen.</string>
     <string name="import_books_done">Import abgeschlossen</string>
@@ -221,13 +215,9 @@
     <string name="import_library_text">Die Bibliothek von %1$s wurde importiert: %2$s.</string>
     <string name="import_library_title">Bibliothek importiert</string>
     <string name="import_newer_version">Diese Datei stammt aus einer neueren Version von Shelfmark. Bitte aktualisiere die App.</string>
-    <string name="import_not_for_me">Diese Anfrage ist an jemand anderen gerichtet.</string>
     <string name="import_not_shelfmark">Das ist keine Shelfmark-Datei.</string>
     <string name="import_old_request">Diese Datei stammt aus einer älteren Version von Shelfmark. Ausleihen geht jetzt von Konto zu Konto, ohne Dateien.</string>
     <string name="import_own_library">Das ist deine eigene Bibliothek. Schick die Datei stattdessen an jemanden.</string>
-    <string name="import_request_answered">Du hast diese Anfrage bereits beantwortet.</string>
-    <string name="import_request_title">Ausleih-Anfrage</string>
-    <string name="import_unknown_request">Diese Antwort gehört zu einer Anfrage, die nicht von diesem Gerät gesendet wurde.</string>
     <string name="import_unreadable">Die Datei konnte nicht gelesen werden.</string>
     <string name="legal_imprint">Impressum</string>
     <string name="legal_privacy">Datenschutz</string>
@@ -270,7 +260,10 @@
     <string name="loan_due_pick">Bis zu einem Datum</string>
     <string name="loan_due_title">Bis wann möchtest du es zurück?</string>
     <string name="loan_due_today">Heute fällig</string>
+    <string name="loan_error_full">Du hast zu viele offene Anfragen. Zieh zuerst eine zurück.</string>
+    <string name="loan_error_gone">Diese Ausleihe gibt es nicht mehr.</string>
     <string name="loan_error_not_allowed">Das geht nicht mehr, die Ausleihe ist inzwischen weiter. So steht sie jetzt.</string>
+    <string name="loan_error_not_friends">Ihr seid nicht mehr verbunden.</string>
     <string name="loan_error_taken">Dieses Buch ist für jemand anderen reserviert oder verliehen.</string>
     <string name="loan_give_back">Ich habe es zurückgegeben</string>
     <string name="loan_hand">Ich habe es übergeben</string>
@@ -292,6 +285,7 @@
     <string name="loan_no_title">%1$s absagen?</string>
     <string name="loan_not_received">Ich habe es nicht bekommen</string>
     <string name="loan_not_returned">Ich habe es nicht zurückbekommen</string>
+    <string name="loan_note">«%1$s»</string>
     <string name="loan_open_book">Buch öffnen</string>
     <string name="loan_put_away">Weglegen</string>
     <string name="loan_reason">Grund: %1$s</string>
@@ -331,8 +325,6 @@
     <string name="note_empty">Noch keine Notizen zu diesem Buch.</string>
     <string name="note_text">Notiz</string>
     <string name="note_title">Titel (optional)</string>
-    <string name="notify_answer_no">%1$s hat Nein gesagt</string>
-    <string name="notify_answer_yes">%1$s hat Ja gesagt</string>
     <string name="notify_channel">Freunde</string>
     <string name="notify_due_borrower">«%2$s» ist bei %1$s fällig</string>
     <string name="notify_due_lender">%1$s wollte «%2$s» bis jetzt zurückbringen</string>
@@ -350,7 +342,6 @@
     <string name="notify_loan_returned">%1$s hat «%2$s» zurück</string>
     <string name="notify_loan_taken">«%2$s» ging an jemand anderen</string>
     <string name="notify_loan_withdrawn">%1$s fragt nicht mehr nach «%2$s»</string>
-    <string name="notify_request_title">%1$s möchte ein Buch ausleihen</string>
     <string name="onboarding_account">Melde dich an, und deine Bibliothek ist auf jedem Gerät und auf der Website dieselbe. Noch kein Konto? Gib eine E-Mail-Adresse und ein Passwort ein, und erstelle eines.</string>
     <string name="onboarding_look">Wie soll es aussehen?</string>
     <string name="onboarding_no_account">Ohne Konto weiter</string>
@@ -440,19 +431,6 @@
     <string name="recap_spent">Für Bücher ausgegeben</string>
     <string name="recap_title">Rückblick</string>
     <string name="recap_year">Jahr</string>
-    <string name="request_accepted">Zugesagt</string>
-    <string name="request_declined">Abgelehnt</string>
-    <string name="request_incoming_line">%1$s hat nach «%2$s» gefragt</string>
-    <string name="request_outgoing_line">«%1$s» von %2$s</string>
-    <string name="request_pending">Wartet auf Antwort</string>
-    <string name="request_question">%1$s möchte «%2$s» ausleihen. Einverstanden?</string>
-    <string name="request_resend">Nochmals senden</string>
-    <string name="request_resend_answer">Antwort nochmals senden</string>
-    <string name="requests_empty">Noch keine Ausleih-Anfragen. Öffne die Bibliothek von jemandem und frag nach einem Buch.</string>
-    <string name="requests_incoming">Anfragen an mich</string>
-    <string name="requests_outgoing">Meine Anfragen</string>
-    <string name="requests_title">Ausleih-Anfragen</string>
-    <string name="requests_waiting">Wartet auf deine Antwort</string>
     <string name="restore_confirm">Ersetzen</string>
     <string name="restore_done_title">Bibliothek wiederhergestellt</string>
     <string name="restore_text">Dieses Backup ersetzt deine aktuellen Bücher, Listen, Zitate und Ziele.</string>
@@ -493,12 +471,11 @@
     <string name="server_error_own_code">Das ist dein eigener Code.</string>
     <string name="server_error_setup">Der Server ist noch nicht für diese Version der App eingerichtet.</string>
     <string name="server_error_unknown_code">Diesen Code hat niemand. Vielleicht vertippt?</string>
+    <string name="server_error_unreadable">Diese Version von Shelfmark kann die Bibliothek auf deinem Konto nicht lesen: Eine neuere Version hat sie gespeichert, oder sie ist beschädigt. Es wurde nichts verändert. Bitte aktualisiere die App.</string>
     <string name="server_friend_added">Du und %1$s seid jetzt befreundet</string>
     <string name="server_friend_online">Über den Server verbunden</string>
     <string name="server_last_sync">Stand: %1$s</string>
     <string name="server_never_synced">Noch nicht abgeglichen</string>
-    <string name="server_queued">Keine Verbindung. Es wird gesendet, sobald wieder eine besteht.</string>
-    <string name="server_sent">Gesendet</string>
     <string name="server_share_code">Code teilen</string>
     <string name="server_sync_now">Jetzt abgleichen</string>
     <string name="server_syncing">Suche nach Neuigkeiten ...</string>
@@ -540,17 +517,10 @@
     <string name="settings_theme">Design</string>
     <string name="settings_theme_system">System</string>
     <string name="settings_title">Einstellungen</string>
-    <string name="share_answer_file">Antwort %1$s</string>
-    <string name="share_answer_no">Leider kann ich dir «%1$s» gerade nicht ausleihen. Öffne die angehängte Datei mit Shelfmark.</string>
-    <string name="share_answer_subject">Antwort: «%1$s»</string>
-    <string name="share_answer_yes">Ja, du kannst «%1$s» ausleihen. Öffne die angehängte Datei mit Shelfmark.</string>
     <string name="share_chooser">Senden mit</string>
     <string name="share_library_file">Bibliothek %1$s</string>
     <string name="share_library_message">Hier ist mein Bücherregal. Öffne die angehängte Datei mit Shelfmark, um es anzusehen. (%1$s)</string>
     <string name="share_library_subject">Bücherregal von %1$s</string>
-    <string name="share_request_file">Anfrage %1$s</string>
-    <string name="share_request_message">Hallo %1$s, darf ich mir «%2$s» ausleihen? Öffne die angehängte Datei mit Shelfmark und antworte mit Ja oder Nein.</string>
-    <string name="share_request_subject">Darf ich «%1$s» ausleihen?</string>
     <string name="share_target_quote">Als Zitat speichern</string>
     <string name="sort_added">Zuletzt hinzugefügt</string>
     <string name="sort_author">Autor</string>
@@ -658,10 +628,6 @@
     <plurals name="reading_days">
         <item quantity="one">%d Lesetag</item>
         <item quantity="other">%d Lesetage</item>
-    </plurals>
-    <plurals name="server_waiting">
-        <item quantity="one">%d Nachricht wartet auf eine Verbindung</item>
-        <item quantity="other">%d Nachrichten warten auf eine Verbindung</item>
     </plurals>
     <plurals name="times_read">
         <item quantity="one">%d Mal gelesen</item>

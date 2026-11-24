@@ -4,7 +4,6 @@ package ch.schmidtbit.shelfmark.ui.friends
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -58,8 +57,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.rounded.Cloud
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.FriendWithCount
-import ch.schmidtbit.shelfmark.data.model.LendRequest
-import ch.schmidtbit.shelfmark.data.model.LendStatus
 import ch.schmidtbit.shelfmark.data.repo.Settings
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.LocalImporter
@@ -70,17 +67,19 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * Sharing works without a server: the library travels as a small file through whatever
- * messenger the friends already use, and so do borrow requests and their answers.
+ * The account, what friends may see, the loans, and the friends themselves. A shelf can
+ * also be shown to somebody without an account: it travels as a small file through whatever
+ * messenger they already use. Borrowing needs both sides signed in.
  */
 @Composable
-fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
+fun FriendsScreen(onOpenFriend: (String) -> Unit, onLoans: () -> Unit, onOpenBook: (Long) -> Unit) {
     val container = LocalContainer.current
     val importer = LocalImporter.current
     val context = LocalContext.current
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = Settings())
     val friends by container.social.friends.collectAsStateWithLifecycle(initialValue = emptyList())
-    val requests by container.social.requests.collectAsStateWithLifecycle(initialValue = emptyList())
+    val loans by container.social.loans.collectAsStateWithLifecycle(initialValue = emptyList())
+    val library by container.library.books.collectAsStateWithLifecycle(initialValue = emptyList())
     var askName by remember { mutableStateOf(false) }
     var shareAfterName by remember { mutableStateOf(false) }
     // The card for the server only shows where there is a server to talk to.
@@ -149,22 +148,24 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onRequests: () -> Unit) {
                 }
             }
 
-            val pending = requests.filter { it.incoming && it.status == LendStatus.PENDING }
-            if (pending.isNotEmpty()) {
-                item(key = "pendingTitle") { SectionTitle(stringResource(R.string.requests_waiting)) }
-                items(pending, key = { "req${it.id}" }) { request ->
-                    IncomingRequestCard(request, onAnswer = { accept -> importer.answer(request.id, accept) })
+            // What waits for a tap of the reader's own stands right here. Everything else is one tap away.
+            val waiting = loans.filter { it.waitsForMe }
+            if (waiting.isNotEmpty()) {
+                item(key = "waitingTitle") { SectionTitle(stringResource(R.string.loans_waiting)) }
+                items(waiting, key = { "loan${it.id}" }) { loan ->
+                    val book = bookOfLoan(loan, library)
+                    LoanCard(loan, onOpenBook = book?.let { { onOpenBook(it.id) } })
                 }
             }
-            item(key = "allRequests") {
+            item(key = "allLoans") {
                 Card(
-                    onClick = onRequests,
+                    onClick = onLoans,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag("allRequests"),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag("allLoans"),
                 ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.requests_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                        if (requests.isNotEmpty()) Badge { Text(requests.size.toString()) }
+                        Text(stringResource(R.string.loans_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        if (waiting.isNotEmpty()) Badge { Text(waiting.size.toString()) }
                         Spacer(Modifier.width(8.dp))
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null)
                     }
@@ -224,27 +225,6 @@ fun ToggleRow(title: String, hint: String, checked: Boolean, tag: String, onChan
             Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.testTag(tag))
-    }
-}
-
-@Composable
-fun IncomingRequestCard(request: LendRequest, onAnswer: (Boolean) -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag("incomingRequest"),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                stringResource(R.string.request_question, request.peerName.ifBlank { stringResource(R.string.friends_someone) }, request.bookTitle),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            if (request.note.isNotBlank()) Text("„${request.note}“", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { onAnswer(false) }, modifier = Modifier.weight(1f).testTag("answerNo")) { Text(stringResource(R.string.action_no)) }
-                Button(onClick = { onAnswer(true) }, modifier = Modifier.weight(1f).testTag("answerYes")) { Text(stringResource(R.string.action_yes)) }
-            }
-        }
     }
 }
 

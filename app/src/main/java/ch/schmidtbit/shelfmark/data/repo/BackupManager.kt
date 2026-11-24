@@ -39,7 +39,6 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
         goals = db.goals().all().sortedBy { it.id },
         purchases = db.purchases().all().sortedBy { it.id },
         ornaments = db.ornaments().all().sortedBy { it.id },
-        requests = db.social().allRequests(),
         prefs = prefs,
     )
 
@@ -88,17 +87,9 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
         backup.books.size
     }
 
-    /**
-     * Replaces the library with [backup]. With [withRequests] the borrow requests are
-     * replaced too: that is for a library coming from the account, where they are part of
-     * it. A backup file from some time ago should not bring old requests back.
-     */
-    suspend fun restore(backup: BackupPayload, withRequests: Boolean = false) {
+    /** Replaces the library with [backup]. */
+    suspend fun restore(backup: BackupPayload) {
         db.withTransaction {
-            if (withRequests) {
-                db.social().clearRequests()
-                backup.requests.forEach { db.social().upsertRequest(it) }
-            }
             // Deleting the books cascades to their quotes, sessions, notes and list memberships.
             db.books().clear()
             db.shelves().clear()

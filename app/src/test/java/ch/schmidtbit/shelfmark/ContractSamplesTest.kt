@@ -6,8 +6,8 @@ import ch.schmidtbit.shelfmark.data.model.BookShelf
 import ch.schmidtbit.shelfmark.data.model.Goal
 import ch.schmidtbit.shelfmark.data.model.GoalKind
 import ch.schmidtbit.shelfmark.data.model.GoalRepeat
-import ch.schmidtbit.shelfmark.data.model.LendRequest
-import ch.schmidtbit.shelfmark.data.model.LendStatus
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.Note
 import ch.schmidtbit.shelfmark.data.model.Ornament
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
@@ -18,23 +18,27 @@ import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
 import ch.schmidtbit.shelfmark.data.repo.CustomTheme
+import ch.schmidtbit.shelfmark.data.repo.LoanBooks
+import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
-import ch.schmidtbit.shelfmark.data.share.LendAnswerMsg
-import ch.schmidtbit.shelfmark.data.share.LendRequestMsg
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import ch.schmidtbit.shelfmark.data.share.VaultPrefs
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 
 /**
  * The documents the app exchanges with the server, as examples in supabase/samples.
  * The website is written against these files, so they have to say what the app really
- * writes: this test fails as soon as they differ. After a change to the format on
+ * writes, and for a loan what it really reads: this test fails as soon as they differ. After a change to the format on
  * purpose, write them anew with SHELFMARK_WRITE_SAMPLES=1 and look at the difference.
  */
 class ContractSamplesTest {
@@ -47,6 +51,9 @@ class ContractSamplesTest {
     // Days are days since 1970, moments are milliseconds since 1970.
     private val day = 20_780L
     private val moment = 1_795_400_000_000L
+
+    // Anna lent Dune to Ben, through a loan between friends. Momo she borrowed by hand, from somebody without Shelfmark.
+    private val lentLoan = "3f2a9c1e-7b4d-4e8a-9c0d-112233445566"
 
     private val books = listOf(
         Book(
@@ -62,7 +69,7 @@ class ContractSamplesTest {
         ),
         Book(
             id = 3, title = "Dune", subtitle = "Der Wüstenplanet", authors = "Frank Herbert", pageCount = 896, format = BookFormat.HARDCOVER,
-            status = ReadingStatus.NONE, lentTo = "Ben", lentSince = day - 1, series = "Dune", seriesPosition = 1f,
+            status = ReadingStatus.NONE, lentTo = "Ben", lentSince = day - 1, loanId = lentLoan, series = "Dune", seriesPosition = 1f,
             addedAt = moment - 10 * 86_400_000L, updatedAt = moment - 86_400_000L,
         ),
         Book(
@@ -89,10 +96,6 @@ class ContractSamplesTest {
         goals = listOf(Goal(id = 1, kind = GoalKind.BOOKS, target = 12, startDay = 0, endDay = 0, repeat = GoalRepeat.YEARLY, createdAt = moment)),
         purchases = listOf(Purchase(id = 1, bookId = 1, day = day - 30, price = 14.9, currency = "CHF", store = "Orell Füssli")),
         ornaments = listOf(Ornament(id = 1, shelfKey = "READING", kind = OrnamentKind.CANDLE, position = 1), Ornament(id = 2, shelfKey = "list_1", kind = OrnamentKind.CAT, position = 2)),
-        requests = listOf(
-            LendRequest(id = "req-1", incoming = true, bookRemoteId = 3, bookTitle = "Dune", bookAuthors = "Frank Herbert", peerId = ben, peerName = "Ben", note = "Für die Ferien?", status = LendStatus.ACCEPTED, createdAt = moment - 2 * 86_400_000L, answeredAt = moment - 86_400_000L),
-            LendRequest(id = "req-2", incoming = false, bookRemoteId = 7, bookTitle = "Emma", peerId = ben, peerName = "Ben", createdAt = moment),
-        ),
         prefs = VaultPrefs(
             profileName = "Anna", shareStatus = true, shareRatings = false, minutesPerPage = 2f, theme = "custom:moor",
             customThemes = listOf(CustomTheme("moor", "Moor", 0xFF101510.toInt(), 0xFF1C241C.toInt(), 0xFF7BC47F.toInt(), 0xFFE8F0E8.toInt())),
@@ -107,19 +110,37 @@ class ContractSamplesTest {
         ),
     )
 
-    private val request = ShareCodec.encodeElement(
-        Envelope(
-            type = Envelope.TYPE_REQUEST,
-            request = LendRequestMsg(requestId = "req-1", bookId = 3, bookTitle = "Dune", bookAuthors = "Frank Herbert", fromId = ben, fromName = "Ben", toId = anna, note = "Für die Ferien?", createdAt = moment),
-        ),
-    )
-
-    private val answer = ShareCodec.encodeElement(
-        Envelope(
-            type = Envelope.TYPE_ANSWER,
-            answer = LendAnswerMsg(requestId = "req-1", accepted = true, bookTitle = "Dune", fromId = anna, fromName = "Anna", toId = ben, answeredAt = moment),
-        ),
-    )
+    /**
+     * A loan as shelfmark_sync, shelfmark_loan_ask and shelfmark_loan_act tell it to one of its
+     * two sides, here to Anna, the lender: Ben has her Dune and it is due back in three weeks.
+     */
+    private val loan = buildJsonObject {
+        put("id", lentLoan)
+        put("role", "lender")
+        put("peer", ben)
+        put("peerName", "Ben")
+        put("bookId", 3)
+        put("book", buildJsonObject {
+            put("title", "Dune")
+            put("authors", "Frank Herbert")
+            put("isbn", "")
+            put("coverUrl", "")
+            put("pageCount", 896)
+            put("format", "HARDCOVER")
+        })
+        put("note", "Für die Ferien?")
+        put("state", "on_loan")
+        put("reason", "")
+        put("dueOn", day + 20)
+        put("askedAt", moment - 3 * 86_400_000L)
+        put("agreedAt", moment - 2 * 86_400_000L)
+        put("handedAt", moment - 86_400_000L - 3_600_000L)
+        put("receivedAt", moment - 86_400_000L)
+        put("givenBackAt", JsonNull)
+        put("closedAt", JsonNull)
+        put("updatedAt", moment - 86_400_000L)
+        put("byMe", false)
+    }
 
     private fun check(name: String, document: JsonElement) {
         val text = pretty.encodeToString(JsonElement.serializer(), document) + "\n"
@@ -135,8 +156,36 @@ class ContractSamplesTest {
         check("vault.json", ShareCodec.encodeVault(vault))
         check("library-everything.json", library(includeStatus = true, includeRatings = true))
         check("library-owned-only.json", library(includeStatus = false, includeRatings = false))
-        check("lend-request.json", request)
-        check("lend-answer.json", answer)
+        check("loan.json", loan)
+    }
+
+    @Test fun aLoanIsReadTheWayTheSampleSaysIt() {
+        assertEquals(
+            Loan(
+                id = lentLoan, lender = true, peerId = ben, peerName = "Ben", bookId = 3,
+                title = "Dune", authors = "Frank Herbert", pageCount = 896, format = BookFormat.HARDCOVER,
+                note = "Für die Ferien?", state = LoanState.ON_LOAN, dueOn = day + 20,
+                askedAt = moment - 3 * 86_400_000L, agreedAt = moment - 2 * 86_400_000L, handedAt = moment - 86_400_000L - 3_600_000L,
+                receivedAt = moment - 86_400_000L, updatedAt = moment - 86_400_000L, byMe = false,
+            ),
+            ServerApi.readLoan(loan),
+        )
+        // The sample and the vault tell one story: the book in the vault is lent through this very loan,
+        // and it says what the rules for the books make of it.
+        val lent = vault.books.single { it.loanId == lentLoan }
+        assertEquals(3L, lent.id)
+        assertEquals("Ben", lent.lentTo)
+        assertEquals(day - 1, lent.lentSince)
+        assertEquals(1_111_235_846_714_580L, LoanBooks.loanBookId(lentLoan))
+        // The other side of the same loan, and a loan that never got a day.
+        val asBorrower = ServerApi.readLoan(buildJsonObject { loan.forEach { (key, value) -> put(key, value) }; put("role", "borrower"); put("dueOn", JsonNull); put("byMe", true) })!!
+        assertEquals(false, asBorrower.lender)
+        assertNull(asBorrower.dueOn)
+        assertEquals(true, asBorrower.byMe)
+        // What is no loan, or a loan in a state from the future, is left out and breaks nothing.
+        assertNull(ServerApi.readLoan(buildJsonObject { loan.forEach { (key, value) -> put(key, value) }; put("state", "lost") }))
+        assertNull(ServerApi.readLoan(buildJsonObject { put("id", lentLoan) }))
+        assertNull(ServerApi.readLoan(JsonNull))
     }
 
     @Test fun aVaultIsReadBackTheSame() {
@@ -144,6 +193,15 @@ class ContractSamplesTest {
         // A document from a newer client may hold things this app does not know. They do no harm.
         val newer = Json.parseToJsonElement("""{"exportedAt":1,"books":[{"id":9,"title":"X","somethingNew":true}],"shelves":[],"links":[],"quotes":[],"fromTheFuture":{"a":1}}""")
         assertEquals("X", ShareCodec.decodeVault(newer)!!.books.single().title)
+        // And one from before the loans still lists borrow requests. It is read without them.
+        val older = Json.parseToJsonElement(
+            """{"exportedAt":1,"books":[{"id":3,"title":"Dune","lentTo":"Ben","lentSince":20779}],"shelves":[],"links":[],"quotes":[],
+               "requests":[{"id":"req-1","incoming":true,"bookRemoteId":3,"bookTitle":"Dune","bookAuthors":"Frank Herbert","peerId":"$ben","peerName":"Ben","note":"Für die Ferien?","status":"ACCEPTED","createdAt":1795227200000,"answeredAt":1795313600000},
+                           {"id":"req-2","incoming":false,"bookRemoteId":7,"bookTitle":"Emma","peerId":"$ben","peerName":"Ben","createdAt":1795400000000}]}""",
+        )
+        val read = ShareCodec.decodeVault(older)!!
+        assertEquals("Ben", read.books.single().lentTo)
+        assertEquals("", read.books.single().loanId)
     }
 
     @Test fun whatTheWebsiteWritesIsUnderstood() {

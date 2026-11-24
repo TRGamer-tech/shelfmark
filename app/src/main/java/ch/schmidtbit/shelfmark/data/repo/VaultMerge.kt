@@ -35,10 +35,6 @@ object VaultMerge {
             purchases = three(base?.purchases, local.purchases, remote.purchases, { it.id }).filter { it.bookId in bookIds }.sortedBy { it.id },
             ornaments = three(base?.ornaments, local.ornaments, remote.ornaments, { it.id })
                 .filter { o -> !o.shelfKey.startsWith("list_") || o.shelfKey.removePrefix("list_").toLongOrNull() in shelfIds }.sortedBy { it.id },
-            // An answer is a change, so an answered request beats the same request still waiting.
-            requests = three(base?.requests, local.requests, remote.requests, { it.id }) { mine, theirs ->
-                if ((mine.answeredAt ?: 0) > (theirs.answeredAt ?: 0)) mine else theirs
-            }.sortedWith(compareBy({ it.createdAt }, { it.id })),
             prefs = when {
                 remote.prefs == null -> local.prefs
                 local.prefs == null || local.prefs == base?.prefs -> remote.prefs

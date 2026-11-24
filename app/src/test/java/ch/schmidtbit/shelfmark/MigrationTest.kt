@@ -5,6 +5,8 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
+import ch.schmidtbit.shelfmark.data.model.Loan
+import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
@@ -22,9 +24,10 @@ import org.robolectric.RobolectricTestRunner
 import java.io.File
 
 /**
- * An update of the app must keep the library: version 1 data has to open as version 2.
- * The old database is built from the schema file Room exported for version 1, then opened
- * with the current code. Room migrates it and refuses to open if the result does not match.
+ * An update of the app must keep the library: the data of every earlier version has to open
+ * in this one. The old database is built from the schema file Room exported for that
+ * version, then opened with the current code. Room migrates it and refuses to open if the
+ * result does not match.
  */
 @RunWith(RobolectricTestRunner::class)
 class MigrationTest {
@@ -85,15 +88,80 @@ class MigrationTest {
             db.ornaments().insert(ch.schmidtbit.shelfmark.data.model.Ornament(shelfKey = "READ", kind = OrnamentKind.TROPHY, position = 1))
             assertEquals(OrnamentKind.TROPHY, db.ornaments().all().single().kind)
 
-            // Version 3: a friend from before is simply not connected through the server, and there is an outbox.
+            // Version 3: a friend from before is simply not connected through the server.
             val friend = db.social().getFriend("friend-1")!!
             assertEquals("Ben", friend.name)
             assertEquals(false, friend.online)
             assertEquals(0L, friend.serverAt)
             db.social().markOnline("friend-1", 99)
             assertEquals(listOf("friend-1"), db.social().onlineFriends().map { it.id })
-            db.social().enqueue(ch.schmidtbit.shelfmark.data.model.OutboxMessage(toId = "friend-1", payload = "{}"))
-            assertEquals(1, db.social().outbox().size)
+
+            // Version 4: the book that was lent by hand still is, and no loan between friends has touched it.
+            assertEquals("", book.loanId)
+            assertEquals(20000L, book.lentSince)
+            assertTrue(db.social().loans().isEmpty())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test fun borrowRequestsOfVersionThreeMakeWayForLoans() = runBlocking {
+        createOldDatabase(3) { db ->
+            db.execSQL(
+                "INSERT INTO books (id, title, subtitle, authors, isbn, publisher, publishedYear, language, pageCount, format, description, " +
+                    "coverUrl, coverPath, status, ownership, borrowedFrom, lendable, lentTo, lentSince, rating, spice, review, startedOn, finishedOn, " +
+                    "currentPage, readCount, favorite, genres, tags, series, seriesPosition, addedAt, updatedAt) VALUES " +
+                    "(7, 'Dune', '', 'Frank Herbert', '', '', '', '', 896, 'HARDCOVER', '', " +
+                    "'', '', 'NONE', 'OWNED', '', 1, 'Ben', 20000, 0, 0, '', NULL, NULL, 0, 0, 0, '', '', '', 0, 1000, 2000)",
+            )
+            db.execSQL("INSERT INTO quotes (id, bookId, text, page, note, fromOcr, createdAt) VALUES (1, 7, 'Fear is the mind-killer.', 12, '', 0, 3000)")
+            db.execSQL("INSERT INTO friends (id, name, sharedAt, importedAt, includesStatus, includesRatings, online, serverAt) VALUES ('friend-1', 'Ben', 6000, 7000, 1, 0, 1, 42)")
+            db.execSQL(
+                "INSERT INTO friend_books (localId, friendId, remoteId, title, authors, isbn, coverUrl, pageCount, format, description, status, ownership, available, rating, spice, review, startedOn, finishedOn, shelves) " +
+                    "VALUES (1, 'friend-1', 3, 'Emma', 'Jane Austen', '', '', 0, 'UNKNOWN', '', NULL, 'OWNED', 1, 0, 0, '', NULL, NULL, '')",
+            )
+            // What the borrow requests left behind: an answered request, one of my own, and a message that never left.
+            db.execSQL(
+                "INSERT INTO lend_requests (id, incoming, bookRemoteId, bookTitle, bookAuthors, isbn, peerId, peerName, note, status, createdAt, answeredAt) VALUES " +
+                    "('req-1', 1, 7, 'Dune', 'Frank Herbert', '', 'friend-1', 'Ben', 'Für die Ferien?', 'ACCEPTED', 8000, 9000), " +
+                    "('req-2', 0, 3, 'Emma', 'Jane Austen', '', 'friend-1', 'Ben', '', 'PENDING', 9500, NULL)",
+            )
+            db.execSQL("INSERT INTO outbox (id, toId, payload, createdAt) VALUES (1, 'friend-1', '{\"app\":\"shelfmark\",\"v\":1,\"type\":\"lend_request\"}', 9600)")
+        }
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+        try {
+            // The library is what it was. The book a request had marked as lent is lent by hand now.
+            val dune = db.books().get(7)!!
+            assertEquals("Ben", dune.lentTo)
+            assertEquals(20000L, dune.lentSince)
+            assertEquals("", dune.loanId)
+            assertEquals("Fear is the mind-killer.", db.quotes().all().single().text)
+            val friend = db.social().getFriend("friend-1")!!
+            assertTrue(friend.online)
+            assertEquals(42L, friend.serverAt)
+            assertEquals("Emma", db.social().findFriendBook("friend-1", 3)!!.title)
+
+            // The two tables of the borrow requests are gone, and the one for loans is there.
+            val tables = db.openHelper.readableDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table'").use { cursor ->
+                generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toSet()
+            }
+            assertTrue("lend_requests" !in tables && "outbox" !in tables)
+            assertTrue("loans" in tables)
+            assertTrue(db.social().loans().isEmpty())
+
+            // A loan can be remembered, with and without a day, and a book can say which loan it is out on.
+            val loan = Loan(id = "3f2a9c1e-7b4d-4e8a-9c0d-112233445566", lender = true, peerId = "friend-1", peerName = "Ben", bookId = 7, title = "Dune", state = LoanState.ON_LOAN, dueOn = 20030, askedAt = 1, receivedAt = 2, updatedAt = 3)
+            db.social().upsertLoans(listOf(loan, loan.copy(id = "second", state = LoanState.ASKED, dueOn = null, askedAt = 5)))
+            assertEquals(listOf("second", loan.id), db.social().observeLoans().first().map { it.id })
+            assertEquals(loan, db.social().getLoan(loan.id))
+            db.social().markDueSaid(loan.id)
+            assertEquals(20030L, db.social().getLoan(loan.id)!!.dueSaid)
+            db.books().update(dune.copy(loanId = loan.id))
+            assertEquals(loan.id, db.books().get(7)!!.loanId)
+            db.social().deleteLoan("second")
+            db.social().clearLoans()
+            assertTrue(db.social().loans().isEmpty())
         } finally {
             db.close()
         }

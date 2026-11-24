@@ -23,5 +23,5 @@ import kotlinx.serialization.Serializable
 @Serializable data object RecapRoute
 @Serializable data object MilestonesRoute
 @Serializable data class FriendRoute(val id: String)
-@Serializable data object RequestsRoute
+@Serializable data object LoansRoute
 @Serializable data object SettingsRoute

@@ -16,7 +16,27 @@ enum class BookFormat { UNKNOWN, HARDCOVER, PAPERBACK, EBOOK, AUDIOBOOK, OTHER }
 /** OWNED: mine. BORROWED: on loan from someone else. NOT_OWNED: wishlist, library copy and the like. */
 enum class Ownership { OWNED, BORROWED, NOT_OWNED }
 
-enum class LendStatus { PENDING, ACCEPTED, DECLINED }
+/**
+ * Where a loan between two friends stands. The server writes these words in lower case
+ * (see "Loans" in supabase/README.md).
+ */
+enum class LoanState {
+    ASKED, AGREED, HANDED, ON_LOAN, GIVEN_BACK, RETURNED, DECLINED, WITHDRAWN, CANCELLED;
+
+    /** The end of a loan. Nothing more happens to it, it can only be put away. */
+    val over: Boolean get() = this == RETURNED || this == DECLINED || this == WITHDRAWN || this == CANCELLED
+
+    /** The book is in the borrower's hands. */
+    val out: Boolean get() = this == ON_LOAN || this == GIVEN_BACK
+
+    /** The book is promised to somebody or with them, so nobody else can have it. */
+    val holdsBook: Boolean get() = this == AGREED || this == HANDED || out
+
+    companion object {
+        /** Null for a word this version of the app does not know. */
+        fun of(word: String): LoanState? = entries.firstOrNull { it.name.equals(word, ignoreCase = true) }
+    }
+}
 
 enum class GoalKind { BOOKS, PAGES, MINUTES }
 
@@ -53,6 +73,12 @@ data class Book(
     val lendable: Boolean = true,
     val lentTo: String = "",
     val lentSince: Long? = null,
+    /**
+     * The loan between friends that this book is out on: on the lender's side the book that
+     * was lent, on the borrower's side the copy that stands on their shelf meanwhile. Empty
+     * for a book that was lent or borrowed by hand.
+     */
+    @ColumnInfo(defaultValue = "") val loanId: String = "",
     /** 0 = unrated, otherwise 0.5 to 5.0 in half star steps. */
     val rating: Float = 0f,
     /** 0 = not set, 1 to 5 chillies. */
@@ -74,7 +100,7 @@ data class Book(
     val addedAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {
-    /** A friend can ask for this book right now. */
+    /** Mine, meant to be lent, and not lent out by hand. Whether a loan between friends holds it is not known here. */
     val availableToLend: Boolean
         get() = ownership == Ownership.OWNED && lendable && lentTo.isBlank()
 }
@@ -230,16 +256,6 @@ data class Friend(
     @ColumnInfo(defaultValue = "0") val serverAt: Long = 0,
 )
 
-/** Something for a friend that waits for the next connection to the server. */
-@Entity(tableName = "outbox")
-data class OutboxMessage(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val toId: String,
-    /** The envelope as JSON. */
-    val payload: String,
-    val createdAt: Long = System.currentTimeMillis(),
-)
-
 data class FriendWithCount(
     @Embedded val friend: Friend,
     val bookCount: Int,
@@ -255,7 +271,7 @@ data class FriendWithCount(
 data class FriendBook(
     @PrimaryKey(autoGenerate = true) val localId: Long = 0,
     val friendId: String,
-    /** The book's id in the friend's own database, echoed back in lend requests. */
+    /** The book's id in the friend's own library. A loan names the book by it. */
     val remoteId: Long,
     val title: String,
     val authors: String = "",
@@ -276,20 +292,55 @@ data class FriendBook(
     val shelves: String = "",
 )
 
-/** A borrow request, either one I sent (incoming = false) or one a friend sent me. */
-@Serializable
-@Entity(tableName = "lend_requests")
-data class LendRequest(
+/**
+ * A loan between a friend and me, as the server last said it stands. The loan itself is one
+ * record on the server that both of us read. This table only remembers what the last
+ * answer was, so there is something to show without a connection. It is not part of the
+ * library that goes to the account.
+ */
+@Entity(tableName = "loans")
+data class Loan(
     @PrimaryKey val id: String,
-    val incoming: Boolean,
-    val bookRemoteId: Long,
-    val bookTitle: String,
-    val bookAuthors: String = "",
-    val isbn: String = "",
+    /** True when the book is mine and the friend asked for it. False when I am the one who asked. */
+    val lender: Boolean,
     val peerId: String,
     val peerName: String,
+    /** The id of the book in the lender's library. */
+    val bookId: Long,
+    /** What the borrower saw of the book when asking. */
+    val title: String,
+    val authors: String = "",
+    val isbn: String = "",
+    val coverUrl: String = "",
+    val pageCount: Int = 0,
+    val format: BookFormat = BookFormat.UNKNOWN,
     val note: String = "",
-    val status: LendStatus = LendStatus.PENDING,
-    val createdAt: Long = System.currentTimeMillis(),
-    val answeredAt: Long? = null,
-)
+    val state: LoanState = LoanState.ASKED,
+    /** Why the lender said no or took the yes back. [LoanRules.TAKEN] when somebody else got the book. */
+    val reason: String = "",
+    /** The epoch day the book is wanted back by. Null: no fixed date. */
+    val dueOn: Long? = null,
+    val askedAt: Long = 0,
+    val agreedAt: Long? = null,
+    val handedAt: Long? = null,
+    val receivedAt: Long? = null,
+    val givenBackAt: Long? = null,
+    val closedAt: Long? = null,
+    val updatedAt: Long = 0,
+    /** Whether the last step was my own. */
+    val byMe: Boolean = false,
+    /** The due day this phone has reminded of already. Only this phone knows it, the server does not. */
+    val dueSaid: Long? = null,
+) {
+    val over: Boolean get() = state.over
+
+    /** The next step is mine: an answer, or confirming that the book changed hands. */
+    val waitsForMe: Boolean
+        get() = if (lender) state == LoanState.ASKED || state == LoanState.GIVEN_BACK else state == LoanState.HANDED
+
+    /** Somebody else got the book. */
+    val taken: Boolean get() = state == LoanState.DECLINED && reason == LoanRules.TAKEN
+
+    /** The book is out and the day it was wanted back by has come. */
+    fun dueBy(today: Long): Boolean = state.out && dueOn != null && dueOn <= today
+}
