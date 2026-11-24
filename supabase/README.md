@@ -203,6 +203,21 @@ whose loan the client knows shows that loan and its steps. With no such loan (th
 account is gone, or the loan was put away) it is a book lent or borrowed by hand again,
 as for somebody without Shelfmark: `lentTo` and `borrowedFrom` are still typed freely.
 
+Three things follow from that, in both clients:
+
+- A friend who never gave themselves a name has an empty `peerName`. An empty `lentTo`
+  means "at home", so the rules above write `?` in its place, for `lentTo` and
+  `borrowedFrom` alike.
+- Whatever ends a loan by hand on a book that has no known loan ("Got it back", another
+  ownership) empties `loanId` too.
+- A book that is part of a known loan which is not over cannot be deleted: as the
+  borrower's copy the next sync would bring it back, and as the lender's book the loan
+  would point at nothing. The client says to end the loan first.
+
+A friendship that ends takes the open questions with it: those of the one who ended it
+become `withdrawn`, those of the other `declined`. A book that is reserved or on loan
+stays a loan.
+
 **News and reminders.** A loan whose `updatedAt` is newer than what this device last saw
 and whose `byMe` is `false` is news: the other side did something. Waiting for the reader's
 own tap are, as lender, `asked` and `given_back`, and as borrower, `handed`. A loan that

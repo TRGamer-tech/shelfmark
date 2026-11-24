@@ -390,7 +390,9 @@ begin
     perform pg_temp.sign_in(ben);
     r := public.shelfmark_sync();
     assert jsonb_array_length(r -> 'friends') = 0 and jsonb_array_length(r -> 'messages') = 0 and jsonb_array_length(r -> 'libraries') = 0, 'unfriended';
-    assert (select l ->> 'state' from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = other::text) = 'withdrawn', 'an open question ends with the friendship';
+    -- Anna ended it, so Ben's open question was answered with a no. He did not take it back.
+    assert (select l ->> 'state' from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = other::text) = 'declined', 'an open question ends with the friendship';
+    assert not (select (l ->> 'byMe')::boolean from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = other::text), 'and it was the other side that ended it';
     assert (select l ->> 'state' from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = loan::text) = 'agreed', 'a reserved book stays reserved';
     -- Without the friendship there is no new question.
     failed := false;

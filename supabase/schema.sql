@@ -324,8 +324,11 @@ declare
 begin
     delete from shelfmark.friendships
     where (user_id = me and friend_id = p_friend) or (user_id = p_friend and friend_id = me);
+    -- Whoever ends the friendship ends the open questions with it: their own are taken back,
+    -- the friend's are answered with a no.
     update shelfmark.loans
-    set state = 'withdrawn', closed_at = shelfmark.millis(now()), updated_at = shelfmark.millis(now()), updated_by = me
+    set state = case when borrower_id = me then 'withdrawn' else 'declined' end,
+        closed_at = shelfmark.millis(now()), updated_at = shelfmark.millis(now()), updated_by = me
     where state = 'asked'
       and ((lender_id = me and borrower_id = p_friend) or (lender_id = p_friend and borrower_id = me));
     return jsonb_build_object('ok', true);

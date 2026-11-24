@@ -146,6 +146,27 @@ def make_handler(dsn, key, token_seconds, confirm_email):
                 if picture is None:
                     return self.reply(400, {"statusCode": "404", "error": "not_found", "message": "Object not found"})
                 return self.reply(200, raw=picture[1], content_type=picture[0])
+            listing = re.fullmatch(r"/storage/v1/object/list/([^/]+)", path)
+            if listing and method == "POST":
+                # What is in a folder. Everybody sees their own folder and nothing of anybody else's.
+                if listing.group(1) != BUCKET:
+                    return self.reply(400, {"statusCode": "404", "error": "Bucket not found", "message": "Bucket not found"})
+                claims = self.caller()
+                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    asked = json.loads(self.rfile.read(length) or b"{}")
+                except ValueError:
+                    asked = {}
+                folder = str(asked.get("prefix", "")).strip("/")
+                limit, offset = int(asked.get("limit") or 100), int(asked.get("offset") or 0)
+                names = []
+                if claims and folder and folder.split("/")[0] == claims["sub"]:
+                    names = sorted(name[len(folder) + 1:] for name in pictures if name.startswith(folder + "/") and "/" not in name[len(folder) + 1:])
+                return self.reply(200, [
+                    {"name": name, "id": str(uuid.uuid5(uuid.NAMESPACE_URL, folder + "/" + name)),
+                     "metadata": {"mimetype": pictures[folder + "/" + name][0], "size": len(pictures[folder + "/" + name][1])}}
+                    for name in names[offset:offset + limit]
+                ])
             match = re.fullmatch(r"/storage/v1/object/([^/]+)/(.+)", path)
             if not match:
                 return self.reply(404, {"message": "not found"})
