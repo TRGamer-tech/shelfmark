@@ -88,8 +88,11 @@ available in English and German.
 - When two devices changed things while the other was not looking, both sets of changes are
   kept, book by book.
 - Safety nets: a library a device cannot read (a newer version wrote it) is never overwritten,
-  a sync never runs over what you did while it was fetching, and when the first sign-in has to
-  ask which of two libraries counts, the other one is kept as a backup on the phone.
+  and a sync never runs over what you did while it was fetching.
+- When the first sign-in on a phone finds books on the phone and on the account, you choose:
+  put both together, or go on with one of them. What is replaced is kept as a backup.
+- The server keeps up to ten earlier versions of your library (a few from the last hours, one
+  for each of the last days). The settings list them and bring one back on every device.
 - Android's own cloud backup is switched off for Shelfmark, so that "without an account
   everything stays on this device" is true. The backup in the settings and the account are the
   ways to move a library.
@@ -113,8 +116,8 @@ available in English and German.
 ## How sharing works
 
 Signed in, the Friends tab shows your friend code, like `ZJ242-5U97E`. Whoever enters your
-code is your friend, and you are theirs. From then on your shared shelf is kept up to date for
-them. For somebody without an account, **Share my library** makes a small `.shelfmark.json`
+code is your friend, and you are theirs. You are told when that happens, and can remove
+somebody you do not know. From then on your shared shelf is kept up to date for them. For somebody without an account, **Share my library** makes a small `.shelfmark.json`
 file to send through the messenger you already use; they open it with Shelfmark and can
 browse your shelf.
 
@@ -138,8 +141,9 @@ moves in steps, and each step changes something real:
 - Handover and return each take both people on purpose: nobody can claim to have given a book
   back that the lender does not have. A lender who has the book back while the borrower never
   said so can close the loan alone.
-- News arrives by itself: the app looks every minute while it is open and twice a day in the
-  background, with a notification.
+- News arrives by itself: the app looks every minute while it is open and about every quarter
+  of an hour in the background, with a notification. The website does the same while it is
+  open in a tab, with a notification of the browser if you allow it.
 - Lending to somebody who does not use Shelfmark still works by hand: **Mark as lent out** on
   the book, with any name.
 
@@ -186,6 +190,7 @@ dashboard (**Authentication > Users**).
 - Loans between friends: which book, the two people, a note, the day it is wanted back by
   and when each step happened. A loan stays until both have put it away or one of the two
   accounts is deleted.
+- Up to ten earlier versions of each library, which only its owner can list and bring back.
 - Cover photos, in a storage bucket. Everybody can write below their own user id only.
   Reading a picture needs its full address, which nobody can guess, and no sign-in, so that
   friends can see the covers of a shared shelf. A picture is removed when no book shows it
@@ -374,7 +379,8 @@ Cover pictures also come from the Open Library and DNB cover services, which ans
 
 - A sort order per shelf, and the timer alarm of the desktop Shelfmark.
 - News from friends the moment it happens. The app looks for it every minute while it is
-  open and twice a day in the background, which is what works without a push service.
+  open and about every quarter of an hour in the background, which is what works without a
+  push service. The website can only tell while it is open in a tab.
 - Signing in with Google, Apple or a link by mail. It is e-mail and password.
 
 ## Licences
