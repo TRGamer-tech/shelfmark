@@ -192,7 +192,11 @@ in line with the loans. Both clients do exactly this, and doing it twice changes
   with everything the reader noted in it: read, not mine.
 - `loanBookId(id)`: the first 13 hexadecimal digits of the loan's id, dashes left out,
   read as a number (0 becomes 1). Two devices of one account that both see the loan make
-  the same book, and the vault knows it is one.
+  the same book, and the vault knows it is one. For tests on both sides:
+  `3f2a9c1e-7b4d-4e8a-9c0d-112233445566` gives `1111235846714580`,
+  `0000000a-bcde-4f01-8234-56789abcdef0` gives `11259364`,
+  `ffffffff-ffff-4fff-8fff-ffffffffffff` gives `4503599627370484`, and
+  `9B1DEB4D-3B7D-4BAD-9BDD-2B0D7B3DCB6D` (capitals count the same) gives `2728844865026004`.
 
 `loanId` is a field of a book in the vault, empty by default. A book with a `loanId`
 whose loan the client knows shows that loan and its steps. With no such loan (the other
