@@ -158,7 +158,14 @@ class OkHttpPoster(private val client: OkHttpClient) : HttpPoster {
 class ServerException(val reason: String, val status: Int) : IOException("Server: $reason ($status)")
 
 data class Registration(val id: String, val code: String, val name: String)
-data class RemoteFriend(val id: String, val name: String)
+/**
+ * A friend as the server names them. [joined] is true when they came by my friend code:
+ * they typed it in, and I was not asked. [since] is when, in milliseconds.
+ */
+data class RemoteFriend(val id: String, val name: String, val joined: Boolean = false, val since: Long = 0)
+
+/** An earlier version of my library that the server kept: which revision, when it was saved, how many books it held. */
+data class VaultVersion(val revision: Long, val at: Long, val books: Int)
 data class RemoteLibrary(val owner: String, val at: Long, val payload: JsonElement)
 
 data class SyncAnswer(
@@ -257,7 +264,8 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
         return SyncAnswer(
             id = answer.text("id"),
             code = answer.text("code"),
-            friends = answer.list("friends").map { RemoteFriend(it.text("id"), it.text("name")) },
+            // A server from before "who joined by whose code" says neither, and that reads as "nobody joined".
+            friends = answer.list("friends").map { RemoteFriend(it.text("id"), it.text("name"), it.text("joined") == "true", it.number("since") ?: 0) },
             libraries = answer.list("libraries").map { RemoteLibrary(it.text("owner"), it.getValue("at").jsonPrimitive.long, it.getValue("payload")) },
             // A server from before the loans sends none, and that reads as "no loans".
             loans = answer.list("loans").mapNotNull(::readLoan),
@@ -275,6 +283,23 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
     suspend fun vaultPush(payload: JsonElement, expected: Long): Long =
         call("shelfmark_vault_push", buildJsonObject { put("p_payload", payload); put("p_expected", expected) }).jsonObject
             .getValue("revision").jsonPrimitive.long
+
+    /**
+     * The earlier versions of my library that the server kept, the newest first. Refused
+     * with "setup" by a server that keeps none yet.
+     */
+    suspend fun vaultHistory(): List<VaultVersion> =
+        call("shelfmark_vault_history", buildJsonObject { }).jsonObject.list("versions").mapNotNull { version ->
+            VaultVersion(version.number("revision") ?: return@mapNotNull null, version.number("at") ?: 0, version.number("books")?.toInt() ?: 0)
+        }
+
+    /**
+     * Makes an earlier version my library again, as a new revision that every device takes
+     * over like any other change. Returns that revision. Refused with "unknown_version"
+     * when the server no longer keeps the one that was asked for.
+     */
+    suspend fun vaultRestore(revision: Long): Long =
+        call("shelfmark_vault_restore", buildJsonObject { put("p_revision", revision) }).jsonObject.getValue("revision").jsonPrimitive.long
 
     suspend fun deleteAccount() {
         call("shelfmark_delete_account", buildJsonObject { })

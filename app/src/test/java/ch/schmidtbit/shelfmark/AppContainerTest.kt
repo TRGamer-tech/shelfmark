@@ -3,6 +3,12 @@ package ch.schmidtbit.shelfmark
 import android.app.Application
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
@@ -12,6 +18,7 @@ import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.server.HttpPoster
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
+import ch.schmidtbit.shelfmark.work.DailyCheckWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -120,6 +127,45 @@ class AppContainerTest {
         pass(5_000) { !app.server.status.value.running }
         assertEquals(before + 1, pushes())
         assertEquals(1L + before, server.revisionOf("anna@shelfmark.test"))
+    }
+
+    @Test fun theLookInTheBackgroundComesEveryQuarterOfAnHourInPlaceOfTheOldOne() {
+        // What is asked of Android: every fifteen minutes, with a network, and nothing that wakes the phone or jumps a queue.
+        val spec = DailyCheckWorker.request().workSpec
+        assertEquals(TimeUnit.MINUTES.toMillis(15), spec.intervalDuration)
+        assertEquals(NetworkType.CONNECTED, spec.constraints.requiredNetworkType)
+        assertTrue(!spec.expedited && !spec.constraints.requiresCharging() && !spec.constraints.requiresDeviceIdle())
+
+        val work = try {
+            WorkManager.getInstance(context)
+        } catch (e: IllegalStateException) {
+            WorkManager.initialize(context, Configuration.Builder().build())
+            WorkManager.getInstance(context)
+        }
+        fun scheduled() = work.getWorkInfosForUniqueWork(DailyCheckWorker.NAME).get(20, TimeUnit.SECONDS).filter { !it.state.isFinished }
+        // A phone that comes from an earlier version has the look scheduled twice a day.
+        val old = PeriodicWorkRequestBuilder<DailyCheckWorker>(12, TimeUnit.HOURS)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        work.enqueueUniquePeriodicWork(DailyCheckWorker.NAME, ExistingPeriodicWorkPolicy.KEEP, old).result.get(20, TimeUnit.SECONDS)
+        assertEquals(listOf(TimeUnit.HOURS.toMillis(12)), scheduled().map { it.periodicityInfo?.repeatIntervalMillis })
+
+        // The app starts in its new version: the one look there is, is now the quarter-hourly one.
+        DailyCheckWorker.schedule(context)
+        work.getWorkInfosForUniqueWork(DailyCheckWorker.NAME).get(20, TimeUnit.SECONDS)
+        val giveUp = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        while (scheduled().map { it.periodicityInfo?.repeatIntervalMillis } != listOf(TimeUnit.MINUTES.toMillis(15)) && System.nanoTime() < giveUp) Thread.sleep(20)
+        assertEquals(listOf(TimeUnit.MINUTES.toMillis(15)), scheduled().map { it.periodicityInfo?.repeatIntervalMillis })
+        try {
+            // Starting the app again and again neither doubles it nor changes it.
+            repeat(3) { DailyCheckWorker.schedule(context) }
+            Thread.sleep(200)
+            assertEquals(listOf(TimeUnit.MINUTES.toMillis(15)), scheduled().map { it.periodicityInfo?.repeatIntervalMillis })
+        } finally {
+            // Nothing stays scheduled for the tests that run after this one in the same process.
+            work.cancelAllWork().result.get(20, TimeUnit.SECONDS)
+            work.pruneWork().result.get(20, TimeUnit.SECONDS)
+        }
     }
 
     @Test fun theAppsOwnPosterSendsPicturesAndNotOnlyQuestions() {

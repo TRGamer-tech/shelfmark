@@ -162,10 +162,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text(stringResource(R.string.settings_replaced_text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     replaced.forEach { file ->
                         val day = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(BackupManager.replacedAt(file)))
-                        TextButton(onClick = { importer.open(file) }, modifier = Modifier.testTag("replacedLibrary")) { Text(stringResource(R.string.settings_replaced_item, day)) }
+                        // When both were put together, two stand here from the same minute: the name says whose each one was.
+                        val label = when (BackupManager.replacedOf(file)) {
+                            BackupManager.OF_ACCOUNT -> R.string.settings_replaced_item_account
+                            BackupManager.OF_DEVICE -> R.string.settings_replaced_item_device
+                            else -> R.string.settings_replaced_item
+                        }
+                        TextButton(onClick = { importer.open(file) }, modifier = Modifier.testTag("replacedLibrary")) { Text(stringResource(label, day)) }
                     }
                 }
             }
+            // What the server kept of the library as it was. Only once this phone and the account are in step.
+            if (container.server.available && settings.signedIn && settings.vaultRevision > 0) HistorySection()
             SectionCard(stringResource(R.string.settings_import)) {
                 Text(stringResource(R.string.settings_import_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))

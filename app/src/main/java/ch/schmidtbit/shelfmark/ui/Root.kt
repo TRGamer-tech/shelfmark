@@ -4,6 +4,7 @@ package ch.schmidtbit.shelfmark.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -79,6 +80,8 @@ import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
+import ch.schmidtbit.shelfmark.data.repo.Keep
+import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
 import ch.schmidtbit.shelfmark.ui.add.ScanScreen
 import ch.schmidtbit.shelfmark.ui.add.SearchScreen
@@ -94,6 +97,7 @@ import ch.schmidtbit.shelfmark.ui.lists.ListsScreen
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import ch.schmidtbit.shelfmark.work.Notifier
 import ch.schmidtbit.shelfmark.ui.friends.ChooseLibraryDialog
+import ch.schmidtbit.shelfmark.ui.friends.serverProblemRes
 import ch.schmidtbit.shelfmark.ui.nav.BookRoute
 import ch.schmidtbit.shelfmark.ui.nav.CalendarRoute
 import ch.schmidtbit.shelfmark.ui.nav.MilestonesRoute
@@ -159,6 +163,7 @@ fun ShelfmarkRoot(container: AppContainer, incoming: MutableStateFlow<Intent?>) 
 private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     val motion = LocalMotion.current
     val container = LocalContainer.current
+    val context = LocalContext.current
     val importer = LocalImporter.current
     val nav = rememberNavController()
     val libraryViewModel = containerViewModel { LibraryViewModel(it) }
@@ -299,7 +304,15 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     choice?.let { open ->
         ChooseLibraryDialog(open) { keep ->
             container.choice.value = null
-            if (keep != null) container.launch { container.remember(container.server.choose(keep)) }
+            if (keep != null) container.launch {
+                val result = container.remember(container.server.choose(keep))
+                // Two libraries became one: how large it is now is the first thing anybody wants to know.
+                if (keep == Keep.BOTH && result is SyncResult.Done) {
+                    Toast.makeText(context, context.getString(R.string.choose_merged, container.library.allBooks().size), Toast.LENGTH_LONG).show()
+                }
+                // An answer that did not get through is said, whichever it was. The question comes again with the next sync.
+                if (result is SyncResult.Failed) Toast.makeText(context, context.getString(serverProblemRes(result.reason), result.reason), Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -322,6 +335,8 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
         }
         when (received.action) {
             Notifier.ACTION_OPEN_LOANS -> nav.navigate(LoansRoute) { launchSingleTop = true }
+            // Somebody joined: the list of friends is where they stand, and where they can be removed.
+            Notifier.ACTION_OPEN_FRIENDS -> openTab(FriendsRoute)
             Intent.ACTION_VIEW -> received.data?.let(importer::open)
             Intent.ACTION_SEND -> {
                 val stream = IntentCompat.getParcelableExtra(received, Intent.EXTRA_STREAM, Uri::class.java)

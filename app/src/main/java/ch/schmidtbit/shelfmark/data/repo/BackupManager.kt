@@ -116,10 +116,11 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
      * when it could not be written: the library on its way out is then lost as it would
      * have been before, which is no reason to stop the reader from going on.
      */
-    suspend fun keepReplaced(library: BackupPayload, dir: File, at: Long = System.currentTimeMillis()): File? = withContext(Dispatchers.IO) {
+    suspend fun keepReplaced(library: BackupPayload, dir: File, at: Long = System.currentTimeMillis(), whose: String = ""): File? = withContext(Dispatchers.IO) {
         runCatching {
             dir.mkdirs()
-            val file = File(dir, "$REPLACED_PREFIX$at.zip")
+            // Two libraries can be put aside in the same moment, the account's and the device's. The name tells them apart.
+            val file = File(dir, REPLACED_PREFIX + at + (if (whose.isEmpty()) "" else "-$whose") + ".zip")
             file.outputStream().use { export(it, library.copy(exportedAt = at)) }
             replaced(dir).drop(KEPT).forEach { it.delete() }
             file
@@ -211,7 +212,13 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
 
     companion object {
         /** When the library in [file] was put aside: its name says so, and failing that the file itself. */
-        fun replacedAt(file: File): Long = file.name.removePrefix(REPLACED_PREFIX).removeSuffix(".zip").toLongOrNull() ?: file.lastModified()
+        fun replacedAt(file: File): Long = file.name.removePrefix(REPLACED_PREFIX).removeSuffix(".zip").substringBefore('-').toLongOrNull() ?: file.lastModified()
+
+        /** Whose library [file] holds: [OF_ACCOUNT], [OF_DEVICE], or empty when its name does not say. */
+        fun replacedOf(file: File): String = file.name.removePrefix(REPLACED_PREFIX).removeSuffix(".zip").substringAfter('-', "")
+
+        const val OF_ACCOUNT = "account"
+        const val OF_DEVICE = "device"
 
         const val JSON_NAME = "shelfmark-backup.json"
         const val COVER_PREFIX = "covers/"

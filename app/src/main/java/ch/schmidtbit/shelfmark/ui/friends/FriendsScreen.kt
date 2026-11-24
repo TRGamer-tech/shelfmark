@@ -109,7 +109,12 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onLoans: () -> Unit, onOpenBoo
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("friends"), contentPadding = PaddingValues(bottom = 32.dp)) {
             // Always the first item, even when empty: an item that appears above the top
             // later would stay out of sight, because the list holds on to what it shows.
-            item(key = "online") { if (hasServer) AccountCard(settings) }
+            item(key = "online") {
+                if (hasServer) AccountCard(settings)
+                // News from friends comes as notifications. Where it cannot, that is said here. Part of
+                // the first item, so that it is in sight when it turns up a moment after the list.
+                NotificationsCard()
+            }
             item(key = "share") {
                 SectionCard(stringResource(R.string.friends_share_title)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

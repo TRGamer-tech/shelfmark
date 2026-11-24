@@ -11,17 +11,20 @@ import ch.schmidtbit.shelfmark.data.model.LoanRules
 import ch.schmidtbit.shelfmark.data.server.AuthApi
 import ch.schmidtbit.shelfmark.data.server.AuthException
 import ch.schmidtbit.shelfmark.data.server.HttpPoster
+import ch.schmidtbit.shelfmark.data.server.RemoteFriend
 import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.server.Session
 import ch.schmidtbit.shelfmark.data.server.SyncAnswer
 import ch.schmidtbit.shelfmark.data.server.VaultAnswer
+import ch.schmidtbit.shelfmark.data.server.VaultVersion
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -39,12 +42,18 @@ sealed interface SyncResult {
     /**
      * [news] are the loans the other side changed since this device last looked. [due] are
      * the books that should be back by now and that this device has not yet reminded of.
+     * [joined] are the friends who came by the reader's friend code since the last look:
+     * they typed it in and were connected at once, without the reader being asked.
      */
     data class Done(
         val news: List<LoanNews> = emptyList(),
         val due: List<Loan> = emptyList(),
         val libraries: Int = 0,
-    ) : SyncResult
+        val joined: List<RemoteFriend> = emptyList(),
+    ) : SyncResult {
+        /** Whether there is anything the reader should be told. */
+        val tells: Boolean get() = news.isNotEmpty() || due.isNotEmpty() || joined.isNotEmpty()
+    }
 
     /** [reason] is "network" or one of the reasons of [ServerException] and [AuthException]. */
     data class Failed(val reason: String) : SyncResult
@@ -56,8 +65,19 @@ sealed interface SyncResult {
     data class Choose(val onAccount: Int, val onDevice: Int) : SyncResult
 }
 
-/** Which library to go on with when an account and a device both have one. */
-enum class Keep { ACCOUNT, DEVICE }
+/** Which library to go on with when an account and a device both have one: one of them, or the two put together. */
+enum class Keep { ACCOUNT, DEVICE, BOTH }
+
+/** What the server says about the earlier versions of the library it kept. */
+sealed interface History {
+    /** The newest first. Empty when none was kept yet. */
+    data class Versions(val versions: List<VaultVersion>) : History
+
+    /** The server is one from before it kept earlier versions. */
+    data object Unavailable : History
+
+    data class Failed(val reason: String) : History
+}
 
 data class SyncStatus(val running: Boolean = false, val error: String? = null)
 
@@ -227,9 +247,15 @@ class ServerSync(
         if (!s.signedIn) return null
         if (s.accessToken.isNotBlank() && s.tokenExpiresAt - 60 > now() / 1000) return s.accessToken
         return try {
-            val fresh = AuthApi(config, poster, now).refresh(s.refreshToken)
-            settings.setSession(fresh.accessToken, fresh.refreshToken, fresh.expiresAt, fresh.email)
-            fresh.accessToken
+            // Asked for and written down in one go, whatever becomes of whoever asked. The server
+            // trades the old sign-in for a new one once. A look that is called off between the answer
+            // and the writing (the reader leaves the app at that moment) would leave this device
+            // holding the old one, and the next look would find itself signed out.
+            withContext(NonCancellable) {
+                val fresh = AuthApi(config, poster, now).refresh(s.refreshToken)
+                settings.setSession(fresh.accessToken, fresh.refreshToken, fresh.expiresAt, fresh.email)
+                fresh.accessToken
+            }
         } catch (e: AuthException) {
             // Too many requests is a matter of waiting. Anything else means this sign-in is over:
             // the password was changed, the account deleted, or the session ended elsewhere.
@@ -317,38 +343,105 @@ class ServerSync(
     }
 
     /**
-     * One of two libraries is replaced as a whole here, and only here. Whichever one it is,
-     * it is put aside as a backup file first, so that one tap cannot lose it for good.
+     * A library is replaced as a whole here, and only here: one of the two by the other, or
+     * both by the two put together. Whatever is replaced is put aside as a backup file
+     * first, so that one tap cannot lose it for good.
      */
     private suspend fun replaceOne(api: ServerApi, keep: Keep) {
+        // Putting both together replaces the library here first and the one on the account
+        // after it. Once the first is done, the two that were put aside are the originals.
+        var joined = false
         repeat(TRIES) {
             val remote = api.vaultPull(0)
             val theirs = read(remote, known = 0)
             val local = snapshot()
             try {
-                if (keep == Keep.ACCOUNT && theirs != null) {
-                    // Put aside first: a phone that is switched off in between has lost nothing.
-                    val aside = putAside(local)
-                    try {
-                        adopt(theirs, remote.revision, seen = local)
-                    } catch (e: ChangedMeanwhile) {
-                        aside?.delete()
-                        throw e
+                when {
+                    // Nothing on the account to choose from or to put together with: what is here goes there.
+                    theirs == null || keep == Keep.DEVICE -> {
+                        if (theirs != null && !joined) putAside(theirs, BackupManager.OF_ACCOUNT)
+                        push(api, local, remote.revision)
                     }
-                } else {
-                    if (theirs != null) putAside(theirs)
-                    push(api, local, remote.revision)
+                    keep == Keep.ACCOUNT -> {
+                        // Put aside first: a phone that is switched off in between has lost nothing.
+                        val aside = putAside(local, BackupManager.OF_DEVICE)
+                        try {
+                            adopt(theirs, remote.revision, seen = local)
+                        } catch (e: ChangedMeanwhile) {
+                            aside?.delete()
+                            throw e
+                        }
+                    }
+                    else -> {
+                        // Both are put aside: neither is what it was afterwards.
+                        val aside = if (joined) emptyList() else listOfNotNull(putAside(theirs, BackupManager.OF_ACCOUNT), putAside(local, BackupManager.OF_DEVICE))
+                        try {
+                            replace(LibraryJoin.join(account = theirs, device = local), seen = local)
+                        } catch (e: ChangedMeanwhile) {
+                            aside.forEach { it.delete() }
+                            throw e
+                        }
+                        joined = true
+                        push(api, snapshot(), remote.revision)
+                    }
                 }
                 return
             } catch (e: ChangedMeanwhile) {
                 // What is put aside has to be what is replaced. Once more, with the library as it is now.
+            } catch (e: ServerException) {
+                // Somebody saved to the account between the look and the save. The two are put
+                // together once more, with what is there now: everything of this device is in it already.
+                if (!joined || e.reason != "conflict") throw e
             }
+        }
+        // The account did not hold still. What is here now holds both, and the next sync asks again.
+        if (joined) throw ServerException("conflict", 400)
+    }
+
+    private suspend fun putAside(library: BackupPayload, whose: String): File? {
+        val dir = replacedDir ?: return null
+        return if (library.isEmpty()) null else backup.keepReplaced(library, dir, now(), whose)
+    }
+
+    // ---- earlier versions ----
+
+    /** The earlier versions of the library that the server kept: when each was saved and how many books it held. */
+    suspend fun history(): History = withContext(work) { safely<History>({ History.Failed(it) }) { historyNow() } }
+
+    private suspend fun historyNow(): History {
+        val config = config ?: return History.Failed(NO_SERVER)
+        val token = mutex.withLock { token() } ?: return History.Failed("signed_out")
+        return try {
+            History.Versions(ServerApi(config, poster, token).vaultHistory())
+        } catch (e: ServerException) {
+            // The server has no such function: it is one from before it kept earlier versions.
+            if (e.reason == "setup") History.Unavailable else throw e
         }
     }
 
-    private suspend fun putAside(library: BackupPayload): File? {
-        val dir = replacedDir ?: return null
-        return if (library.isEmpty()) null else backup.keepReplaced(library, dir, now())
+    /**
+     * Makes the earlier version [revision] the library again, on the account and with it on
+     * every device. Returns null when this device shows it, otherwise the reason it does not.
+     *
+     * The server does the replacing: the earlier version becomes a new revision there, and
+     * it reaches this device through the sync like any change from elsewhere, with all that
+     * guards one. So what the reader changes while this is on its way is not run over.
+     */
+    suspend fun restoreVersion(revision: Long): String? = withContext(work) { safely<String?>({ it }) { restoreVersionNow(revision) } }
+
+    private suspend fun restoreVersionNow(revision: Long): String? {
+        val config = config ?: return NO_SERVER
+        // What is on this device goes to the account first. The server keeps what it replaces
+        // as an earlier version in turn, and that should be the library as the reader sees it now.
+        when (val before = sync()) {
+            is SyncResult.Done -> Unit
+            is SyncResult.Failed -> return before.reason
+            is SyncResult.Choose -> return NOT_IN_STEP
+            SyncResult.Off -> return "signed_out"
+        }
+        val token = mutex.withLock { token() } ?: return "signed_out"
+        ServerApi(config, poster, token).vaultRestore(revision)
+        return (sync() as? SyncResult.Failed)?.reason
     }
 
     private suspend fun exchange(config: ServerConfig): SyncResult {
@@ -377,7 +470,7 @@ class ServerSync(
         val done = take(answer, first = !s.loansSeen)
         if (!s.loansSeen) settings.setLoansSeen()
         // Said right away. Whatever goes wrong further down, the reader has heard it, and it will not be news again.
-        if (done.news.isNotEmpty() || done.due.isNotEmpty()) announce(done)
+        if (done.tells) announce(done)
 
         // 4. The books follow the loans. That is a change to the library like any other,
         // and goes to the account so that the other devices do not have to work it out again.
@@ -564,6 +657,8 @@ class ServerSync(
         runCatching { ShareCodec.decodeVault(Json.parseToJsonElement(baseFile.readText())) }.getOrNull()
 
     private suspend fun take(answer: SyncAnswer, first: Boolean): SyncResult.Done {
+        // Whoever is a friend through the server on this device already, before anything of this answer is taken in.
+        val seen = db.social().onlineFriends().mapTo(HashSet()) { it.id }
         var libraries = 0
         for (entry in answer.libraries) {
             val envelope = ShareCodec.decodeElement(entry.payload) ?: continue
@@ -603,7 +698,11 @@ class ServerSync(
         val day = today()
         val due = loans.filter { it.dueBy(day) && it.dueSaid != it.dueOn }
         due.forEach { db.social().markDueSaid(it.id) }
-        return SyncResult.Done(news, due, libraries)
+        // Somebody who typed in the reader's code is a friend at once, and nobody asked the reader.
+        // So they are told, once: from now on this device knows the friend. Whoever typed in a
+        // code themselves needs no telling, and the first look at an account is quiet as with loans.
+        val joined = if (first) emptyList() else answer.friends.filter { it.joined && it.id !in seen }
+        return SyncResult.Done(news, due, libraries, joined)
     }
 
     /** Brings the books in line with the loans (see [LoanBooks]). True when a book had to change. */
@@ -742,6 +841,9 @@ class ServerSync(
 
         /** The library on the account is one this version cannot read. Nothing is written until an update can. */
         const val UNREADABLE = "unreadable"
+
+        /** Earlier versions cannot be brought back while the account and this device still have to be told which library counts. */
+        const val NOT_IN_STEP = "not_in_step"
 
         /** Something went wrong that nobody foresaw. The step is given up, the app goes on. */
         const val UNEXPECTED = "unexpected"

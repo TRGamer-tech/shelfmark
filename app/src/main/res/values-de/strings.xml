@@ -223,6 +223,7 @@
     <string name="greeting_night">Noch wach?</string>
     <string name="greeting_night_name">Noch wach, %1$s?</string>
     <string name="history_empty">Noch keine früheren Stände. Der erste wird bei deiner nächsten Änderung aufbewahrt.</string>
+    <string name="history_gone">Der Server bewahrt diesen Stand nicht mehr auf.</string>
     <string name="history_restore">Zurückholen</string>
     <string name="history_restore_text">Sie ersetzt deine Bibliothek auf allen Geräten. Was du jetzt hast, wird als früherer Stand aufbewahrt.</string>
     <string name="history_restore_title">Bibliothek vom %1$s zurückholen?</string>
@@ -547,8 +548,10 @@
     <string name="settings_profile_hint">Sehen Freunde, mit denen du deine Bibliothek teilst</string>
     <string name="settings_profile_name">Dein Name</string>
     <string name="settings_replaced_item">Bibliothek, ersetzt am %1$s</string>
-    <string name="settings_replaced_text">Als du gewählt hast, welche Bibliothek zählt, wurde die andere hier beiseitegelegt. Die letzten drei bleiben erhalten. Tippe eine an, um sie anstelle der jetzigen Bibliothek zurückzuholen.</string>
-    <string name="settings_server_daily">Die App meldet sich einmal am Tag bei ihrem Server, damit er nicht schlafen gelegt wird. Über dich wird dabei nichts übertragen.</string>
+    <string name="settings_replaced_item_account">Bibliothek des Kontos, beiseitegelegt am %1$s</string>
+    <string name="settings_replaced_item_device">Bibliothek dieses Geräts, beiseitegelegt am %1$s</string>
+    <string name="settings_replaced_text">Eine Bibliothek, die ersetzt wurde, als du gewählt hast, welche gilt, wird hier beiseitegelegt, und ebenso beide, wenn sie zusammengeführt wurden. Die letzten drei bleiben erhalten. Tippe eine an, um sie anstelle der jetzigen Bibliothek zurückzuholen.</string>
+    <string name="settings_server_daily">Die App meldet sich einmal am Tag bei ihrem Server, damit er nicht schlafen gelegt wird. Über dich wird dabei nichts übertragen. Solange du angemeldet bist, schaut sie zudem etwa jede Viertelstunde nach Neuigkeiten von deinen Freunden, auch wenn sie geschlossen ist.</string>
     <string name="settings_speed">Lesetempo</string>
     <string name="settings_speed_hint">Damit wird geschätzt, wie lange ein Buch noch dauert.</string>
     <string name="settings_speed_pph">%1$d Seiten/h</string>

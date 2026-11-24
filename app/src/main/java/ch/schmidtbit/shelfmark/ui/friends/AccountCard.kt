@@ -392,8 +392,8 @@ fun DeleteAccountDialog(onDismiss: () -> Unit) {
 }
 
 /**
- * An account and a device that both hold books and were never the same library:
- * there is nothing to go by, so the user says which one counts.
+ * An account and a device that both hold books and were never brought in step: there is
+ * nothing to go by, so the user says whether the two are put together or which one counts.
  */
 @Composable
 fun ChooseLibraryDialog(choice: SyncResult.Choose, onDecided: (Keep?) -> Unit) {
@@ -403,6 +403,8 @@ fun ChooseLibraryDialog(choice: SyncResult.Choose, onDecided: (Keep?) -> Unit) {
         text = { Text(stringResource(R.string.choose_text, choice.onAccount, choice.onDevice)) },
         confirmButton = {
             Column(horizontalAlignment = Alignment.End) {
+                // First, because it is the answer that loses nothing.
+                TextButton(onClick = { onDecided(Keep.BOTH) }, modifier = Modifier.testTag("chooseMerge")) { Text(stringResource(R.string.choose_merge)) }
                 TextButton(onClick = { onDecided(Keep.ACCOUNT) }, modifier = Modifier.testTag("chooseAccount")) { Text(stringResource(R.string.choose_account)) }
                 TextButton(onClick = { onDecided(Keep.DEVICE) }, modifier = Modifier.testTag("chooseDevice")) { Text(stringResource(R.string.choose_device)) }
                 TextButton(onClick = { onDecided(null) }) { Text(stringResource(R.string.action_later)) }

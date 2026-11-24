@@ -224,6 +224,7 @@
     <string name="greeting_night">Still up?</string>
     <string name="greeting_night_name">Still up, %1$s?</string>
     <string name="history_empty">No earlier versions yet. The first one is kept at your next change.</string>
+    <string name="history_gone">The server no longer keeps this version.</string>
     <string name="history_restore">Bring back</string>
     <string name="history_restore_text">It replaces your library on every device. What you have now is kept as an earlier version.</string>
     <string name="history_restore_title">Bring back the library of %1$s?</string>
@@ -548,8 +549,10 @@
     <string name="settings_profile_hint">Shown to friends you share your library with</string>
     <string name="settings_profile_name">Your name</string>
     <string name="settings_replaced_item">Library replaced on %1$s</string>
-    <string name="settings_replaced_text">When you chose which library counts, the other one was put aside here. The last three are kept. Tap one to bring it back in place of the current library.</string>
-    <string name="settings_server_daily">The app checks in with its server once a day, so that it is not put to sleep. Nothing about you is sent with that.</string>
+    <string name="settings_replaced_item_account">The account\'s library, put aside on %1$s</string>
+    <string name="settings_replaced_item_device">This device\'s library, put aside on %1$s</string>
+    <string name="settings_replaced_text">A library that was replaced when you said which one counts is put aside here, and so are both when they were put together. The last three are kept. Tap one to bring it back in place of the current library.</string>
+    <string name="settings_server_daily">The app checks in with its server once a day, so that it is not put to sleep. Nothing about you is sent with that. While you are signed in, it also looks for news from your friends about every quarter of an hour, also when it is closed.</string>
     <string name="settings_speed">Reading speed</string>
     <string name="settings_speed_hint">Used to estimate how long a book will still take.</string>
     <string name="settings_speed_pph">%1$d pages/h</string>

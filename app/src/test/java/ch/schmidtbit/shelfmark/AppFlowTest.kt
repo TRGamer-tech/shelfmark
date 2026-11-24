@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.printToString
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
@@ -46,6 +47,7 @@ import ch.schmidtbit.shelfmark.data.remote.ImageProbe
 import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.repo.TimerState
+import ch.schmidtbit.shelfmark.data.server.RemoteFriend
 import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.work.Notifier
@@ -174,15 +176,22 @@ class AppFlowTest {
     // ---- helpers ----
 
     private fun start(intent: Intent? = null, onboarded: Boolean = true, samples: Boolean = false) {
-        runBlocking {
+        // Not with the main thread standing still: a container that has a server already listens to
+        // its settings there, and a write that waits for the main thread while it is blocked never ends.
+        appDoes {
             if (onboarded) container.settings.setOnboarded()
             if (samples) SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
         }
         scenario = if (intent == null) ActivityScenario.launch(MainActivity::class.java) else ActivityScenario.launch(intent)
     }
 
-    /** Lets background work and delayed tasks (debounced search, auto-save) finish. */
-    private fun waitFor(timeoutMs: Long = 10_000, condition: () -> Boolean) {
+    /**
+     * Lets background work and delayed tasks (debounced search, auto-save) finish. The app's own
+     * time is moved by hand here, a tenth of a second a turn. The limit is time on the wall, and
+     * it is there for a test that waits for something that never comes: on a machine that is
+     * busy with other things a turn can take a second or more, so it is a generous one.
+     */
+    private fun waitFor(timeoutMs: Long = 30_000, condition: () -> Boolean) {
         compose.waitUntil(timeoutMs) {
             ShadowLooper.idleMainLooper(100, TimeUnit.MILLISECONDS)
             compose.mainClock.advanceTimeBy(100)
@@ -219,11 +228,19 @@ class AppFlowTest {
     /** Scrolls a list to one of its items. The item may only be about to appear, so this waits for it. */
     private fun scrollListTo(listTag: String, tag: String) {
         waitForTag(listTag)
-        waitFor {
-            compose.mainClock.autoAdvance = true
-            val there = runCatching { compose.onNodeWithTag(listTag).performScrollToNode(hasTestTag(tag)) }.isSuccess
-            compose.mainClock.autoAdvance = false
-            there
+        var why: Throwable? = null
+        try {
+            waitFor {
+                compose.mainClock.autoAdvance = true
+                val tried = runCatching { compose.onNodeWithTag(listTag).performScrollToNode(hasTestTag(tag)) }
+                compose.mainClock.autoAdvance = false
+                why = tried.exceptionOrNull()
+                tried.isSuccess
+            }
+        } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+            // Which of the two it was is the first thing to know: the item never came, or the app never got that far.
+            val shown = runCatching { compose.onNodeWithTag(listTag).printToString(maxDepth = 6) }.getOrElse { it.toString() }
+            throw AssertionError("'$tag' did not appear in '$listTag'. The app: sync ${container.server.status.value}, loans ${loans().map { it.state }}, activity ${scenario?.state}. Last try: ${why?.message?.lineSequence()?.firstOrNull()}\nOn screen:\n$shown", e)
         }
     }
 
@@ -245,6 +262,13 @@ class AppFlowTest {
         settle()
         captureScreenRoboImage("build/outputs/roborazzi/$name.png")
     }
+
+    /**
+     * The app's settings as they are now. Read on another thread while the main thread keeps
+     * turning: the screens listen to the same settings on the main thread, and a read that
+     * blocks it can wait for a listener that waits for the main thread in turn (see [appDoes]).
+     */
+    private fun settingsNow() = appDoes { container.settings.current() }
 
     private fun books(): List<Book> = runBlocking { container.library.allBooks() }
     private fun book(title: String): Book = books().first { it.title == title }
@@ -308,6 +332,9 @@ class AppFlowTest {
         }
         assertTrue(container.server.sync() is SyncResult.Done)
         container.settings.current().userId
+    }.also {
+        // The friends came by the app's code, which is news. A test that is about something else starts with a clean slate.
+        clearNotifications()
     }
 
     /** A book as it stands on the shelf of the app's account, seen from a friend's phone. */
@@ -334,7 +361,7 @@ class AppFlowTest {
         tap("startEmpty")
         waitForText("Dein Regal ist noch leer")
         shot("03_empty_shelf")
-        assertTrue(runBlocking { container.settings.current().onboarded })
+        assertTrue(settingsNow().onboarded)
     }
 
     @Test fun addABookByHandAndFillInEverything() {
@@ -458,10 +485,10 @@ class AppFlowTest {
         start(samples = true)
         waitForTag("coverShelf")
         shot("40_shelf_covers")
-        runBlocking { container.settings.setViewMode(ViewMode.SPINES) }
+        appDoes { container.settings.setViewMode(ViewMode.SPINES) }
         waitForTag("spineShelf")
         shot("41_shelf_spines")
-        runBlocking { container.settings.setViewMode(ViewMode.LIST) }
+        appDoes { container.settings.setViewMode(ViewMode.LIST) }
         waitForTag("bookList")
         shot("42_shelf_list")
         tap("tabLists")
@@ -565,7 +592,7 @@ class AppFlowTest {
         """{"app":"shelfmark","v":1,"type":"lend_request","request":{"requestId":"req-1","bookId":1,"bookTitle":"Dune","fromId":"b","fromName":"Ben","toId":"a","note":"Für die Ferien?","createdAt":5}}"""
 
     @Test fun aShelfFromAFileCanBeLookedAtButBorrowingNeedsAccounts() {
-        runBlocking { container.settings.setProfileName("Ben") }
+        appDoes { container.settings.setProfileName("Ben") }
         val anna = Friend("Anna")
         runBlocking {
             anna.db.books().insert(Book(title = "Dune", authors = "Frank Herbert", status = ReadingStatus.READ, rating = 5f, spice = 1, review = "Sand überall."))
@@ -664,9 +691,9 @@ class AppFlowTest {
         waitForTag("lang_de")
         shot("93_settings")
         tap("theme_paper")
-        waitFor { runBlocking { container.settings.current().theme } == "paper" }
+        waitFor { settingsNow().theme == "paper" }
         tap("theme_ember")
-        waitFor { runBlocking { container.settings.current().theme } == "ember" }
+        waitFor { settingsNow().theme == "ember" }
         shot("94_settings_ember_theme")
         scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForTag("coverShelf")
@@ -731,7 +758,7 @@ class AppFlowTest {
 
     @Test fun aShelfGetsDecorated() {
         start(samples = true)
-        runBlocking { container.settings.setViewMode(ViewMode.SPINES) }
+        appDoes { container.settings.setViewMode(ViewMode.SPINES) }
         waitForTag("spineShelf")
         tap("decorate_READING")
         tap("addOrnament_PLANT")
@@ -777,13 +804,13 @@ class AppFlowTest {
         retype("colourHex", "#7BC47F")
         tap("colourOk")
         tap("themeSave")
-        waitFor { runBlocking { container.settings.current() }.customThemes.isNotEmpty() }
-        val settings = runBlocking { container.settings.current() }
+        waitFor { settingsNow().customThemes.isNotEmpty() }
+        val settings = settingsNow()
         val theme = settings.customThemes.single()
         assertEquals("Moor", theme.name)
         assertEquals(0xFF7BC47F.toInt(), theme.accent)
         // A new theme is put on right away.
-        waitFor { runBlocking { container.settings.current() }.theme == theme.key }
+        waitFor { settingsNow().theme == theme.key }
         waitForText("Moor")
     }
 
@@ -816,7 +843,7 @@ class AppFlowTest {
 
     @Test fun friendsFindEachOtherThroughTheirAccounts() {
         useServer()
-        runBlocking {
+        appDoes {
             container.settings.setProfileName("Ben")
             container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
         }
@@ -841,8 +868,8 @@ class AppFlowTest {
             tap("signUp")
             waitForTag("friendCode")
             // The code shows as soon as the server knows me. The first exchange runs a moment longer.
-            waitFor { !container.server.status.value.running && runBlocking { container.settings.current() }.lastSyncAt > 0 }
-            val myCode = runBlocking { container.settings.current() }.friendCode
+            waitFor { !container.server.status.value.running && settingsNow().lastSyncAt > 0 }
+            val myCode = settingsNow().friendCode
             assertEquals(10, myCode.length)
             waitForText(myCode.chunked(5).joinToString("-"))
             waitForText("Angemeldet als $benEmail")
@@ -931,7 +958,7 @@ class AppFlowTest {
         tap("signUp")
         waitForTag("accountNotice")
         waitForText("Öffne den Link in der Mail")
-        assertTrue(!runBlocking { container.settings.current() }.signedIn)
+        assertTrue(!settingsNow().signedIn)
         // Signing in before that link was opened.
         tap("signIn")
         waitForTag("accountProblem")
@@ -944,7 +971,7 @@ class AppFlowTest {
         retype("accountPassword", benPassword)
         tap("signIn")
         waitForTag("onlineCard")
-        waitFor { runBlocking { container.settings.current() }.signedIn }
+        waitFor { settingsNow().signedIn }
         // Asking for a new password needs nothing but the address.
         waitFor { fakeServer.calls["signup"] == 1 }
     }
@@ -966,7 +993,7 @@ class AppFlowTest {
         fakeServer.mailsSpent = false
         fakeServer.confirmEmail = false
         tap("signUp")
-        waitFor { runBlocking { container.settings.current() }.signedIn }
+        waitFor { settingsNow().signedIn }
     }
 
     @Test fun comingBackFromTheConfirmationMailSignsInWithoutAnotherTap() {
@@ -986,16 +1013,16 @@ class AppFlowTest {
         scenario!!.moveToState(Lifecycle.State.RESUMED)
         waitFor { (fakeServer.calls["token"] ?: 0) >= 1 }
         settle()
-        assertTrue(!runBlocking { container.settings.current() }.signedIn)
+        assertTrue(!settingsNow().signedIn)
         assertTrue(compose.onAllNodesWithTag("accountProblem").fetchSemanticsNodes().isEmpty())
         waitForTag("accountNotice")
         // The link was opened. Coming back is all it takes.
         fakeServer.confirm(benEmail)
         scenario!!.moveToState(Lifecycle.State.STARTED)
         scenario!!.moveToState(Lifecycle.State.RESUMED)
-        waitFor { runBlocking { container.settings.current() }.signedIn }
+        waitFor { settingsNow().signedIn }
         waitForTag("onlineCard")
-        assertEquals(benEmail, runBlocking { container.settings.current() }.accountEmail)
+        assertEquals(benEmail, settingsNow().accountEmail)
     }
 
     @Test fun anAccountWithBooksMeetsADeviceWithBooks() {
@@ -1022,7 +1049,7 @@ class AppFlowTest {
             waitFor { books().size == 2 }
             assertEquals(setOf("Emma", "Persuasion"), books().map { it.title }.toSet())
             // The name of the account came along, and signing out is in the settings.
-            waitFor { runBlocking { container.settings.current() }.profileName == "Anna" }
+            waitFor { settingsNow().profileName == "Anna" }
             tap("tabLibrary")
             tap("openSettings")
             scrollTo("signOut")
@@ -1037,7 +1064,7 @@ class AppFlowTest {
             assertTrue(compose.onAllNodesWithTag("googleKey").fetchSemanticsNodes().isEmpty())
             assertTrue(compose.onAllNodesWithTag("ownServer").fetchSemanticsNodes().isEmpty())
             tap("signOut")
-            waitFor { !runBlocking { container.settings.current() }.signedIn }
+            waitFor { !settingsNow().signedIn }
             // Signed out, the books are still here.
             assertEquals(2, books().size)
         } finally {
@@ -1062,7 +1089,7 @@ class AppFlowTest {
             waitForTag("chooseLibrary")
             // The dialog no longer claims to know that the two were never the same, and it says what happens to the loser.
             assertFalse(hasText("Es war nie dieselbe Bibliothek"))
-            waitForText("Vorher wird sie auf diesem Gerät als Backup beiseitegelegt, und du findest sie in den Einstellungen unter «Backup».")
+            waitForText("Eine Bibliothek, die ersetzt wird, bleibt als Backup auf diesem Gerät, du findest sie in den Einstellungen.")
             tap("chooseAccount")
             waitFor { books().size == 1 }
 
@@ -1070,7 +1097,9 @@ class AppFlowTest {
             tap("tabLibrary")
             tap("openSettings")
             scrollTo("replacedLibrary")
-            waitForText("Als du gewählt hast, welche Bibliothek zählt, wurde die andere hier beiseitegelegt.")
+            waitForText("Eine Bibliothek, die ersetzt wurde, als du gewählt hast, welche gilt, wird hier beiseitegelegt")
+            // It says whose library it was.
+            waitForText("Bibliothek dieses Geräts, beiseitegelegt am")
             shot("87_replaced_library")
             tap("replacedLibrary")
             waitForTag("restoreConfirm")
@@ -1080,6 +1109,260 @@ class AppFlowTest {
         } finally {
             anna.close()
         }
+    }
+
+    @Test fun anAccountAndADeviceArePutTogether() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            // A book both have. The account's copy has stars, the phone's has the progress of the sample.
+            anna.library.addBook(Book(title = "Der Prozess", authors = "Franz Kafka", rating = 4.5f))
+            anna.join()
+            // The phone's copy is the one that was changed last: a line was added to it just now.
+            container.library.modify(book("Der Prozess").id) { it.copy(tags = "Klassiker") }
+        }
+        try {
+            val here = book("Der Prozess")
+            start()
+            tap("tabFriends")
+            type("accountEmail", anna.email)
+            type("accountPassword", anna.password)
+            tap("signIn")
+            waitForTag("chooseLibrary")
+            waitForText("Führe beide zusammen oder mach mit einer weiter.")
+            // The answer that loses nothing stands first.
+            fun top(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.top
+            assertTrue(top("chooseMerge") < top("chooseAccount") && top("chooseAccount") < top("chooseDevice"))
+            shot("86_which_library_three_answers")
+            tap("chooseMerge")
+            // Ten here, two there, one of them the same book: eleven.
+            waitFor { books().size == 11 }
+            waitFor { latestToast() == "Beide Bibliotheken sind jetzt eine: 11 Bücher." }
+            val one = books().single { it.title == "Der Prozess" }
+            // The phone's copy was changed last and stays, with the stars it lacked.
+            assertEquals(here.currentPage, one.currentPage)
+            assertEquals(here.status, one.status)
+            assertEquals(4.5f, one.rating)
+            // The account got the same, and neither library was thrown away to get there.
+            runBlocking { anna.server.sync() }
+            assertEquals(books().map { it.title }.sorted(), runBlocking { anna.titles() })
+            tap("tabLibrary")
+            tap("openSettings")
+            scrollTo("historySection")
+            waitForText("Bibliothek des Kontos, beiseitegelegt am")
+            waitForText("Bibliothek dieses Geräts, beiseitegelegt am")
+            assertEquals(2, compose.onAllNodesWithTag("replacedLibrary").fetchSemanticsNodes().size)
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun anEarlierVersionIsBroughtBackFromTheSettings() {
+        useServer()
+        runBlocking { container.library.addBook(Book(title = "Emma", authors = "Jane Austen")) }
+        signUpWithFriends("Ich")
+        start()
+        waitForTag("coverShelf")
+        // Nothing was replaced on the account yet, so there is nothing to go back to, and the settings say so.
+        tap("openSettings")
+        scrollTo("historySection")
+        waitForText("Der Server bewahrt bis zu zehn frühere Stände deiner Bibliothek auf")
+        waitForTag("historyEmpty")
+        waitForText("Noch keine früheren Stände.")
+        back()
+
+        // Two more books. The library with one book is now an earlier version.
+        appDoes {
+            container.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+            container.library.addBook(Book(title = "Momo", authors = "Michael Ende"))
+            assertTrue(container.server.sync() is SyncResult.Done)
+        }
+        tap("openSettings")
+        scrollTo("historySection")
+        waitForTag("historyVersion")
+        waitForText("1 Buch")
+        shot("89_earlier_versions")
+        tap("historyRestore")
+        waitForTag("confirmDelete")
+        waitForText("zurückholen?")
+        waitForText("Sie ersetzt deine Bibliothek auf allen Geräten.")
+        // "Cancel" leaves everything as it is.
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(3, books().size)
+        tap("historyRestore")
+        tap("confirmDeleteYes")
+        // This phone shows the earlier library at once, and says so.
+        waitFor { books().map { it.title } == listOf("Emma") }
+        waitForTag("historyRestored")
+        waitForText("ist zurück.")
+        // What it replaced is in the list in turn: the way back is open.
+        waitForText("3 Bücher")
+        assertEquals(2, compose.onAllNodesWithTag("historyVersion").fetchSemanticsNodes().size)
+
+        // A server that keeps no earlier versions yet says that, instead of an empty list.
+        back()
+        fakeServer.beforeHistory = true
+        tap("openSettings")
+        scrollTo("historySection")
+        waitForTag("historyUnavailable")
+        waitForText("Dieser Server bewahrt noch keine früheren Stände auf.")
+        assertFalse(hasTag("historyRestore"))
+    }
+
+    @Test fun aFriendWhoJoinsIsAnnouncedAndTheTapLeadsToTheFriends() {
+        val manager = app.getSystemService(android.app.NotificationManager::class.java)
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val told = "Jemand hat deinen Freundescode benutzt. Kennst du die Person nicht, entferne sie unter «Freunde»."
+        val ben = RemoteFriend("id-ben", "Ben", joined = true, since = 5)
+        val nameless = RemoteFriend("id-x", "", joined = true, since = 6)
+        // One notification per friend, whatever else the same look brought.
+        val asked = Loan(id = "loan-1", lender = true, peerId = "id-ben", peerName = "Ben", bookId = 1, title = "Dune", state = LoanState.ASKED)
+        assertEquals(3, Notifier.announce(app, SyncResult.Done(news = listOf(LoanNews(asked, LoanNewsKind.ASKED)), joined = listOf(ben, nameless))))
+        assertEquals(
+            setOf("Ben ist jetzt mit dir befreundet" to told, "Jemand ist jetzt mit dir befreundet" to told, "Ben möchte «Dune» ausleihen" to "Öffne Shelfmark, um zu bestätigen."),
+            notifications(),
+        )
+        // Said again, it is the same notification, not a second one.
+        assertEquals(1, Notifier.announce(app, SyncResult.Done(joined = listOf(ben))))
+        assertEquals(3, shadowOf(manager).allNotifications.size)
+
+        // Each is posted through the channel that was made for it, with the app's own small icon,
+        // and opens the place it is about: the friends for somebody who joined, the loans for a loan.
+        assertEquals(android.app.NotificationManager.IMPORTANCE_DEFAULT, manager.getNotificationChannel(Notifier.CHANNEL).importance)
+        val posted = shadowOf(manager).allNotifications
+        assertTrue(posted.all { it.channelId == Notifier.CHANNEL && it.smallIcon.resId == R.drawable.ic_notification })
+        fun opens(title: String) = shadowOf(posted.first { shadowOf(it).contentTitle.toString() == title }.contentIntent).savedIntent
+        assertEquals(Notifier.ACTION_OPEN_FRIENDS, opens("Ben ist jetzt mit dir befreundet").action)
+        assertEquals(Notifier.ACTION_OPEN_LOANS, opens("Ben möchte «Dune» ausleihen").action)
+        assertEquals(MainActivity::class.java.name, opens("Ben ist jetzt mit dir befreundet").component?.className)
+        clearNotifications()
+
+        // The whole way, from the server to the notification: Ben types in the app's code while the app is open.
+        useServer()
+        val friend = Phone(app, folder, "Ben", fakeServer, serverConfig)
+        val cleo = Phone(app, folder, "Cleo", fakeServer, serverConfig)
+        try {
+            runBlocking { container.library.addBook(Book(title = "Emma", authors = "Jane Austen")) }
+            signUpWithFriends("Ich", cleo)
+            start()
+            waitForTag("coverShelf")
+            val code = settingsNow().friendCode
+            runBlocking {
+                friend.join()
+                friend.server.addFriend(code).getOrThrow()
+            }
+            lookAtServer()
+            waitFor { notifications() == setOf<Pair<String, String?>>("Ben ist jetzt mit dir befreundet" to told) }
+            // The next look says nothing new about him.
+            clearNotifications()
+            appDoes { container.refreshFriends(force = true) }
+            assertTrue(notifications().isEmpty())
+            // Tapping the notification leads to the friends, where Ben now stands.
+            scenario!!.onActivity { it.deliver(Intent(app, MainActivity::class.java).setAction(Notifier.ACTION_OPEN_FRIENDS)) }
+            waitForTag("friends")
+            scrollListTo("friends", "friendCard")
+            waitForText("Ben")
+        } finally {
+            friend.close()
+            cleo.close()
+        }
+    }
+
+    @Test fun whenNotificationsCannotBeShownTheAppSaysSoAndLeadsToTheSwitch() {
+        val permission = android.Manifest.permission.POST_NOTIFICATIONS
+        val manager = app.getSystemService(android.app.NotificationManager::class.java)
+        useServer()
+        // The reader dismissed Android's question after signing in, or signed in before there were notifications.
+        shadowOf(app).denyPermissions(permission)
+        runBlocking { container.library.addBook(Book(title = "Emma", authors = "Jane Austen")) }
+        signUpWithFriends("Ich")
+        start()
+        fun settingsOpened(): Boolean = generateSequence { shadowOf(app).nextStartedActivity }.toList().any {
+            it.action == android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS && it.getStringExtra(android.provider.Settings.EXTRA_APP_PACKAGE) == app.packageName
+        }
+        fun answer(granted: Boolean) {
+            pause()
+            scenario!!.onActivity { activity ->
+                val request = shadowOf(activity).lastRequestedPermission
+                assertEquals(listOf(permission), request.requestedPermissions.toList())
+                if (granted) shadowOf(app).grantPermissions(permission)
+                val result = if (granted) android.content.pm.PackageManager.PERMISSION_GRANTED else android.content.pm.PackageManager.PERMISSION_DENIED
+                activity.onRequestPermissionsResult(request.requestCode, request.requestedPermissions, intArrayOf(result))
+            }
+            settle()
+        }
+        fun comeBack() {
+            scenario!!.moveToState(Lifecycle.State.STARTED)
+            scenario!!.moveToState(Lifecycle.State.RESUMED)
+            settle()
+        }
+
+        // Where the reader looks for news from friends, the app says that none will reach them.
+        tap("tabFriends")
+        waitForTag("friends")
+        scrollListTo("friends", "notifyOff")
+        waitForText("Mitteilungen sind aus")
+        waitForText("Shelfmark kann dir nicht sagen, wenn jemand nach einem Buch fragt, antwortet oder dazukommt.")
+        shot("85_notifications_off")
+        // The same on the page of the loans.
+        scrollListTo("friends", "allLoans")
+        tap("allLoans")
+        waitForTag("loans")
+        waitForTag("notifyOff")
+        back()
+        scrollListTo("friends", "notifyOff")
+
+        // "Allow" asks Android. A first no leaves the question open: Android would show it once more.
+        shadowOf(app.packageManager).setShouldShowRequestPermissionRationale(permission, true)
+        tap("notifyAllow")
+        answer(granted = false)
+        assertTrue(hasTag("notifyAllow"))
+        // After the second no Android answers by itself, without asking. Then the tap leads to the
+        // settings, and the button says so from now on.
+        shadowOf(app.packageManager).setShouldShowRequestPermissionRationale(permission, false)
+        generateSequence { shadowOf(app).nextStartedActivity }.toList()
+        tap("notifyAllow")
+        answer(granted = false)
+        waitForTag("notifyOpenSettings")
+        assertTrue(settingsOpened())
+        assertFalse(hasTag("notifyAllow"))
+        waitFor { settingsNow().notifyNoDialog }
+        tap("notifyOpenSettings")
+        assertTrue(settingsOpened())
+
+        // The reader switches them on there and comes back: the card is gone.
+        shadowOf(app).grantPermissions(permission)
+        comeBack()
+        waitFor { !hasTag("notifyOff") }
+        waitFor { !settingsNow().notifyNoDialog }
+
+        // Switched off for the app in the system settings, with the permission in place: only the settings help.
+        shadowOf(manager).setNotificationsEnabled(false)
+        comeBack()
+        scrollListTo("friends", "notifyOff")
+        assertTrue(hasTag("notifyOpenSettings"))
+        shadowOf(manager).setNotificationsEnabled(true)
+        comeBack()
+        waitFor { !hasTag("notifyOff") }
+        // And the same when it is the app's one channel that is switched off.
+        manager.getNotificationChannel(Notifier.CHANNEL).importance = android.app.NotificationManager.IMPORTANCE_NONE
+        comeBack()
+        scrollListTo("friends", "notifyOff")
+        assertTrue(hasTag("notifyOpenSettings"))
+        assertFalse(Notifier.canShow(app))
+        manager.getNotificationChannel(Notifier.CHANNEL).importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
+        comeBack()
+        waitFor { !hasTag("notifyOff") }
+        assertTrue(Notifier.canShow(app))
+
+        // Somebody who is not signed in gets no news, and is not told that they will miss any.
+        shadowOf(app).denyPermissions(permission)
+        appDoes { container.server.signOut() }
+        comeBack()
+        assertFalse(hasTag("notifyOff"))
     }
 
     @Test fun theShelfSaysWhenTheSignInEndedByItself() {
@@ -1114,7 +1397,7 @@ class AppFlowTest {
         type("accountEmail", myEmail)
         type("accountPassword", myPassword)
         tap("signIn")
-        waitFor { runBlocking { container.settings.current() }.let { it.signedIn && !it.signedOutNotice } }
+        waitFor { settingsNow().let { it.signedIn && !it.signedOutNotice } }
         tap("tabLibrary")
         waitForTag("coverShelf")
         assertFalse(hasTag("signedOutNotice"))
@@ -1125,7 +1408,7 @@ class AppFlowTest {
         waitForTag("signedOutNotice")
         tap("signedOutClose")
         waitFor { !hasTag("signedOutNotice") }
-        val settings = runBlocking { container.settings.current() }
+        val settings = settingsNow()
         assertFalse(settings.signedOutNotice)
         assertFalse(settings.signedIn)
         assertEquals(listOf("Emma"), books().map { it.title })
@@ -1369,11 +1652,11 @@ class AppFlowTest {
         shot("52_timer_other_book")
         tap("confirmDeleteNo")
         waitFor { !hasTag("confirmDelete") }
-        assertEquals(book("Dune").id, runBlocking { container.settings.current() }.timer?.bookId)
-        assertEquals(754L, runBlocking { container.settings.current() }.timer?.accumulatedSeconds)
+        assertEquals(book("Dune").id, settingsNow().timer?.bookId)
+        assertEquals(754L, settingsNow().timer?.accumulatedSeconds)
         tap("timerToggle")
         tap("confirmDeleteYes")
-        waitFor { runBlocking { container.settings.current() }.timer?.bookId == book("Emma").id }
+        waitFor { settingsNow().timer?.bookId == book("Emma").id }
         back()
         back()
 
@@ -1382,7 +1665,7 @@ class AppFlowTest {
         scrollTo("profileName")
         retype("profileName", "Anna")
         scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        waitFor { runBlocking { container.settings.current() }.profileName == "Anna" }
+        waitFor { settingsNow().profileName == "Anna" }
     }
 
     @Test fun aNoteHalfWrittenIsNotClosedByAFingerThatMissed() {
@@ -1500,15 +1783,15 @@ class AppFlowTest {
         tap("signUp")
         // A new account has nothing in it yet: name and looks come next.
         waitForTag("onboardingName")
-        waitFor { runBlocking { container.settings.current() }.signedIn }
+        waitFor { settingsNow().signedIn }
         assertTrue(fakeServer.hasAccount(benEmail))
-        assertTrue(!runBlocking { container.settings.current() }.onboarded)
+        assertTrue(!settingsNow().onboarded)
         type("onboardingName", "Ben")
         waitForText("Wie soll es aussehen?")
         tap("onboardingNext")
         tap("startEmpty")
         waitForText("Dein Regal ist noch leer")
-        val settings = runBlocking { container.settings.current() }
+        val settings = settingsNow()
         assertTrue(settings.onboarded)
         assertEquals(benEmail, settings.accountEmail)
         assertEquals("Ben", settings.profileName)
@@ -1532,11 +1815,11 @@ class AppFlowTest {
             type("accountPassword", anna.password)
             tap("signIn")
             // Name, looks and books are on the account already. Nothing more to ask.
-            waitFor { runBlocking { container.settings.current() }.onboarded }
+            waitFor { settingsNow().onboarded }
             waitFor { books().size == 2 }
             waitForTag("greeting")
             waitForText("Emma")
-            val settings = runBlocking { container.settings.current() }
+            val settings = settingsNow()
             assertEquals("Anna", settings.profileName)
             assertEquals("ember", settings.theme)
             assertEquals(anna.email, settings.accountEmail)
@@ -1561,8 +1844,8 @@ class AppFlowTest {
         tap("onboardingNext")
         tap("startSamples")
         waitFor { books().size == 10 }
-        waitFor { runBlocking { container.settings.current() }.onboarded }
-        val settings = runBlocking { container.settings.current() }
+        waitFor { settingsNow().onboarded }
+        val settings = settingsNow()
         assertTrue(!settings.signedIn)
         assertEquals(0, fakeServer.calls["signup"] ?: 0)
         // The account is still on offer, where it always was.
@@ -2186,7 +2469,7 @@ class AppFlowTest {
         shot("46_own_lists_as_shelves")
 
         // Covers show them the same way.
-        runBlocking { container.settings.setViewMode(ViewMode.COVERS) }
+        appDoes { container.settings.setViewMode(ViewMode.COVERS) }
         waitForTag("coverShelf")
         scrollListTo("coverShelf", "emptyShelf_list_${holiday.id}")
         shot("47_own_lists_covers")
@@ -2223,7 +2506,7 @@ class AppFlowTest {
         tap("openSettings")
         scrollTo("motion")
         tap("motion")
-        waitFor { !runBlocking { container.settings.current() }.motion }
+        waitFor { !settingsNow().motion }
         back()
         waitForTag("spineShelf")
         shot("49_still_shelf")

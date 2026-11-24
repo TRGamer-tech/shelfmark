@@ -19,6 +19,7 @@ import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import ch.schmidtbit.shelfmark.data.repo.CoverStore
+import ch.schmidtbit.shelfmark.data.repo.History
 import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.Keep
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
@@ -40,10 +41,12 @@ import ch.schmidtbit.shelfmark.ui.friends.loanProblemRes
 import ch.schmidtbit.shelfmark.ui.friends.serverProblemRes
 import ch.schmidtbit.shelfmark.util.Dates
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -84,7 +87,10 @@ import java.util.UUID
 class FakeServer : HttpPoster {
     private class User(val id: String, val password: String, var confirmed: Boolean)
     private class Profile(var name: String, var code: String)
-    private class Vault(var revision: Long, var payload: JsonElement)
+    private class Vault(var revision: Long, var payload: JsonElement, var savedAt: Long)
+
+    /** A row of shelfmark.vault_history: a library as it was before something replaced it. */
+    private class Kept(val revision: Long, val payload: JsonElement, val savedAt: Long)
 
     /** A row of shelfmark.loans. */
     private class LoanRow(
@@ -116,6 +122,10 @@ class FakeServer : HttpPoster {
     private val sessions = HashMap<String, String>()
     private val profiles = LinkedHashMap<String, Profile>()
     private val friendships = HashSet<Pair<String, String>>()
+    /** Since when two are friends, and on whose side the other one came by the friend code. */
+    private val friendsSince = HashMap<Pair<String, String>, Long>()
+    private val joined = HashSet<Pair<String, String>>()
+    private val history = HashMap<String, MutableList<Kept>>()
     private val libraries = HashMap<String, Pair<Long, JsonElement>>()
     private val loans = ArrayList<LoanRow>()
     private val vaults = HashMap<String, Vault>()
@@ -138,6 +148,8 @@ class FakeServer : HttpPoster {
     var returnTo: String? = null
     /** A project whose schema.sql is the one from before the loans: it has no functions for them, and its sync names none. */
     var beforeLoans = false
+    /** A project whose schema.sql is the one from before earlier versions were kept and before it said who joined by whose code. */
+    var beforeHistory = false
     /** The storage refuses to remove anything, as it does while it is down. */
     var storageStuck = false
 
@@ -350,9 +362,10 @@ class FakeServer : HttpPoster {
         if (function == "shelfmark_ping") {
             // Housekeeping on the way: loans that are over and that both sides have put away.
             loans.removeAll { it.hiddenByLender && it.hiddenByBorrower }
-            return buildJsonObject { put("ok", true); put("schema", if (beforeLoans) 2 else 3); put("time", moment) }
+            return buildJsonObject { put("ok", true); put("schema", if (beforeLoans) 2 else if (beforeHistory) 3 else 4); put("time", moment) }
         }
         if (beforeLoans && function.startsWith("shelfmark_loan_")) refuse("missing")
+        if ((beforeLoans || beforeHistory) && (function == "shelfmark_vault_history" || function == "shelfmark_vault_restore")) refuse("missing")
         // Everything else is for somebody who is signed in.
         val me = caller ?: refuse("denied")
         val profile = profiles.getOrPut(me) { Profile("", newCode()) }
@@ -366,14 +379,23 @@ class FakeServer : HttpPoster {
                 val wanted = text("p_code").uppercase().filter { it.isLetterOrDigit() }
                 val friend = profiles.entries.firstOrNull { it.value.code == wanted } ?: refuse("unknown_code")
                 if (friend.key == me) refuse("own_code")
-                friendships += me to friend.key
-                friendships += friend.key to me
+                // Friends already: nothing changes, least of all who came by whose code.
+                if (friendships.add(me to friend.key)) {
+                    friendships += friend.key to me
+                    friendsSince[me to friend.key] = moment
+                    friendsSince[friend.key to me] = moment
+                    // For the owner of the code, the one who typed it in is somebody who joined.
+                    joined += friend.key to me
+                }
                 buildJsonObject { put("id", friend.key); put("name", friend.value.name) }
             }
             "shelfmark_remove_friend" -> {
                 val other = text("p_friend")
-                friendships -= me to other
-                friendships -= other to me
+                for (pair in listOf(me to other, other to me)) {
+                    friendships -= pair
+                    friendsSince -= pair
+                    joined -= pair
+                }
                 // Whoever ends the friendship ends the open questions with it: their own are taken back,
                 // the friend's are answered with a no. A book that is reserved or out stays a loan.
                 loans.filter { it.state == "asked" && ((it.lender == me && it.borrower == other) || (it.lender == other && it.borrower == me)) }.forEach {
@@ -428,7 +450,18 @@ class FakeServer : HttpPoster {
                     put("id", me)
                     put("code", profile.code)
                     put("name", profile.name)
-                    put("friends", buildJsonArray { friends.forEach { f -> add(buildJsonObject { put("id", f); put("name", profiles.getValue(f).name) }) } })
+                    put("friends", buildJsonArray {
+                        friends.forEach { f ->
+                            add(buildJsonObject {
+                                put("id", f)
+                                put("name", profiles.getValue(f).name)
+                                if (!beforeLoans && !beforeHistory) {
+                                    put("joined", (me to f) in joined)
+                                    put("since", friendsSince[me to f] ?: 0)
+                                }
+                            })
+                        }
+                    })
                     put("libraries", buildJsonArray {
                         friends.forEach { f ->
                             val (at, payload) = libraries[f] ?: return@forEach
@@ -458,14 +491,38 @@ class FakeServer : HttpPoster {
                 val expected = (args["p_expected"] as? JsonPrimitive)?.longOrNull
                 val current = vaults[me]?.revision ?: 0
                 if (expected != null && expected != current) refuse("conflict")
-                vaults[me] = Vault(current + 1, args.getValue("p_payload"))
+                keepVersion(me, always = false, now = moment)
+                vaults[me] = Vault(current + 1, args.getValue("p_payload"), moment)
                 buildJsonObject { put("revision", current + 1); put("at", stamp) }
+            }
+            "shelfmark_vault_history" -> buildJsonObject {
+                put("versions", buildJsonArray {
+                    history[me].orEmpty().sortedByDescending { it.revision }.forEach { kept ->
+                        add(buildJsonObject {
+                            put("revision", kept.revision)
+                            put("at", kept.savedAt)
+                            put("books", ((kept.payload as? JsonObject)?.get("books") as? JsonArray)?.size ?: 0)
+                        })
+                    }
+                })
+            }
+            "shelfmark_vault_restore" -> {
+                val vault = vaults[me] ?: refuse("unknown_version")
+                val wanted = (args["p_revision"] as? JsonPrimitive)?.longOrNull
+                val earlier = history[me].orEmpty().firstOrNull { it.revision == wanted } ?: refuse("unknown_version")
+                // What is replaced is kept in turn, so that bringing something back can be taken back.
+                keepVersion(me, always = true, now = moment)
+                vaults[me] = Vault(vault.revision + 1, earlier.payload, moment)
+                buildJsonObject { put("revision", vault.revision + 1); put("at", moment) }
             }
             "shelfmark_delete_account" -> {
                 profiles.remove(me)
                 vaults.remove(me)
+                history.remove(me)
                 libraries.remove(me)
                 friendships.removeAll { it.first == me || it.second == me }
+                friendsSince.keys.removeAll { it.first == me || it.second == me }
+                joined.removeAll { it.first == me || it.second == me }
                 loans.removeAll { it.lender == me || it.borrower == me }
                 users.entries.removeAll { it.value.id == me }
                 tokens.entries.removeAll { it.value.first == me }
@@ -475,7 +532,25 @@ class FakeServer : HttpPoster {
         }
     }
 
+    /**
+     * shelfmark.keep_version: puts the library as it is among the earlier versions before
+     * something replaces it. Not more often than once an hour unless [always], and then
+     * tidies up: the five newest stay, and of the older ones the last of each of the five
+     * most recent days.
+     */
+    private fun keepVersion(me: String, always: Boolean, now: Long) {
+        val vault = vaults[me] ?: return
+        val kept = history.getOrPut(me) { ArrayList() }
+        if (!always && kept.any { it.savedAt > now - 3_600_000L }) return
+        if (kept.none { it.revision == vault.revision }) kept += Kept(vault.revision, vault.payload, vault.savedAt)
+        val newestFirst = kept.sortedWith(compareByDescending<Kept> { it.savedAt }.thenByDescending { it.revision })
+        val newest = newestFirst.take(5).map { it.revision }
+        val lastOfDay = newestFirst.map { it.savedAt / DAY }.distinct().take(5).map { day -> newestFirst.first { it.savedAt / DAY == day }.revision }
+        kept.retainAll { it.revision in newest || it.revision in lastOfDay }
+    }
+
     private companion object {
+        const val DAY = 86_400_000L
         val OVER = setOf("returned", "declined", "withdrawn", "cancelled")
         /** The book is reserved or out. */
         val HOLDING = setOf("agreed", "handed", "on_loan", "given_back")
@@ -578,7 +653,7 @@ abstract class ServerStory {
         val arrived = device.server.signIn(of.email, of.password)
         assertTrue(arrived is SyncResult.Done)
         // A device that is new to an account has nothing to compare with: it starts quietly.
-        assertTrue((arrived as SyncResult.Done).news.isEmpty())
+        assertFalse((arrived as SyncResult.Done).tells)
     }
 
     /** Signs both up and makes them friends. Afterwards each has what the other shares. */
@@ -1324,6 +1399,172 @@ abstract class ServerStory {
         assertEquals(listOf("Dune", "Emma"), first.titles())
     }
 
+    @Test fun twoLibrariesThatWereNeverInStepArePutTogether() = runBlocking {
+        val first = phone("Anna")
+        val emma = first.library.addBook(Book(title = "Emma", authors = "Jane Austen", isbn = "9780141439587", rating = 5f))
+        first.library.addBook(Book(title = "Dune", authors = "Frank Herbert"))
+        val favourites = first.library.createShelf("Lieblinge")
+        first.library.setOnShelf(emma, favourites, true)
+        first.library.saveQuote(Quote(bookId = emma, text = "Emma Woodhouse, handsome, clever, and rich.", page = 1))
+        first.settings.setTheme("midnight")
+        assertTrue(first.join() is SyncResult.Done)
+
+        // Another phone has been in use for a while, with the same novel typed in by hand and read half way.
+        val second = phone("Zweit")
+        val emmaHere = second.library.addBook(Book(title = "Emma", authors = "Jane Austen, Fiona Stafford", review = "Wunderbar.", pageCount = 474))
+        val momo = second.library.addBook(Book(title = "Momo", authors = "Michael Ende"))
+        val here = second.library.createShelf("lieblinge")
+        second.library.setOnShelf(emmaHere, here, true)
+        second.library.setOnShelf(momo, here, true)
+        second.library.saveQuote(Quote(bookId = emmaHere, text = "Emma Woodhouse, handsome, clever, and rich.", page = 1))
+        second.library.saveQuote(Quote(bookId = emmaHere, text = "Seldom, very seldom, does complete truth belong to any human disclosure.", page = 400))
+        second.library.logSession(ReadingSession(bookId = emmaHere, startPage = 0, endPage = 50, minutes = 40f))
+        assertEquals(SyncResult.Choose(onAccount = 2, onDevice = 2), second.server.signIn(first.email, first.password))
+        assertTrue(second.server.choose(Keep.BOTH) is SyncResult.Done)
+
+        // Both phones show the same afterwards: three books, and Emma once.
+        assertTrue(first.server.sync() is SyncResult.Done)
+        for (device in listOf(second, first)) {
+            assertEquals(device.name, listOf("Dune", "Emma", "Momo"), device.titles())
+            // The copy that was changed last stays, under the number the account knows the book by, and takes what it lacked from the other.
+            val one = device.library.getBook(emma)!!
+            assertEquals(device.name, "Wunderbar.", one.review)
+            assertEquals(device.name, 50, one.currentPage)
+            assertEquals(device.name, ReadingStatus.READING, one.status)
+            assertEquals(device.name, 5f, one.rating)
+            assertEquals(device.name, "9780141439587", one.isbn)
+            // What belonged to either copy belongs to the one book. The quote both had is there once.
+            assertEquals(device.name, listOf(1, 400), device.library.quotesOf(emma).first().map { it.page }.sorted())
+            assertEquals(device.name, 50, device.library.sessionsOf(emma).first().single().endPage)
+            // The two lists of the same name are one, with the books of both.
+            val list = device.library.shelves.first().single()
+            assertEquals(device.name, "Lieblinge", list.name)
+            assertEquals(device.name, setOf("Emma", "Momo"), device.library.links.first().filter { it.shelfId == list.id }.map { link -> device.library.getBook(link.bookId)!!.title }.toSet())
+            // The settings are the account's.
+            assertEquals(device.name, "midnight", device.settings.current().theme)
+        }
+        // Neither library is what it was, so both were put aside, and one did not push the other out.
+        val aside = second.backup.replaced(second.replacedDir)
+        assertEquals(setOf(BackupManager.OF_ACCOUNT, BackupManager.OF_DEVICE), aside.map { BackupManager.replacedOf(it) }.toSet())
+        assertEquals(listOf("Dune", "Emma"), second.titlesIn(aside.first { BackupManager.replacedOf(it) == BackupManager.OF_ACCOUNT }))
+        assertEquals(listOf("Emma", "Momo"), second.titlesIn(aside.first { BackupManager.replacedOf(it) == BackupManager.OF_DEVICE }))
+        // The question is answered: the next sync does not ask again.
+        assertTrue(second.server.sync() is SyncResult.Done)
+
+        // Somebody saves to the account while a third phone is putting its books in. Nothing of that is lost.
+        val third = phone("Dritt")
+        third.library.addBook(Book(title = "Faust", authors = "Johann Wolfgang von Goethe"))
+        assertTrue(third.server.signIn(first.email, first.password) is SyncResult.Choose)
+        third.line.after("shelfmark_vault_pull") {
+            first.library.addBook(Book(title = "Krabat", authors = "Otfried Preussler"))
+            assertTrue(first.server.sync() is SyncResult.Done)
+        }
+        assertTrue(third.server.choose(Keep.BOTH) is SyncResult.Done)
+        assertTrue(first.server.sync() is SyncResult.Done)
+        assertEquals(listOf("Dune", "Emma", "Faust", "Krabat", "Momo"), third.titles())
+        assertEquals(listOf("Dune", "Emma", "Faust", "Krabat", "Momo"), first.titles())
+        // What was put aside there are the two libraries as they were before, not what came of them on the way.
+        val kept = third.backup.replaced(third.replacedDir)
+        assertEquals(2, kept.size)
+        assertEquals(listOf("Faust"), third.titlesIn(kept.first { BackupManager.replacedOf(it) == BackupManager.OF_DEVICE }))
+        assertEquals(listOf("Dune", "Emma", "Momo"), third.titlesIn(kept.first { BackupManager.replacedOf(it) == BackupManager.OF_ACCOUNT }))
+    }
+
+    @Test fun anEarlierVersionOfTheLibraryCanBeBroughtBack() = runBlocking {
+        val phone = phone("Anna")
+        val emma = phone.library.addBook(Book(title = "Emma"))
+        assertTrue(phone.join() is SyncResult.Done)
+        // Nothing was replaced yet, so nothing was kept.
+        assertEquals(History.Versions(emptyList()), phone.server.history())
+
+        // The first change replaces the library the account had, and that one is kept.
+        phone.library.addBook(Book(title = "Dune"))
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        val first = (phone.server.history() as History.Versions).versions.single()
+        assertEquals(1, first.books)
+        assertEquals(1L, first.revision)
+        assertTrue(first.at > 1_600_000_000_000)
+        // Not every save is kept: within an hour of a version that is, the next ones are not.
+        phone.library.addBook(Book(title = "Momo"))
+        phone.library.modify(emma) { it.copy(rating = 5f) }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertEquals(listOf(first), (phone.server.history() as History.Versions).versions)
+        val tablet = secondDevice(phone, "Tablet")
+
+        // The first version is brought back. A quote written a moment before had not reached
+        // the account yet: it goes there first, so that what is replaced is the library as it is now.
+        phone.library.saveQuote(Quote(bookId = emma, text = "Emma Woodhouse, handsome, clever, and rich.", page = 1))
+        assertNull(phone.server.restoreVersion(first.revision))
+        assertEquals(listOf("Emma"), phone.titles())
+        assertEquals(0f, phone.library.getBook(emma)!!.rating)
+        assertTrue(phone.library.quotes.first().isEmpty())
+        // Every other device takes it over like any change from elsewhere.
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertEquals(listOf("Emma"), tablet.titles())
+
+        // What it replaced is kept in turn, the newest first, so bringing something back can be taken back.
+        val versions = (tablet.server.history() as History.Versions).versions
+        assertEquals(listOf(3, 1), versions.map { it.books })
+        assertNull(tablet.server.restoreVersion(versions.first().revision))
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        for (device in listOf(tablet, phone)) {
+            assertEquals(device.name, listOf("Dune", "Emma", "Momo"), device.titles())
+            assertEquals(device.name, 5f, device.library.getBook(emma)!!.rating)
+            assertEquals(device.name, 1, device.library.quotes.first().size)
+        }
+
+        // What the reader does while the earlier version is on its way is not run over by it.
+        phone.line.after("shelfmark_vault_restore") { phone.library.modify(emma) { it.copy(review = "Noch einmal gelesen.") } }
+        assertNull(phone.server.restoreVersion(first.revision))
+        assertEquals(listOf("Emma"), phone.titles())
+        assertEquals("Noch einmal gelesen.", phone.library.getBook(emma)!!.review)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertEquals(listOf("Emma"), tablet.titles())
+        assertEquals("Noch einmal gelesen.", tablet.library.getBook(emma)!!.review)
+
+        // A version the server does not keep (any more) is said to be gone, and nothing changes.
+        assertEquals("unknown_version", phone.server.restoreVersion(987_654_321))
+        assertEquals(listOf("Emma"), phone.titles())
+    }
+
+    @Test fun aFriendWhoComesByMyCodeIsNewsOnce() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        val cleo = phone("Cleo")
+        val dora = phone("Dora")
+        anna.library.addBook(Book(title = "Emma"))
+        for (somebody in listOf(anna, ben, cleo, dora)) assertTrue(somebody.join() is SyncResult.Done)
+        val code = anna.settings.current().friendCode
+
+        // Ben types in Anna's code. He did that himself and needs no telling.
+        ben.server.addFriend(code).getOrThrow()
+        assertTrue((ben.server.sync() as SyncResult.Done).joined.isEmpty())
+        // Anna was not asked. She is told, once.
+        assertEquals(listOf("Ben"), (anna.server.sync() as SyncResult.Done).joined.map { it.name })
+        assertTrue((anna.server.sync() as SyncResult.Done).joined.isEmpty())
+
+        // A device that is new to the account takes everybody who is there as seen...
+        val tablet = secondDevice(anna, "Tablet")
+        assertTrue((tablet.server.sync() as SyncResult.Done).joined.isEmpty())
+        // ...and hears of whoever comes after that, as the phone does. Each device says it once.
+        cleo.server.addFriend(code).getOrThrow()
+        assertEquals(listOf("Cleo"), (tablet.server.sync() as SyncResult.Done).joined.map { it.name })
+        assertEquals(listOf("Cleo"), (anna.server.sync() as SyncResult.Done).joined.map { it.name })
+        assertTrue((tablet.server.sync() as SyncResult.Done).joined.isEmpty())
+
+        // The other way round: Anna types in Dora's code. Now Dora is the one who is told.
+        anna.server.addFriend(dora.settings.current().friendCode).getOrThrow()
+        assertTrue((anna.server.sync() as SyncResult.Done).joined.isEmpty())
+        assertTrue((tablet.server.sync() as SyncResult.Done).joined.isEmpty())
+        assertEquals(listOf("Anna"), (dora.server.sync() as SyncResult.Done).joined.map { it.name })
+
+        // Somebody who was removed and comes again is news again.
+        assertTrue(anna.server.removeFriend(ben.id))
+        ben.server.sync()
+        ben.server.addFriend(code).getOrThrow()
+        assertEquals(listOf("Ben"), (anna.server.sync() as SyncResult.Done).joined.map { it.name })
+    }
+
     @Test fun whatTheReaderDoesWhileASyncIsOnItsWayIsNotRunOver() = runBlocking {
         val phone = phone("Anna")
         val emma = phone.library.addBook(Book(title = "Emma"))
@@ -1542,6 +1783,57 @@ class ServerSyncTest : ServerStory() {
         assertNull(server.pictures[phone.id + "/better.jpg"])
     }
 
+    @Test fun aServerFromBeforeEarlierVersionsSaysSoAndNamesNobodyWhoJoined() = runBlocking {
+        server.beforeHistory = true
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        anna.library.addBook(Book(title = "Emma"))
+        assertTrue(anna.join() is SyncResult.Done)
+        assertTrue(ben.join() is SyncResult.Done)
+        anna.library.addBook(Book(title = "Dune"))
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        // No list of earlier versions, and no pretending there is one.
+        assertEquals(History.Unavailable, anna.server.history())
+        assertEquals("setup", anna.server.restoreVersion(1))
+        assertEquals(listOf("Dune", "Emma"), anna.titles())
+        assertEquals("This server does not keep earlier versions yet.", context.getString(R.string.history_unavailable))
+        // Such a server does not say who came by whose code. Nobody is announced, and nothing breaks.
+        ben.server.addFriend(anna.settings.current().friendCode).getOrThrow()
+        val heard = anna.server.sync() as SyncResult.Done
+        assertTrue(heard.joined.isEmpty())
+        assertEquals("Ben", anna.social.friends.first().single().friend.name)
+
+        // Signed out, there is nothing to ask the server for.
+        anna.server.signOut()
+        assertEquals(History.Failed("signed_out"), anna.server.history())
+    }
+
+    @Test fun theListOfEarlierVersionsStaysShortHoweverOftenIsSaved() = runBlocking {
+        val anna = phone("Anna", clock = { server.time })
+        val book = anna.library.addBook(Book(title = "Emma"))
+        anna.join()
+        fun versions() = runBlocking { (anna.server.history() as History.Versions).versions }
+        // Twenty saves, half an hour apart. Not every one is kept: a version is put aside once an hour at most.
+        repeat(20) { n ->
+            server.time += 30 * 60_000L
+            anna.library.modify(book) { it.copy(currentPage = n + 1) }
+            assertTrue(anna.server.sync() is SyncResult.Done)
+        }
+        assertTrue(versions().size in 5..10)
+        // And over many days: the newest few and one for each of the last days, ten at the very most, the newest first.
+        repeat(40) { n ->
+            server.time += 13 * 3_600_000L
+            anna.library.modify(book) { it.copy(currentPage = 100 + n) }
+            assertTrue(anna.server.sync() is SyncResult.Done)
+            assertTrue(versions().size in 5..10)
+        }
+        assertEquals(versions().sortedByDescending { it.revision }, versions())
+        assertEquals(versions().sortedByDescending { it.at }, versions())
+        // Every one of them holds the one book, and can be brought back.
+        assertTrue(versions().all { it.books == 1 })
+        assertNull(anna.server.restoreVersion(versions().last().revision))
+    }
+
     @Test fun aPictureThatWillNotGoKeepsNothingFromBeingDeleted() = runBlocking {
         val anna = phone("Anna")
         anna.covers.file("emma.jpg").writeBytes(byteArrayOf(1))
@@ -1735,6 +2027,25 @@ class ServerSyncTest : ServerStory() {
         assertFalse(anna.settings.current().signedIn)
         assertEquals(listOf("Emma"), anna.titles())
         assertTrue(anna.server.signIn(anna.email, anna.password) is SyncResult.Done)
+    }
+
+    @Test fun aLookThatIsCalledOffWhileTheSignInIsRenewedDoesNotSignOut() = runBlocking {
+        val anna = phone("Anna", clock = { server.time })
+        anna.library.addBook(Book(title = "Emma"))
+        anna.join()
+        // The token has run out, so the next look renews the sign-in first. The server trades the
+        // old one for a new one once. Right after its answer the look is called off, as it is
+        // when the reader leaves the app at that moment.
+        server.time += 2 * 3600_000L
+        val look = launch(Dispatchers.Default, start = CoroutineStart.LAZY) { anna.server.sync() }
+        anna.line.after("token?grant_type=refresh_token") { look.cancel() }
+        look.start()
+        look.join()
+        assertTrue(look.isCancelled)
+        // The new sign-in was written down all the same: the next look goes through, and nobody was signed out.
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertTrue(anna.settings.current().signedIn)
+        assertFalse(anna.settings.current().signedOutNotice)
     }
 
     @Test fun aNewAccountMayHaveToConfirmItsAddress() = runBlocking {

@@ -2,6 +2,7 @@
 
 package ch.schmidtbit.shelfmark.ui.friends
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -51,19 +52,25 @@ fun LoansScreen(onBack: () -> Unit, onOpenBook: (Long) -> Unit) {
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.loans_title)) }, navigationIcon = { BackButton(onBack) }) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("loans"), contentPadding = PaddingValues(bottom = 32.dp)) {
-            if (loans.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.loans_empty)) }
-            listOf(
-                R.string.loans_section_todo to todo,
-                R.string.loans_section_open to open,
-                R.string.loans_section_lent to lent,
-                R.string.loans_section_borrowed to borrowed,
-                R.string.loans_section_past to past,
-            ).forEach { (title, section) ->
-                if (section.isNotEmpty()) item(key = "title$title") { SectionTitle(stringResource(title)) }
-                items(section, key = { it.id }) { loan ->
-                    val book = bookOfLoan(loan, library)
-                    LoanCard(loan, onOpenBook = book?.let { { onOpenBook(it.id) } })
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            // Whoever waits for an answer here should know when it cannot reach them as a notification.
+            // Above the list and not in it: it turns up a moment after the list does, and a list
+            // holds on to what it shows, so a first entry that comes late would be out of sight.
+            NotificationsCard()
+            LazyColumn(Modifier.fillMaxSize().testTag("loans"), contentPadding = PaddingValues(bottom = 32.dp)) {
+                if (loans.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.loans_empty)) }
+                listOf(
+                    R.string.loans_section_todo to todo,
+                    R.string.loans_section_open to open,
+                    R.string.loans_section_lent to lent,
+                    R.string.loans_section_borrowed to borrowed,
+                    R.string.loans_section_past to past,
+                ).forEach { (title, section) ->
+                    if (section.isNotEmpty()) item(key = "title$title") { SectionTitle(stringResource(title)) }
+                    items(section, key = { it.id }) { loan ->
+                        val book = bookOfLoan(loan, library)
+                        LoanCard(loan, onOpenBook = book?.let { { onOpenBook(it.id) } })
+                    }
                 }
             }
         }

@@ -68,6 +68,12 @@ data class Settings(
      * what changes here from now on stays here, and nobody should find that out by chance.
      */
     val signedOutNotice: Boolean = false,
+    /**
+     * Android was asked for the permission to show notifications and said no without showing
+     * its question, as it does once somebody declined twice. From then on only the system
+     * settings switch them on, and the app offers the way there instead of asking in vain.
+     */
+    val notifyNoDialog: Boolean = false,
 ) {
     val signedIn: Boolean get() = refreshToken.isNotBlank()
 
@@ -152,6 +158,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             loansSeen = p[LOANS_SEEN] ?: false,
             lastPingDay = p[LAST_PING] ?: 0,
             signedOutNotice = p[SIGNED_OUT_NOTICE] ?: false,
+            notifyNoDialog = p[NOTIFY_NO_DIALOG] ?: false,
         )
 
     suspend fun current(): Settings = settings.first()
@@ -214,6 +221,11 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             p[VAULT_REVISION] = revision
             p[VAULT_HASH] = hash
         }
+    }
+
+    /** Remembers, or forgets, that Android no longer shows its question about notifications. */
+    suspend fun setNotifyNoDialog(gone: Boolean) {
+        store.edit { p -> if (gone) p[NOTIFY_NO_DIALOG] = true else p.remove(NOTIFY_NO_DIALOG) }
     }
 
     /** Says, or stops saying, that the sign-in on this device ended by itself. */
@@ -335,6 +347,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val LOANS_SEEN = booleanPreferencesKey("loans_seen")
         val LAST_PING = longPreferencesKey("last_ping_day")
         val SIGNED_OUT_NOTICE = booleanPreferencesKey("signed_out_notice")
+        val NOTIFY_NO_DIALOG = booleanPreferencesKey("notify_no_dialog")
         val themeJson = Json { ignoreUnknownKeys = true }
     }
 }
