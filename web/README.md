@@ -133,9 +133,10 @@ app's Kotlin tests), ISBNs, the catalogue parsers against recorded answers, savi
 conflicts against a server in memory, a library that cannot be read (what stops the
 sync, what passes through untouched, and that nothing is written over it), what another
 cover does to a book, which pictures a save leaves without a book and the requests for
-uploaded pictures, loans between friends (who may take which step, what is news,
-what waits and what is due, how the books follow the loans, with the values the app is
-tested with as well), what the address says after every kind of mail link and where
+uploaded pictures, loans between friends (who may take which step, what is news and
+that it is told once, what waits and what is due, how the books follow the loans, with
+the values the app is tested with as well), the notices at the foot of the page, what
+the address says after every kind of mail link and where
 each kind leads, the script that decides between front page and shelf, picking the newest
 release of the app, the words, numbers and colours of the front page, the imprint and the
 privacy notice (who is named on them, and what they say about the code), the reading
@@ -235,8 +236,16 @@ The website does what the app does, with these exceptions:
   what is over. The Friends item of the navigation counts what waits. A yes comes with
   the day the book is wanted back by, or with no fixed date. A page that asks for a step
   the loan has moved past says so and shows where the loan stands. What a browser last
-  saw of each loan is kept in its storage (`shelfmark.loans.<user id>`), so that it can
-  tell what is new, and goes when the reader signs out. Borrow requests as they were
+  saw of each loan is kept in its storage (`shelfmark.loans.<user id>`), with the
+  server's time of the answer that said so, and goes when the reader signs out. From
+  that the page tells what is new (`takeLoanAnswer` in `src/lib/loans.ts`): a step of
+  the other side is announced once per browser, in the window that sees it first, and
+  never by the first look after signing in. An answer that is older than what the
+  browser has seen already (two looks that crossed, in one window or in two) changes
+  nothing, or the news told in between would be new again. There is one notice per
+  loan (`src/lib/notices.ts`): the next step takes the place of the one before, and
+  the notice goes when the reader answers it, here or on another device, as the
+  notifications of the app do. Borrow requests as they were
   before, kept in the library and sent as messages or files, are gone: a library that
   still carries them is read and written without them, and such a file is told that it
   comes from an older version.

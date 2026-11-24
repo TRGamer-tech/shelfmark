@@ -21,7 +21,6 @@ export const strings: Record<string, string> = {
   web_add_lists: "Auch stellen auf",
   web_add_search: "Suchen",
   web_backup_restore: "Aus einer Datei wiederherstellen",
-  web_book_in_loan: "Dieses Buch ist Teil einer Ausleihe. Schliess die Ausleihe zuerst ab.",
   web_book_missing: "Dieses Buch ist nicht in deiner Bibliothek.",
   web_close_menu: "Schliessen",
   web_confirm_resend: "Mail nochmals senden",

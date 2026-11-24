@@ -474,7 +474,7 @@ export default function BookPage() {
             </>
           }
         >
-          <p>{t("web_book_in_loan")}</p>
+          <p>{t("book_delete_loan")}</p>
         </Dialog>
       ) : null}
       {confirmDelete && !tied ? (

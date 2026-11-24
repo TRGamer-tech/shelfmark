@@ -23,7 +23,6 @@ export const strings: Record<string, string> = {
   web_add_lists: "Also put it on",
   web_add_search: "Search",
   web_backup_restore: "Restore from a file",
-  web_book_in_loan: "This book is part of a loan. End the loan first.",
   web_book_missing: "This book is not in your library.",
   web_close_menu: "Close",
   web_confirm_resend: "Send the mail again",

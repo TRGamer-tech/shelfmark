@@ -1511,8 +1511,14 @@ async function main() {
       await atBens("agreed").getByTestId("loan-hand").click();
       await atBens("handed").waitFor();
       await lookNow(page);
+      // The second handover is news again. It stands there once, not on top of the first, which Anna answered.
+      await atAnnas("handed").waitFor();
+      await page.locator(".toast").filter({ hasText: "Ben says “Momo” was handed over to you" }).first().waitFor();
+      equal(await page.locator(".toast").count(), 1, "notices about the handover at Anna's");
       await atAnnas("handed").getByTestId("loan-receive").click();
       await atAnnas("on_loan").waitFor();
+      // And once she has said that she has the book, the page has nothing left to say about the handover.
+      equal(await page.locator(".toast").count(), 0, "notices about a handover Anna has confirmed");
 
       // On loan. For Anna it is listed under what she borrowed.
       await page.getByTestId("loans-borrowed").locator(`[data-loan="${loanId}"]`).waitFor();
@@ -1539,12 +1545,13 @@ async function main() {
       assert(await page.getByTestId("own-OWNED").isDisabled(), "while the loan runs, the loan says whose book it is");
       deepAudit(await audit(page), "page of a borrowed copy");
       await page.waitForTimeout(300);
+      equal(await page.locator(".toast").count(), 0, "notices on the page of the copy, about steps Anna has taken herself");
       await shot(page, "loan-borrowed-copy");
       // The copy cannot be deleted while the loan runs: the next look at the server would bring it back. The page says so.
       await page.getByTestId("delete-book").click();
       const tied = page.getByTestId("book-in-loan");
       await tied.waitFor();
-      assert((await tied.innerText()).includes("This book is part of a loan. End the loan first."), "why the borrowed copy cannot be deleted");
+      assert((await tied.innerText()).includes("This book is part of a loan. End the loan first, then the book can be removed."), "why the borrowed copy cannot be deleted");
       equal(await page.getByTestId("confirm").count(), 0, "ways to delete it all the same");
       equal(await tied.getByTestId("to-loans").getAttribute("href"), "/friends/loans", "where the loan can be ended");
       await page.keyboard.press("Escape");
@@ -1561,7 +1568,7 @@ async function main() {
       equal([lent.lentSince, lent.loanId].join(" "), `${today} ${loanId}`, "since when, and by which loan");
       await benPage.getByTestId("loans-lent").locator(`[data-loan="${loanId}"]`).waitFor();
       equal(await atBens("on_loan").getByTestId("loan-standing").innerText(), `Verliehen an Anna seit ${deDay(today)}.`, "on loan, at Ben's");
-      equal(await buttons(atBens("on_loan")), "Datum ändern | Ich habe es schon zurück", "what Ben can do now");
+      equal(await buttons(atBens("on_loan")), "Ich habe es schon zurück | Datum ändern", "what Ben can do now");
       // On the page of his book the loan stands where lending by hand was.
       await benPage.goto(`${WEB}/book?id=${momo.id}`);
       await atBens("on_loan").waitFor();
@@ -1569,7 +1576,7 @@ async function main() {
       // Nor can the lender delete the book that is out: the loan would point at nothing.
       await benPage.getByTestId("delete-book").click();
       await benPage.getByTestId("book-in-loan").waitFor();
-      assert((await benPage.getByTestId("book-in-loan").innerText()).includes("Dieses Buch ist Teil einer Ausleihe. Schliess die Ausleihe zuerst ab."), "why the lent book cannot be deleted, in German");
+      assert((await benPage.getByTestId("book-in-loan").innerText()).includes("Dieses Buch gehört zu einer Ausleihe. Schliesse zuerst die Ausleihe ab, dann kann das Buch entfernt werden."), "why the lent book cannot be deleted, in German");
       await benPage.getByTestId("book-in-loan").getByRole("button", { name: "OK" }).click();
       await benPage.getByTestId("book-in-loan").waitFor({ state: "detached" });
       assert(bookOf((await vaultOf(ben)).vault, "Momo"), "the book is still in Ben's library");
@@ -2035,7 +2042,7 @@ async function main() {
       // The book cannot be deleted while it is out.
       await np.getByTestId("delete-book").click();
       await np.getByTestId("book-in-loan").waitFor();
-      assert((await np.getByTestId("book-in-loan").innerText()).includes("This book is part of a loan. End the loan first."), "why the book cannot be deleted");
+      assert((await np.getByTestId("book-in-loan").innerText()).includes("This book is part of a loan. End the loan first, then the book can be removed."), "why the book cannot be deleted");
       deepAudit(await audit(np), "the notice for a book that is part of a loan");
       await np.waitForTimeout(300);
       await shot(np, "book-in-loan");
@@ -2120,6 +2127,148 @@ async function main() {
       await np.getByTestId("delete-book").click();
       await np.getByTestId("confirm").click();
       await untilVault(nora, (v) => v.books.length === 0, "Krabat deleted");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "each step of a loan is announced once, and not at all once the reader has acted on it",
+    async () => {
+      // Rita reads in a browser. Lars lends, and talks to the server as his phone would.
+      const rita = account("Rita");
+      const lars = account("Lars");
+      await signUpByApi(rita);
+      await signUpByApi(lars);
+      await rpc(rita.session.token, "shelfmark_add_friend", { p_code: (await rpc(lars.session.token, "shelfmark_hello")).code });
+      const loan = await rpc(rita.session.token, "shelfmark_loan_ask", { p_friend: lars.session.id, p_book: 1, p_info: { title: "Tschick", authors: "Wolfgang Herrndorf" } });
+      const context = await newContext();
+      const rp = await context.newPage();
+      await signInOnPage(rp, rita);
+      await rp.getByTestId("empty-library").waitFor();
+      await rp.goto(`${WEB}/friends/loans`);
+      const card = (state, on = rp) => on.locator(`[data-testid="loan"][data-loan="${loan.id}"][data-state="${state}"]`);
+      await card("asked").waitFor();
+      const notices = rp.locator(".toast");
+      const said = (words) => notices.filter({ hasText: words });
+      /** Looks at the server until the page shows what happened there. One look may join a look that was on its way before the news. */
+      const shows = (check, what, on = rp) =>
+        until(async () => {
+          await lookNow(on);
+          return check();
+        }, what);
+      const stands = (state) => shows(async () => (await card(state).count()) === 1, `the loan stands as ${state}`);
+      const dueSays = (words, on = rp) => shows(async () => (await on.getByTestId("loan-due").innerText()) === words, `the day reads: ${words}`, on);
+      const settle = () => rp.waitForTimeout(700);
+      equal(await notices.count(), 0, "news on the first look after signing in");
+
+      // Lars says yes. Rita is told once, however often and from wherever her browser looks.
+      await act(lars, loan.id, "agree", { p_due: today + 14 });
+      await stands("agreed");
+      await said("Lars said yes to “Tschick”").waitFor();
+      await rp.evaluate(() => {
+        for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("focus"));
+      });
+      await rp.getByTestId("sync-now").click();
+      await rp.locator('.sidebar [data-testid="nav-friends"]').click();
+      await rp.getByTestId("open-loans").click();
+      await card("agreed").waitFor();
+      await lookNow(rp);
+      await settle();
+      equal(await said("Lars said yes").count(), 1, "times the yes is announced");
+      equal(await notices.count(), 1, "notices on the page");
+      // A second window of the same browser has nothing to add: the browser was told already.
+      const second = await context.newPage();
+      await second.goto(`${WEB}/friends/loans`);
+      await card("agreed", second).waitFor();
+      await second.waitForTimeout(700);
+      equal(await second.locator(".toast").count(), 0, "news in a second window about what the first one told");
+      // Once the notice has gone, no later look brings it back, and no reload either.
+      await said("Lars said yes").waitFor({ state: "detached", timeout: 9000 });
+      await lookNow(rp);
+      await settle();
+      equal(await notices.count(), 0, "the yes, announced again by a later look");
+      await rp.reload();
+      await card("agreed").waitFor();
+      await settle();
+      equal(await notices.count(), 0, "the yes, announced again after a reload");
+
+      // Two looks that race. The second window asks first and gets its answer last: an answer
+      // from before Lars changed the day, arriving after the first window told of the change.
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      let asked;
+      const fetched = new Promise((resolve) => (asked = resolve));
+      await second.route("**/rest/v1/rpc/shelfmark_sync", async (route) => {
+        const response = await route.fetch();
+        asked();
+        await held;
+        await route.fulfill({ response });
+      });
+      await lookNow(second);
+      await fetched;
+      await act(lars, loan.id, "set_due", { p_due: today + 21 });
+      await dueSays(`Back by ${enDay(today + 21)}`);
+      await said("Lars changed the date for “Tschick”").waitFor();
+      equal(await notices.count(), 1, "times the new day is announced");
+      await said("Lars changed the date").waitFor({ state: "detached", timeout: 9000 });
+      release();
+      await second.waitForTimeout(500);
+      await second.unroute("**/rest/v1/rpc/shelfmark_sync");
+      await lookNow(rp);
+      await settle();
+      equal(await notices.count(), 0, "old news made new again by an answer that came in late");
+      equal(await card("agreed").getByTestId("loan-due").innerText(), `Back by ${enDay(today + 21)}`, "the day the first window shows after that");
+      // The second window catches up with its next look, and has nothing to announce either.
+      await dueSays(`Back by ${enDay(today + 21)}`, second);
+      await second.waitForTimeout(400);
+      equal(await second.locator(".toast").count(), 0, "news in the second window about what the first one told");
+      await second.close();
+
+      // Lars says he handed the book over. Rita is told, and answers that she did not get it:
+      // the notice is about a question she has answered, and goes at once.
+      await act(lars, loan.id, "hand");
+      await stands("handed");
+      await said("Lars says “Tschick” was handed over to you").waitFor();
+      equal(await notices.count(), 1, "times the handover is announced");
+      await card("handed").getByTestId("loan-not_received").click();
+      await card("agreed").waitFor();
+      equal(await notices.count(), 0, "notices about a step the reader has answered");
+      // He hands it over again. That is news again, and stands there once, not on top of the first.
+      await act(lars, loan.id, "hand");
+      await stands("handed");
+      await said("Lars says “Tschick” was handed over to you").first().waitFor();
+      await settle();
+      equal(await said("was handed over to you").count(), 1, "times the second handover is announced");
+      // Then he changes the day. The latest step of a loan takes the place of the one before.
+      await act(lars, loan.id, "set_due", { p_due: null });
+      await dueSays("No fixed date");
+      await said("Lars changed the date for “Tschick”").waitFor();
+      equal(await notices.count(), 1, "notices about one loan");
+      // Rita has the book and says so. Nothing is left to announce about it.
+      await card("handed").getByTestId("loan-receive").click();
+      await card("on_loan").waitFor();
+      equal(await notices.count(), 0, "notices about a loan the reader has just acted on");
+      await lookNow(rp);
+      await settle();
+      equal(await notices.count(), 0, "notices after the look that follows her step");
+
+      // The same when she acts somewhere else. She gives the book back here, Lars says he did not get it ...
+      await card("on_loan").getByTestId("loan-give_back").click();
+      await card("given_back").waitFor();
+      await act(lars, loan.id, "not_returned");
+      await stands("on_loan");
+      await said("Lars did not get “Tschick” back").waitFor();
+      // ... and she answers on her phone. The notice in the browser is about something she has dealt with.
+      await act(rita, loan.id, "give_back");
+      await stands("given_back");
+      equal(await notices.count(), 0, "notices about a step the reader answered on another device");
+      // What Lars does next is news again.
+      await act(lars, loan.id, "take_back");
+      await stands("returned");
+      await said("Lars has “Tschick” back").waitFor();
+      await settle();
+      equal(await notices.count(), 1, "times the return is announced");
       await context.close();
     },
     null,

@@ -14,7 +14,7 @@ import { useLibrary } from "./library";
 import { Button, ConfirmDialog, Dialog, Field } from "./ui";
 import { formatDay, fromIsoDate, localZone, dayOf, toIsoDate, today } from "@/lib/dates";
 import type { Loan, LoanAction } from "@/lib/loans";
-import { actionsFor, dueLine, givenReason, standingOf } from "@/lib/loans";
+import { actionsFor, dueLine, givenReason, hintOf, standingOf } from "@/lib/loans";
 import { loanProblemKey } from "@/lib/supabase/errors";
 import { reasonOf } from "@/lib/sync";
 
@@ -148,8 +148,7 @@ export function LoanView({ loan, bookHref, headline = false }: LoanViewProps) {
   const due = dueLine(loan, today());
   const reason = givenReason(loan);
   const actions = actionsFor(loan);
-  // What the borrower needs to know about the two moments both sides confirm.
-  const hint = loan.role === "borrower" ? (loan.state === "agreed" ? "loan_handover_hint" : loan.state === "on_loan" ? "loan_return_hint" : null) : null;
+  const hint = hintOf(loan);
 
   const act = async (action: LoanAction, detail?: { due?: number | null; reason?: string }) => {
     if (busy) return;

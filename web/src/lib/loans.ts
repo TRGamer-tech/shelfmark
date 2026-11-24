@@ -150,9 +150,10 @@ export function isOver(loan: Loan): boolean {
 }
 
 /**
- * The steps the reader may take from where the loan stands, the most likely one first.
- * Handing over takes the lender first and then the borrower, giving back the borrower
- * first and then the lender. A loan that is over can only be put away.
+ * The steps the reader may take from where the loan stands, in the order of the buttons,
+ * which is the order the Android app has them in (LoanRules.actions). Handing over takes
+ * the lender first and then the borrower, giving back the borrower first and then the
+ * lender. A loan that is over can only be put away.
  */
 export function actionsFor(loan: Loan): LoanAction[] {
   if (isOver(loan)) return ["hide"];
@@ -165,7 +166,7 @@ export function actionsFor(loan: Loan): LoanAction[] {
       case "handed":
         return ["undo_hand", "set_due", "cancel"];
       case "on_loan":
-        return ["set_due", "close"];
+        return ["close", "set_due"];
       case "given_back":
         return ["take_back", "not_returned", "set_due"];
       default:
@@ -226,6 +227,17 @@ export function standingOf(loan: Loan): { key: string; moment: number | null } {
   return { key, moment: null };
 }
 
+/**
+ * What a borrower is told about the two moments both sides confirm, where it is not
+ * obvious who says so first: how the handover goes, while the book is reserved, and how
+ * the return goes, while the book is with them. At no other time, and never to the
+ * lender. The Android app shows the same two hints in the same two states.
+ */
+export function hintOf(loan: Loan): "loan_handover_hint" | "loan_return_hint" | null {
+  if (loan.role !== "borrower") return null;
+  return loan.state === "agreed" ? "loan_handover_hint" : loan.state === "on_loan" ? "loan_return_hint" : null;
+}
+
 /** The reason a lender gave in their own words. "taken" is no such reason: it has a sentence of its own. */
 export function givenReason(loan: Loan): string {
   const said = loan.reason.trim();
@@ -263,14 +275,28 @@ export interface Seen {
 
 export type SeenLoans = Record<string, Seen>;
 
+/**
+ * What a browser remembers of the loans: how each stood, and the server's time of the
+ * answer that said so. All windows of a browser share it, so that a step is told once
+ * in that browser and not once in every window.
+ */
+export interface LoanMemory {
+  time: number;
+  loans: SeenLoans;
+}
+
 export function seenOf(loans: Loan[]): SeenLoans {
   const seen: SeenLoans = {};
   for (const loan of loans) seen[loan.id] = { at: loan.updatedAt, state: loan.state, dueOn: loan.dueOn };
   return seen;
 }
 
-/** Reads what the browser remembered. Null when it remembered nothing that can be read. */
-export function readSeen(remembered: string | null): SeenLoans | null {
+/**
+ * Reads what the browser remembered. Null when it remembered nothing that can be read.
+ * What was written before the time was kept with it is read as "seen at the beginning
+ * of time": every answer is newer than that.
+ */
+export function readSeen(remembered: string | null): LoanMemory | null {
   if (remembered === null) return null;
   let raw: unknown;
   try {
@@ -279,12 +305,14 @@ export function readSeen(remembered: string | null): SeenLoans | null {
     return null;
   }
   if (!isObject(raw)) return null;
-  const seen: SeenLoans = {};
-  for (const [id, entry] of Object.entries(raw)) {
+  const dated = isObject(raw.loans) && typeof raw.time === "number";
+  const source = dated ? (raw.loans as Record<string, unknown>) : raw;
+  const loans: SeenLoans = {};
+  for (const [id, entry] of Object.entries(source)) {
     if (!isObject(entry) || typeof entry.at !== "number" || !LOAN_STATES.includes(entry.state as LoanState)) continue;
-    seen[id] = { at: entry.at, state: entry.state as LoanState, dueOn: moment(entry.dueOn) };
+    loans[id] = { at: entry.at, state: entry.state as LoanState, dueOn: moment(entry.dueOn) };
   }
-  return seen;
+  return { time: dated ? (raw.time as number) : 0, loans };
 }
 
 /**
@@ -296,6 +324,88 @@ export function readSeen(remembered: string | null): SeenLoans | null {
 export function newsOf(loans: Loan[], seen: SeenLoans | null): Loan[] {
   if (seen === null) return [];
   return loans.filter((loan) => !loan.byMe && loan.updatedAt > (seen[loan.id]?.at ?? 0));
+}
+
+/** What a look at the loans gives the page to say, and to take back. */
+export interface LoanNotices {
+  /** The other side's step, with the name of its sentence. At most one per loan. */
+  say: { loan: Loan; key: string }[];
+  /**
+   * The loans about which whatever was said before holds no longer: the reader took a
+   * step of their own, the other side took a tap back, or the loan is gone. A notice
+   * about one of these that still stands on the page is taken away.
+   */
+  unsay: string[];
+}
+
+/**
+ * Compares the loans with what the browser saw of them. Every loan that changed since
+ * is either told (the other side's step, if there are words for it) or untold (anything
+ * else): never both, and a loan that did not change is neither. So a step is announced
+ * when it is first seen and at no later look, and a notice does not outlive the reader's
+ * own answer to it. The Android app does the same with its notifications: one per loan,
+ * replaced by the next step, taken back when a tap was (work/Notifier.kt).
+ */
+export function loanNotices(loans: Loan[], seen: SeenLoans | null): LoanNotices {
+  const notices: LoanNotices = { say: [], unsay: [] };
+  if (seen === null) return notices;
+  const listed = new Set<string>();
+  for (const loan of loans) {
+    listed.add(loan.id);
+    const before = seen[loan.id];
+    if (loan.updatedAt <= (before?.at ?? 0)) continue;
+    const key = loan.byMe ? null : newsKey(loan, before);
+    if (key) notices.say.push({ loan, key });
+    else notices.unsay.push(loan.id);
+  }
+  for (const id of Object.keys(seen)) if (!listed.has(id)) notices.unsay.push(id);
+  return notices;
+}
+
+/** What follows from an answer about the loans: what to say, and what the browser remembers from now on. */
+export interface LoanLook {
+  notices: LoanNotices;
+  memory: LoanMemory;
+  /** The answer is older than what the browser has seen already. Nothing follows from it. */
+  late: boolean;
+}
+
+/**
+ * Takes an answer about the loans, given at the server's [time], against what the
+ * browser remembers. Three cases:
+ *
+ * - The browser remembers nothing: this is the first look after signing in. It tells
+ *   no news, everything it finds is simply how things stand.
+ * - The answer is older than what was seen already. That happens when two looks race,
+ *   in one window or in two, and the one that asked first is answered last. Nothing is
+ *   said and nothing is remembered from it: remembering it would make the news that
+ *   was told in between new again at the next look.
+ * - Otherwise what changed is told, and the answer is what the browser has seen now.
+ *
+ * A [time] of zero, from a server that does not say when it answered, counts as now.
+ */
+export function takeLoanAnswer(memory: LoanMemory | null, loans: Loan[], time: number): LoanLook {
+  const none: LoanNotices = { say: [], unsay: [] };
+  if (memory === null) return { notices: none, memory: { time, loans: seenOf(loans) }, late: false };
+  if (time > 0 && time < memory.time) return { notices: none, memory, late: true };
+  return { notices: loanNotices(loans, memory.loans), memory: { time: Math.max(time, memory.time), loans: seenOf(loans) }, late: false };
+}
+
+/**
+ * The reader took a step themselves, and the server answered with the loan as it stands
+ * now. That is an answer about this one loan and says nothing about the others: only
+ * what is remembered of this one changes, so that news about another loan, which a
+ * second window may have seen in the meantime, stays told. [gone] is a loan that was
+ * put away. The time moves on to the step, which makes a look that asked before it,
+ * in any window, late. A browser that remembers nothing goes on remembering nothing:
+ * its first look is still to come.
+ */
+export function rememberStep(memory: LoanMemory | null, loan: Loan, gone: boolean): LoanMemory | null {
+  if (memory === null) return null;
+  const loans = { ...memory.loans };
+  if (gone) delete loans[loan.id];
+  else loans[loan.id] = { at: loan.updatedAt, state: loan.state, dueOn: loan.dueOn };
+  return { time: Math.max(memory.time, loan.updatedAt), loans };
 }
 
 /**

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { toEpochDay, utcZone } from "../src/lib/dates.ts";
-import type { Loan, LoanAction, LoanState } from "../src/lib/loans.ts";
+import type { Loan, LoanAction, LoanMemory, LoanNotices, LoanState } from "../src/lib/loans.ts";
 import {
   LOAN_STATES,
   actionsFor,
@@ -14,12 +14,14 @@ import {
   followLoans,
   givenReason,
   heldBookIds,
+  hintOf,
   holdsBook,
   isDue,
   isOut,
   isOver,
   lentByHand,
   loanBookId,
+  loanNotices,
   loanOf,
   loansAbout,
   myLoanOf,
@@ -30,10 +32,12 @@ import {
   readLoan,
   readLoans,
   readSeen,
+  rememberStep,
   sameAsLoaned,
   sectionOf,
   seenOf,
   standingOf,
+  takeLoanAnswer,
   tyingLoan,
   waitingCount,
   waitsForMe,
@@ -41,6 +45,8 @@ import {
 import type { SharedBook, Vault } from "../src/lib/model.ts";
 import { emptyVault, readVault, sharedBookCodec, writeVault } from "../src/lib/model.ts";
 import { addBook, deleteBook, modifyBook } from "../src/lib/mutations.ts";
+import type { Notice } from "../src/lib/notices.ts";
+import { aboutLoan, withNotice, withoutAbout } from "../src/lib/notices.ts";
 import { ServerError, VaultStore } from "../src/lib/sync.ts";
 import type { VaultApi } from "../src/lib/sync.ts";
 import { book, sample } from "./helpers.ts";
@@ -152,6 +158,17 @@ test("from every state each side can take exactly the steps the server allows", 
       assert.deepEqual(actionsFor(loan({ role, state })).slice().sort(), allowed[state][role], `${role} in ${state}`);
     }
   }
+  // The order is the order of the buttons, and the same as in the Android app (LoanRules.actions).
+  const inOrder: Partial<Record<LoanState, { lender: LoanAction[]; borrower: LoanAction[] }>> = {
+    asked: { lender: ["agree", "decline"], borrower: ["withdraw"] },
+    agreed: { lender: ["hand", "set_due", "cancel"], borrower: ["withdraw"] },
+    handed: { lender: ["undo_hand", "set_due", "cancel"], borrower: ["receive", "not_received"] },
+    on_loan: { lender: ["close", "set_due"], borrower: ["give_back"] },
+    given_back: { lender: ["take_back", "not_returned", "set_due"], borrower: ["undo_give_back"] },
+  };
+  for (const [state, sides] of Object.entries(inOrder)) {
+    for (const role of ["lender", "borrower"] as const) assert.deepEqual(actionsFor(loan({ role, state: state as LoanState })), sides[role], `${role} in ${state}, in order`);
+  }
   // Handing over takes the lender first and then the borrower, giving back the borrower first and then the lender.
   assert.equal(actionsFor(lent("agreed"))[0], "hand");
   assert.equal(actionsFor(borrowed("handed"))[0], "receive");
@@ -159,6 +176,17 @@ test("from every state each side can take exactly the steps the server allows", 
   assert.equal(actionsFor(lent("given_back"))[0], "take_back");
   assert.ok(!actionsFor(borrowed("agreed")).includes("receive"));
   assert.ok(!actionsFor(lent("on_loan")).includes("take_back"));
+});
+
+test("the borrower is told who confirms first only while that is the question", () => {
+  // The handover while the book is reserved, the return while the book is with them. Nothing in any other state.
+  const hints = LOAN_STATES.map((state) => [state, hintOf(borrowed(state))]).filter(([, hint]) => hint !== null);
+  assert.deepEqual(hints, [
+    ["agreed", "loan_handover_hint"],
+    ["on_loan", "loan_return_hint"],
+  ]);
+  // The lender takes the first step of the handover and the last of the return, and needs no hint for either.
+  for (const state of LOAN_STATES) assert.equal(hintOf(lent(state)), null, state);
 });
 
 test("a book is reserved from the yes on, and out once the borrower has it", () => {
@@ -228,13 +256,191 @@ test("news is what the other side did since this browser last looked", () => {
 test("what this browser saw is remembered as text and read back", () => {
   const seen = seenOf([lent("on_loan", { updatedAt: 100, dueOn: 20800 }), borrowed("asked", { id: L2, updatedAt: 50 })]);
   assert.deepEqual(seen, { [L1]: { at: 100, state: "on_loan", dueOn: 20800 }, [L2]: { at: 50, state: "asked", dueOn: null } });
-  assert.deepEqual(readSeen(JSON.stringify(seen)), seen);
+  // Kept with the server's time of the answer that said so.
+  assert.deepEqual(readSeen(JSON.stringify({ time: 120, loans: seen })), { time: 120, loans: seen });
   assert.equal(readSeen(null), null);
   assert.equal(readSeen("not json"), null);
   assert.equal(readSeen("[1,2]"), null);
   // What cannot be read of it is left out, the rest counts.
-  assert.deepEqual(readSeen(JSON.stringify({ [L1]: { at: 1, state: "asked" }, bad: { at: "x", state: "asked" }, worse: { at: 1, state: "lost" } })), { [L1]: { at: 1, state: "asked", dueOn: null } });
-  assert.deepEqual(readSeen("{}"), {});
+  assert.deepEqual(readSeen(JSON.stringify({ time: 5, loans: { [L1]: { at: 1, state: "asked" }, bad: { at: "x", state: "asked" }, worse: { at: 1, state: "lost" } } })), { time: 5, loans: { [L1]: { at: 1, state: "asked", dueOn: null } } });
+  assert.deepEqual(readSeen(JSON.stringify({ time: 5, loans: {} })), { time: 5, loans: {} });
+  // What was written before the time was kept with it: seen at the beginning of time, so every answer is newer.
+  assert.deepEqual(readSeen(JSON.stringify(seen)), { time: 0, loans: seen });
+  assert.deepEqual(readSeen("{}"), { time: 0, loans: {} });
+});
+
+// ---- each step is told once ----
+
+/** A browser as the page uses these rules: what it remembers, and the notices that stand on its page. */
+function browser() {
+  let memory: LoanMemory | null = null;
+  let shown: Notice[] = [];
+  let count = 0;
+  const said: string[] = [];
+  const apply = (notices: LoanNotices) => {
+    for (const id of notices.unsay) shown = withoutAbout(shown, aboutLoan(id));
+    for (const { loan, key } of notices.say) {
+      said.push(`${key} ${loan.id}`);
+      shown = withNotice(shown, { id: ++count, text: `${key} ${loan.id}`, about: aboutLoan(loan.id) });
+    }
+  };
+  return {
+    /** A look at the server, answered at [time]. */
+    look(loans: Loan[], time: number) {
+      const taken = takeLoanAnswer(memory, loans, time);
+      if (taken.late) return false;
+      memory = taken.memory;
+      apply(taken.notices);
+      return true;
+    },
+    /** A step of the reader's own, as the server answers it. */
+    step(loan: Loan, gone = false) {
+      shown = withoutAbout(shown, aboutLoan(loan.id));
+      memory = rememberStep(memory, loan, gone);
+    },
+    /** Every sentence that was ever put on the page, in order. */
+    said,
+    /** What stands on the page now. */
+    get page() {
+      return shown.map((notice) => notice.text);
+    },
+    get memory() {
+      return memory;
+    },
+    /** Another window of the same browser: it shares what is remembered and has a page of its own. */
+    share(other: { memory: LoanMemory | null }) {
+      memory = other.memory;
+    },
+  };
+}
+
+test("a step of the other side is told when it is first seen, and at no later look", () => {
+  const me = browser();
+  const asked = borrowed("asked", { updatedAt: 100, byMe: true });
+  // The first look after signing in tells no news, whatever it finds.
+  me.look([borrowed("handed", { updatedAt: 90 })], 95);
+  assert.deepEqual(me.said, []);
+  me.look([asked], 110);
+  const agreed = borrowed("agreed", { updatedAt: 200 });
+  me.look([agreed], 210);
+  assert.deepEqual(me.said, [`notify_loan_agreed ${L1}`]);
+  // The look every minute, the look when the window comes to the front, the look after a step somewhere else: nothing new.
+  for (const time of [220, 230, 230, 300]) me.look([agreed], time);
+  assert.deepEqual(me.said, [`notify_loan_agreed ${L1}`]);
+  assert.deepEqual(me.page, [`notify_loan_agreed ${L1}`]);
+});
+
+test("a notice does not outlive the reader's answer to it, and a second handover is told once", () => {
+  // The case of the picture with two notices: handed over, "I did not get it", handed over again, "I have it".
+  const me = browser();
+  me.look([borrowed("agreed", { updatedAt: 100 })], 110);
+  me.look([borrowed("handed", { updatedAt: 200 })], 210);
+  assert.deepEqual(me.page, [`notify_loan_handed ${L1}`]);
+  // She did not get it, and says so: what the page said is answered.
+  me.step(borrowed("agreed", { updatedAt: 300, byMe: true }));
+  assert.deepEqual(me.page, []);
+  me.look([borrowed("agreed", { updatedAt: 300, byMe: true })], 310);
+  assert.deepEqual(me.page, []);
+  // Handed over again: news again, and one notice, not two.
+  me.look([borrowed("handed", { updatedAt: 400 })], 410);
+  assert.deepEqual(me.page, [`notify_loan_handed ${L1}`]);
+  // "I have it": nothing is left to say, on this page and after the look that follows the step.
+  me.step(borrowed("on_loan", { updatedAt: 500, byMe: true }));
+  me.look([borrowed("on_loan", { updatedAt: 500, byMe: true })], 510);
+  assert.deepEqual(me.page, []);
+  assert.deepEqual(me.said, [`notify_loan_handed ${L1}`, `notify_loan_handed ${L1}`]);
+});
+
+test("the latest step of a loan takes the place of the one before, and a tap taken back takes the notice away", () => {
+  const me = browser();
+  const other = lent("asked", { id: L2, updatedAt: 50 });
+  me.look([borrowed("agreed", { updatedAt: 100, dueOn: 20800 })], 110);
+  me.look([borrowed("handed", { updatedAt: 200, dueOn: 20800 }), other], 210);
+  assert.deepEqual(me.page, [`notify_loan_handed ${L1}`, `notify_loan_asked ${L2}`]);
+  // Another day for the same loan: one notice about it, the newer one. The notice about the other loan stays.
+  me.look([borrowed("handed", { updatedAt: 300, dueOn: 20830 }), other], 310);
+  assert.deepEqual(me.page, [`notify_loan_asked ${L2}`, `notify_loan_due_changed ${L1}`]);
+  // "Handed over" taken back has no words of its own, and what was said about the loan is no longer so.
+  me.look([borrowed("agreed", { updatedAt: 400, dueOn: 20830 }), other], 410);
+  assert.deepEqual(me.page, [`notify_loan_asked ${L2}`]);
+  // A step the reader took on another device, and a loan that is gone, take their notices away as well.
+  me.look([borrowed("agreed", { updatedAt: 400, dueOn: 20830 }), lent("agreed", { id: L2, updatedAt: 500, byMe: true })], 510);
+  assert.deepEqual(me.page, []);
+  me.look([borrowed("handed", { updatedAt: 600, dueOn: 20830 })], 610);
+  assert.deepEqual(me.page, [`notify_loan_handed ${L1}`]);
+  me.look([], 710);
+  assert.deepEqual(me.page, []);
+});
+
+test("an answer that comes in late changes nothing, so old news is not new again", () => {
+  // Two windows of one browser. The second asks first and is answered last.
+  const first = browser();
+  const second = browser();
+  const before = [borrowed("agreed", { updatedAt: 100, dueOn: 20800 })];
+  const after = [borrowed("agreed", { updatedAt: 200, dueOn: 20830 })];
+  first.look(before, 110);
+  second.share(first);
+  // The first window sees the new day and tells of it.
+  assert.equal(first.look(after, 210), true);
+  assert.deepEqual(first.said, [`notify_loan_due_changed ${L1}`]);
+  // The second window's answer is from before that. It is not taken: nothing said, nothing remembered.
+  second.share(first);
+  assert.equal(second.look(before, 150), false);
+  assert.deepEqual(second.said, []);
+  assert.deepEqual(second.memory, first.memory);
+  // So the next look of either window has nothing to announce.
+  first.share(second);
+  first.look(after, 310);
+  second.share(first);
+  second.look(after, 320);
+  assert.deepEqual(first.said, [`notify_loan_due_changed ${L1}`]);
+  assert.deepEqual(second.said, []);
+  // The same in one window, when two of its looks cross.
+  const alone = browser();
+  alone.look(before, 110);
+  alone.look(after, 210);
+  assert.equal(alone.look(before, 150), false);
+  alone.look(after, 310);
+  assert.deepEqual(alone.said, [`notify_loan_due_changed ${L1}`]);
+  // A server that does not say when it answered is taken at its word, as before.
+  assert.equal(alone.look(after, 0), true);
+  assert.deepEqual(alone.said, [`notify_loan_due_changed ${L1}`]);
+});
+
+test("the reader's own step is an answer about one loan, and leaves what is remembered of the others", () => {
+  // The second window saw a new question. The first window, which has not, takes a step in another loan.
+  const first = browser();
+  const second = browser();
+  const mine = borrowed("handed", { updatedAt: 100 });
+  first.look([mine], 110);
+  second.share(first);
+  const question = lent("asked", { id: L2, updatedAt: 200 });
+  second.look([mine, question], 210);
+  assert.deepEqual(second.said, [`notify_loan_asked ${L2}`]);
+  first.share(second);
+  first.step(borrowed("on_loan", { updatedAt: 300, byMe: true }));
+  // What the second window told stays told: the first window's next look does not announce it again.
+  first.look([borrowed("on_loan", { updatedAt: 300, byMe: true }), question], 310);
+  assert.deepEqual(first.said, []);
+  assert.deepEqual(first.memory, { time: 310, loans: { [L1]: { at: 300, state: "on_loan", dueOn: null }, [L2]: { at: 200, state: "asked", dueOn: null } } });
+  // The step moves the time on: a look that asked before it is late.
+  assert.equal(rememberStep({ time: 110, loans: {} }, borrowed("on_loan", { updatedAt: 300, byMe: true }), false)?.time, 300);
+  assert.equal(takeLoanAnswer({ time: 300, loans: {} }, [mine], 250).late, true);
+  // A loan that was put away is forgotten, and a browser that remembers nothing stays that way until its first look.
+  assert.deepEqual(rememberStep({ time: 400, loans: { [L1]: { at: 300, state: "returned", dueOn: null } } }, borrowed("returned", { updatedAt: 300 }), true), { time: 400, loans: {} });
+  assert.equal(rememberStep(null, mine, false), null);
+});
+
+test("what a look gives the page to say: one sentence or none for each loan that changed", () => {
+  const seen = seenOf([borrowed("agreed", { updatedAt: 100 }), lent("asked", { id: L2, updatedAt: 50 })]);
+  // Nothing changed: nothing to say, nothing to take back.
+  assert.deepEqual(loanNotices([borrowed("agreed", { updatedAt: 100 }), lent("asked", { id: L2, updatedAt: 50 })], seen), { say: [], unsay: [] });
+  // The other side's step with words, the reader's own step, and a loan that is gone.
+  const handed = borrowed("handed", { updatedAt: 200 });
+  assert.deepEqual(loanNotices([handed], seen), { say: [{ loan: handed, key: "notify_loan_handed" }], unsay: [L2] });
+  assert.deepEqual(loanNotices([borrowed("withdrawn", { updatedAt: 200, byMe: true }), lent("asked", { id: L2, updatedAt: 50 })], seen), { say: [], unsay: [L1] });
+  // Never looked before: nothing at all.
+  assert.deepEqual(loanNotices([handed], null), { say: [], unsay: [] });
 });
 
 test("each piece of news has its sentence, by the rules the app tells its notifications by", () => {
