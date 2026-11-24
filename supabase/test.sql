@@ -43,7 +43,7 @@ begin
     -- Without signing in there is the daily check and nothing else.
     perform pg_temp.sign_in(null);
     r := public.shelfmark_ping();
-    assert (r ->> 'ok')::boolean and (r ->> 'schema')::int = 3, 'ping';
+    assert (r ->> 'ok')::boolean and (r ->> 'schema')::int = 4, 'ping';
     failed := false;
     begin
         perform public.shelfmark_hello('Nobody');
@@ -156,6 +156,8 @@ begin
     perform pg_temp.sign_in(anna);
     r := public.shelfmark_sync();
     assert r -> 'friends' -> 0 ->> 'id' = ben::text and jsonb_array_length(r -> 'libraries') = 1, 'anna sees ben';
+    -- Ben typed Anna's code: on her side he is somebody who joined, on his she is not.
+    assert (r -> 'friends' -> 0 ->> 'joined')::boolean and (r -> 'friends' -> 0 ->> 'since')::bigint > 0, 'anna is told that ben came by her code';
     perform pg_sleep(0.01);
     perform public.shelfmark_publish('{"type":"library","library":{"ownerName":"Anna","books":[]}}');
     perform pg_temp.sign_in(ben);
@@ -403,6 +405,42 @@ begin
     end;
     assert failed, 'no question without a friendship';
 
+    -- Earlier versions of a library. Cleo saves three times within a minute: the version
+    -- before the first change is kept, the ones in between are not (one an hour is enough).
+    perform pg_temp.sign_in(cleo);
+    assert jsonb_array_length(public.shelfmark_vault_history() -> 'versions') = 0, 'no history without a library';
+    perform public.shelfmark_vault_push('{"exportedAt":1,"books":[{"id":1,"title":"Emma"},{"id":2,"title":"Persuasion"}]}', 0);
+    perform public.shelfmark_vault_push('{"exportedAt":2,"books":[{"id":1,"title":"Emma"}]}', 1);
+    perform public.shelfmark_vault_push('{"exportedAt":3,"books":[]}', 2);
+    r := public.shelfmark_vault_history();
+    assert jsonb_array_length(r -> 'versions') = 1, 'one version an hour';
+    assert (r -> 'versions' -> 0 ->> 'revision')::bigint = 1 and (r -> 'versions' -> 0 ->> 'books')::int = 2, 'the version from before the changes, with its two books';
+    assert not (r -> 'versions' -> 0 ? 'payload'), 'the list does not hand out the documents';
+    -- She brings it back. It is a new revision, and the library it replaced is kept in turn.
+    r := public.shelfmark_vault_restore(1);
+    assert (r ->> 'revision')::bigint = 4, 'bringing back is a save like any other';
+    r := public.shelfmark_vault_pull(0);
+    assert (r ->> 'revision')::bigint = 4 and jsonb_array_length(r -> 'payload' -> 'books') = 2, 'the two books are back';
+    r := public.shelfmark_vault_history();
+    assert jsonb_array_length(r -> 'versions') = 2 and (r -> 'versions' -> 0 ->> 'revision')::bigint = 3 and (r -> 'versions' -> 0 ->> 'books')::int = 0, 'and the empty one can be had back too';
+    failed := false;
+    begin
+        perform public.shelfmark_vault_restore(2);
+    exception when others then
+        failed := sqlerrm = 'shelfmark:unknown_version';
+    end;
+    assert failed, 'a version that was not kept';
+    -- Nobody else gets at them.
+    perform pg_temp.sign_in(ben);
+    assert jsonb_array_length(public.shelfmark_vault_history() -> 'versions') = 0, 'somebody else sees none of it';
+    failed := false;
+    begin
+        perform public.shelfmark_vault_restore(1);
+    exception when others then
+        failed := sqlerrm = 'shelfmark:unknown_version';
+    end;
+    assert failed, 'and cannot bring back what is not theirs';
+
     -- Deleting the account removes every trace, the sign-in included.
     perform pg_temp.sign_in(cleo);
     perform public.shelfmark_add_friend(anna_code);
@@ -429,7 +467,33 @@ do $$
 begin
     assert (select count(*) from shelfmark.profiles) = 0, 'profiles left';
     assert (select count(*) from shelfmark.vaults) = 0, 'vaults left';
+    assert (select count(*) from shelfmark.vault_history) = 0, 'earlier versions left';
     assert (select count(*) from shelfmark.loans) = 0, 'loans left';
     assert (select count(*) from auth.users where email like '%@example.org') = 0, 'sign-ins left';
+end
+$$;
+
+-- How many earlier versions are kept: the five newest, and of the older ones the last of
+-- each of the five most recent days. Played with made-up days, as the database itself.
+do $$
+declare
+    someone constant uuid := '44444444-4444-4444-8444-444444444444';
+    kept bigint[];
+begin
+    insert into auth.users (id, email) values (someone, 'dora@example.org');
+    insert into shelfmark.vaults (owner_id, payload, revision, updated_at) values (someone, '{"books":[]}', 100, now());
+    -- Twelve days back, three versions on each day, the latest at eight in the evening.
+    insert into shelfmark.vault_history (owner_id, revision, payload, saved_at)
+    select someone, (12 - d) * 3 + v, '{"books":[]}', date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - make_interval(days => d) + make_interval(hours => 8 + 6 * (v - 1))
+    from generate_series(1, 12) d, generate_series(1, 3) v;
+    perform shelfmark.keep_version(someone, true);
+    select array_agg(revision order by revision desc) into kept from shelfmark.vault_history where owner_id = someone;
+    -- The five newest: the library of today (100) and the three of yesterday (36, 35, 34), and the
+    -- latest of the day before (33). Then the last one of each of the five most recent days that
+    -- have any, which are today, yesterday, and the three days before that: 100, 36, 33, 30, 27.
+    assert kept = array[100, 36, 35, 34, 33, 30, 27]::bigint[], format('kept %s', kept);
+    delete from auth.users where id = someone;
+    assert (select count(*) from shelfmark.vault_history where owner_id = someone) = 0, 'earlier versions go with the account';
+    raise notice 'earlier versions are kept as promised';
 end
 $$;

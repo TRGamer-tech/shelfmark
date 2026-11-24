@@ -18,7 +18,8 @@
 --   * Per account the server keeps: the whole library, so that phone and website show the
 --     same shelf (the "vault"), the part of it the person chose to share with friends,
 --     and the loans between friends: one record per loan that both sides read, so that
---     lender and borrower always see the same state of it.
+--     lender and borrower always see the same state of it. And up to ten earlier versions
+--     of the library, which only the owner can list and bring back.
 
 create schema if not exists shelfmark;
 
@@ -73,6 +74,11 @@ create table if not exists shelfmark.friendships (
     created_at timestamptz not null default now(),
     primary key (user_id, friend_id)
 );
+-- On the row of the one whose code was typed in: the friend came by that code. That is
+-- what every device of the code's owner is told as news, and what the one who typed it
+-- already knows.
+alter table shelfmark.friendships add column if not exists joined boolean not null default false;
+
 
 -- The snapshot of a library that its owner shares with friends.
 create table if not exists shelfmark.libraries (
@@ -136,6 +142,20 @@ create table if not exists shelfmark.vaults (
     updated_at timestamptz not null default now()
 );
 
+-- Earlier versions of a library, as a net under everything that could ever go wrong with
+-- keeping one library in step on several devices. A save puts the version it replaces
+-- here, unless one was put here within the last hour. Kept are the five newest, and
+-- beyond those the last one of each of the five most recent days that have any: ten at
+-- most, reaching back hours and days. Only the owner can list them and bring one back.
+create table if not exists shelfmark.vault_history (
+    owner_id uuid not null references auth.users (id) on delete cascade,
+    revision bigint not null,
+    payload jsonb not null,
+    -- When this version was saved, not when it was replaced.
+    saved_at timestamptz not null,
+    primary key (owner_id, revision)
+);
+
 -- A single row that the daily check of the apps writes to. Free projects are paused
 -- when the database sees no activity for a week, and this is that activity.
 create table if not exists shelfmark.heartbeat (
@@ -151,6 +171,7 @@ alter table shelfmark.friendships enable row level security;
 alter table shelfmark.libraries enable row level security;
 alter table shelfmark.loans enable row level security;
 alter table shelfmark.vaults enable row level security;
+alter table shelfmark.vault_history enable row level security;
 alter table shelfmark.heartbeat enable row level security;
 
 revoke all on schema shelfmark from public;
@@ -245,7 +266,7 @@ begin
     update shelfmark.heartbeat set pinged_at = now(), pings = pings + 1 where id = 1;
     -- Housekeeping on the way: loans that are over and that both sides have put away.
     delete from shelfmark.loans where hidden_by_lender and hidden_by_borrower;
-    return jsonb_build_object('ok', true, 'schema', 3, 'time', shelfmark.millis(now()));
+    return jsonb_build_object('ok', true, 'schema', 4, 'time', shelfmark.millis(now()));
 end
 $$;
 
@@ -305,7 +326,7 @@ begin
     if (select count(*) from shelfmark.friendships where user_id = me) >= 500 then
         raise exception 'shelfmark:full';
     end if;
-    insert into shelfmark.friendships (user_id, friend_id) values (me, friend.id), (friend.id, me)
+    insert into shelfmark.friendships (user_id, friend_id, joined) values (me, friend.id, false), (friend.id, me, true)
     on conflict do nothing;
     return jsonb_build_object('id', friend.id, 'name', friend.name);
 end
@@ -597,7 +618,7 @@ begin
         'name', mine.name,
         'time', shelfmark.millis(now()),
         'friends', coalesce((
-            select jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name) order by p.name, p.id)
+            select jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'joined', f.joined, 'since', shelfmark.millis(f.created_at)) order by p.name, p.id)
             from shelfmark.friendships f
             join shelfmark.profiles p on p.id = f.friend_id
             where f.user_id = me
@@ -616,6 +637,44 @@ begin
         ), '[]'::jsonb),
         'messages', '[]'::jsonb
     );
+end
+$$;
+
+-- Puts the library as it is now among the earlier versions, before something replaces it.
+-- Not more often than once an hour unless p_always, and then tidies up: the five newest
+-- stay, and of the older ones the last of each of the five most recent days.
+create or replace function shelfmark.keep_version(p_owner uuid, p_always boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+    if not p_always and exists (
+        select 1 from shelfmark.vault_history
+        where owner_id = p_owner and saved_at > now() - interval '1 hour'
+    ) then
+        return;
+    end if;
+    insert into shelfmark.vault_history (owner_id, revision, payload, saved_at)
+    select owner_id, revision, payload, updated_at from shelfmark.vaults where owner_id = p_owner
+    on conflict (owner_id, revision) do nothing;
+    delete from shelfmark.vault_history h
+    where h.owner_id = p_owner
+      and h.revision not in (
+          select revision from shelfmark.vault_history
+          where owner_id = p_owner order by saved_at desc, revision desc limit 5
+      )
+      and h.revision not in (
+          select distinct on ((saved_at at time zone 'UTC')::date) revision
+          from shelfmark.vault_history
+          where owner_id = p_owner
+            and (saved_at at time zone 'UTC')::date in (
+                select distinct (saved_at at time zone 'UTC')::date from shelfmark.vault_history
+                where owner_id = p_owner order by 1 desc limit 5
+            )
+          order by (saved_at at time zone 'UTC')::date, saved_at desc, revision desc
+      );
 end
 $$;
 
@@ -681,7 +740,60 @@ begin
     if p_expected is not null and p_expected <> current_revision then
         raise exception 'shelfmark:conflict';
     end if;
+    perform shelfmark.keep_version(me, false);
     update shelfmark.vaults set payload = p_payload, revision = current_revision + 1, updated_at = stamp where owner_id = me;
+    return jsonb_build_object('revision', current_revision + 1, 'at', shelfmark.millis(stamp));
+end
+$$;
+
+-- The earlier versions of the caller's library, the newest first: which revision, when it
+-- was saved and how many books it holds. The documents themselves are not handed out here.
+create or replace function public.shelfmark_vault_history()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+    me uuid := shelfmark.me();
+begin
+    return jsonb_build_object('versions', coalesce((
+        select jsonb_agg(jsonb_build_object(
+            'revision', h.revision,
+            'at', shelfmark.millis(h.saved_at),
+            'books', case when jsonb_typeof(h.payload -> 'books') = 'array' then jsonb_array_length(h.payload -> 'books') else 0 end
+        ) order by h.revision desc)
+        from shelfmark.vault_history h
+        where h.owner_id = me
+    ), '[]'::jsonb));
+end
+$$;
+
+-- Makes an earlier version the library again. It becomes a new revision, so every device
+-- takes it over like any other change, and the version it replaces is kept in turn:
+-- bringing something back can itself be taken back.
+create or replace function public.shelfmark_vault_restore(p_revision bigint)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+    me uuid := shelfmark.me();
+    earlier jsonb;
+    current_revision bigint;
+    stamp timestamptz := now();
+begin
+    select revision into current_revision from shelfmark.vaults where owner_id = me for update;
+    if not found then
+        raise exception 'shelfmark:unknown_version';
+    end if;
+    select payload into earlier from shelfmark.vault_history where owner_id = me and revision = p_revision;
+    if not found then
+        raise exception 'shelfmark:unknown_version';
+    end if;
+    perform shelfmark.keep_version(me, true);
+    update shelfmark.vaults set payload = earlier, revision = current_revision + 1, updated_at = stamp where owner_id = me;
     return jsonb_build_object('revision', current_revision + 1, 'at', shelfmark.millis(stamp));
 end
 $$;
@@ -701,6 +813,7 @@ begin
         raise exception 'shelfmark:signed_out';
     end if;
     delete from shelfmark.vaults where owner_id = caller;
+    delete from shelfmark.vault_history where owner_id = caller;
     delete from shelfmark.profiles where id = caller;
     -- The sign-in itself. Should the project not allow this function to touch it, the
     -- data is gone all the same, and the empty sign-in can be removed in the dashboard.

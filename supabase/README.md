@@ -31,6 +31,8 @@ caller only. A refusal is HTTP 400 with `{"code": "P0001", "message": "shelfmark
 | `shelfmark_send` | | | always `outdated` |
 | `shelfmark_vault_pull` | `p_known?` | `{revision, at, payload}` | |
 | `shelfmark_vault_push` | `p_payload`, `p_expected?` | `{revision, at}` | `conflict`, `bad_request`, `too_large` |
+| `shelfmark_vault_history` | | `{versions: [{revision, at, books}]}` | |
+| `shelfmark_vault_restore` | `p_revision` | `{revision, at}` | `unknown_version` |
 | `shelfmark_delete_account` | none | `{ok, login_kept}` | |
 
 Every one of them refuses with `signed_out` when nobody is signed in (or with HTTP 401
@@ -46,6 +48,9 @@ is accepted in any case and with any punctuation.
 - `libraries`: `[{owner, at, payload}]`, the shared libraries of friends that are newer
   than the caller has. `p_known` maps a friend's id to the `at` of the copy the caller
   holds. A caller that keeps nothing passes `{}` and gets all of them.
+- `friends`: `[{id, name, joined, since}]`. `joined` is true on the side of the one whose
+  friend code was typed in: this friend came by my code. `since` is when, in milliseconds.
+  See [Friends who join](#friends-who-join).
 - `loans`: every loan the caller is part of and has not put away, the newest question
   first. See [Loans](#loans).
 - `messages`: always `[]`. A leftover of the mailbox that borrow requests used to travel
@@ -100,6 +105,16 @@ keep it as it is and write it back unchanged does that (the website does). A cli
 would have to turn it into something else, or drop the entry, stops instead, as for a
 document it cannot read (the Android app does, its words are fixed types).
 
+**Earlier versions.** When a save replaces a library, the server keeps the version it
+replaced, unless it kept one within the last hour. It holds on to the five newest, and
+beyond those to the last one of each of the five most recent days that have any: ten at
+most. `shelfmark_vault_history()` lists them (which revision, when it was saved, how many
+books, never the documents themselves). `shelfmark_vault_restore(p_revision)` makes one
+the library again, as a new revision, and keeps the one it replaces in turn. Every device
+then takes the restored library over like any other change from elsewhere. A server from
+before this has neither function, and a client says so instead of offering the list.
+`shelfmark_ping` answers `schema: 4` on a server that has them.
+
 ## Cover photos
 
 A cover that was photographed is uploaded, so that it has an address every device and
@@ -141,6 +156,23 @@ differ calls `shelfmark_hello(p_name)` with the name from the vault.
 A book is `available` to friends when it is owned, may be lent (`lendable`), is not lent
 by hand (`lentTo` is empty), and no loan of it is `agreed`, `handed`, `on_loan` or
 `given_back`. A client publishes again when a loan changes that.
+
+## Friends who join
+
+Whoever types in a friend code is connected at once, and the owner of the code is not
+asked. So the owner is told: a friend in `friends` with `joined: true` whom this device has
+not seen before is news ("Anna is now your friend", with the hint that she can be removed).
+The one who typed the code is not told, they did it themselves. As with loans, the first
+look after signing in tells no news: everybody who is there then is taken as seen.
+
+## Notifications
+
+There is no push service. The Android app looks for news every minute while it is open
+and about every quarter of an hour in the background (Android decides when exactly), and
+shows a notification for loan news, for a book that is due and for a friend who joined.
+The website looks every minute while a tab is open, and, if the reader allowed it, shows
+the same news as a notification of the browser while the tab is not the one in front.
+With no tab open the website tells nothing until it is opened again.
 
 ## Loans
 
