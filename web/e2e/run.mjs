@@ -64,9 +64,89 @@ let browser;
 let gateway;
 const problems = [];
 
-/** A browser of its own: own storage, own sign-in. Everything outside this machine is kept out. */
-async function newContext({ viewport = DESKTOP, locale = "en-GB", colorScheme = "light", reducedMotion = "no-preference" } = {}) {
+/**
+ * Stands in for the notifications of the browser, in every page of a test browser. A
+ * test browser shows none and says "denied" whatever it was told, so what the website
+ * would have the browser show is noted in window.__notify instead:
+ *
+ * - `told`: every notification that was put up, with its title, body, tag, whether it was
+ *   closed, and a way to click it. Without the reader's yes nothing is put up, as in a browser.
+ * - `asked`: how often the browser was asked for the permission.
+ * - `answer`: what the reader will say when asked. A test sets it before it presses the button.
+ *
+ * [permission] is what the reader said so far: "default" (never asked), "granted",
+ * "denied", or "none" for a browser that has no notifications at all. Like a browser it
+ * remembers the answer for the site, here in an entry of its own in the storage.
+ * The page can also be taken out of sight and back (window.__setHidden), which no test
+ * browser does by itself.
+ */
+function standInForTheBrowser(permission) {
+  const KEY = "e2e.notifications";
+  const said = () => {
+    try {
+      return window.localStorage.getItem(KEY) ?? permission;
+    } catch {
+      return permission;
+    }
+  };
+  const told = [];
+  window.__notify = { told, asked: 0, answer: "default", open: () => told.filter((entry) => !entry.closed) };
+  if (permission === "none") {
+    delete window.Notification;
+    Object.defineProperty(window, "Notification", { value: undefined, configurable: true, writable: true });
+  } else {
+    class Stand {
+      static get permission() {
+        return said();
+      }
+      static requestPermission() {
+        window.__notify.asked++;
+        const answer = window.__notify.answer;
+        try {
+          if (answer !== "default") window.localStorage.setItem(KEY, answer);
+        } catch {
+          // Not remembered then.
+        }
+        return Promise.resolve(answer);
+      }
+      constructor(title, options = {}) {
+        this.onclick = null;
+        this.entry = null;
+        if (said() !== "granted") return;
+        this.entry = { title, body: options.body ?? "", tag: options.tag ?? "", lang: options.lang ?? "", closed: false, click: () => this.onclick?.({}) };
+        // The browser keeps one notification per tag: a new one takes the place of the old one.
+        for (const other of told) if (other.tag === this.entry.tag) other.closed = true;
+        told.push(this.entry);
+      }
+      close() {
+        if (this.entry) this.entry.closed = true;
+      }
+    }
+    Object.defineProperty(window, "Notification", { value: Stand, configurable: true, writable: true });
+  }
+  let hidden = false;
+  Object.defineProperty(document, "visibilityState", { get: () => (hidden ? "hidden" : "visible"), configurable: true });
+  Object.defineProperty(document, "hidden", { get: () => hidden, configurable: true });
+  window.__setHidden = (next) => {
+    hidden = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+}
+
+/** Takes a page out of sight, as when the reader goes to another tab, or brings it back to the front. */
+const setHidden = (page, hidden) => page.evaluate((next) => window.__setHidden(next), hidden);
+
+/** What the browser was asked to show: every notification, or only those still up. */
+const notified = (page, onlyOpen = false) =>
+  page.evaluate((open) => window.__notify.told.filter((entry) => !open || !entry.closed).map(({ title, body, tag, lang }) => ({ title, body, tag, lang })), onlyOpen);
+
+/**
+ * A browser of its own: own storage, own sign-in. Everything outside this machine is
+ * kept out. [notifications] is what the reader said about notifications so far.
+ */
+async function newContext({ viewport = DESKTOP, locale = "en-GB", colorScheme = "light", reducedMotion = "no-preference", notifications = "default" } = {}) {
   const context = await browser.newContext({ viewport, locale, colorScheme, reducedMotion, deviceScaleFactor: 2, timezoneId: "UTC", acceptDownloads: true });
+  await context.addInitScript(standInForTheBrowser, notifications);
   await context.route(
     (url) => url.hostname !== "127.0.0.1" && url.hostname !== "localhost",
     (route) => {
@@ -2275,6 +2355,465 @@ async function main() {
   );
 
   await test(
+    "a friend who comes by my code is announced once, with a way to the friends page, and whoever I add myself is not",
+    async () => {
+      const uma = account("Uma");
+      const context = await newContext();
+      const up = await context.newPage();
+      await signUp(up, uma);
+      await up.getByTestId("empty-library").waitFor();
+      uma.session = await signIn(uma.email, uma.password);
+      const code = (await rpc(uma.session.token, "shelfmark_hello")).code;
+      const notices = up.locator(".toast");
+      const friendsOf = async (who) => (await rpc(who.session.token, "shelfmark_sync", { p_known: {} })).friends;
+      const cardOf = (name, on = up) => on.getByTestId("friend-card").filter({ hasText: name });
+      /** Looks at the server until the page shows what happened there. One look may join a look that was on its way before the news. */
+      const shows = (check, what, on = up) =>
+        until(async () => {
+          await lookNow(on);
+          return check();
+        }, what);
+      const settle = (on = up) => on.waitForTimeout(700);
+      const joins = async (name) => {
+        const who = account(name);
+        await signUpByApi(who);
+        await rpc(who.session.token, "shelfmark_add_friend", { p_code: code });
+        return who;
+      };
+
+      // Wim types Uma's code into his phone. Nobody asks Uma, so she is told. She is on her shelf when it happens.
+      const wim = await joins("Wim");
+      const news = notices.filter({ hasText: "Wim is now your friend" });
+      await shows(async () => (await news.count()) === 1, "Uma is told that Wim joined");
+      equal(await news.locator(".toast-detail").innerText(), "Somebody used your friend code. If you do not know them, remove them under Friends.", "what to make of it");
+      equal(await news.getAttribute("href"), "/friends", "where the notice leads");
+      deepAudit(await audit(up), "shelf with the notice about a friend who joined");
+      await up.waitForTimeout(300);
+      await shot(up, "friend-joined");
+      // However often and from wherever her browser looks, it is said once.
+      await up.evaluate(() => {
+        for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("focus"));
+      });
+      await settle();
+      equal(await notices.count(), 1, "times Wim is announced");
+      const second = await context.newPage();
+      await second.goto(`${WEB}/friends`);
+      await cardOf("Wim", second).waitFor();
+      await settle(second);
+      equal(await second.locator(".toast").count(), 0, "news in a second window about a friend the first one announced");
+      // The notice is the way to the friends page, and following it takes it away.
+      await news.click();
+      await up.getByTestId("friends-page").waitFor();
+      await cardOf("Wim").waitFor();
+      equal(await notices.count(), 0, "the notice after it was followed");
+      await lookNow(up);
+      await settle();
+      equal(await notices.count(), 0, "Wim, announced again by a later look");
+      await up.reload();
+      await cardOf("Wim").waitFor();
+      await settle();
+      equal(await notices.count(), 0, "Wim, announced again after a reload");
+      // The server says who came by whose code, for both sides, and since when.
+      equal((await friendsOf(uma)).map((f) => `${f.name} ${f.joined}`).join(), "Wim true", "Wim came by Uma's code");
+      equal((await friendsOf(wim)).map((f) => `${f.name} ${f.joined}`).join(), "Uma false", "Uma did not come by Wim's");
+      assert(Math.abs((await friendsOf(uma))[0].since - Date.now()) < 600_000, "since when they are friends");
+
+      // Whoever Uma adds herself is no news to her. Xena, whose code she types in, is the one who is told.
+      const xena = account("Xena");
+      await signUpByApi(xena);
+      await up.getByTestId("add-friend").click();
+      await up.getByTestId("friend-code-field").fill((await rpc(xena.session.token, "shelfmark_hello")).code);
+      await up.getByTestId("friend-code-add").click();
+      await cardOf("Xena").waitFor();
+      await notices.filter({ hasText: "You and Xena are friends now" }).waitFor();
+      await lookNow(up);
+      await settle();
+      equal(await notices.filter({ hasText: "is now your friend" }).count(), 0, "news about a friend Uma added herself");
+      equal((await friendsOf(xena)).map((f) => `${f.name} ${f.joined}`).join(), "Uma true", "Uma came by Xena's code");
+      // The second window did not see her type the code, and has nothing to announce either.
+      await shows(async () => (await cardOf("Xena", second).count()) === 1, "Xena in the second window", second);
+      await settle(second);
+      equal(await second.locator(".toast").count(), 0, "news in the second window about a friend Uma added in the first");
+
+      // Two looks that race. The second window asks before Yan comes and gets its answer after
+      // the first window announced him: nothing is taken from an answer that old.
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      let fetched;
+      const asked = new Promise((resolve) => (fetched = resolve));
+      await second.route("**/rest/v1/rpc/shelfmark_sync", async (route) => {
+        const response = await route.fetch();
+        fetched();
+        await held;
+        await route.fulfill({ response });
+      });
+      await lookNow(second);
+      await asked;
+      await joins("Yan");
+      const yan = notices.filter({ hasText: "Yan is now your friend" });
+      await shows(async () => (await yan.count()) === 1, "Uma is told that Yan joined");
+      // Seen, and put away by following it.
+      await yan.click();
+      await cardOf("Yan").waitFor();
+      equal(await notices.filter({ hasText: "is now your friend" }).count(), 0, "the notice about Yan after it was followed");
+      release();
+      await second.waitForTimeout(500);
+      await second.unroute("**/rest/v1/rpc/shelfmark_sync");
+      await lookNow(up);
+      await settle();
+      equal(await notices.filter({ hasText: "is now your friend" }).count(), 0, "Yan, announced again after an answer that came in late");
+      await shows(async () => (await cardOf("Yan", second).count()) === 1, "Yan in the second window", second);
+      await settle(second);
+      equal(await second.locator(".toast").count(), 0, "news in the second window about a friend the first one announced");
+      await second.close();
+
+      // A friend who is removed and comes back by the code is news again.
+      await cardOf("Wim").getByTestId("remove-friend").click();
+      await up.getByTestId("confirm").click();
+      await cardOf("Wim").waitFor({ state: "detached" });
+      await rpc(wim.session.token, "shelfmark_add_friend", { p_code: code });
+      await shows(async () => (await news.count()) === 1, "Wim, who came back, is announced");
+      await news.click();
+      await cardOf("Wim").waitFor();
+
+      // The first look after signing in tells no news: whoever is there then is taken as seen.
+      await up.goto(`${WEB}/settings`);
+      await up.getByTestId("sign-out").click();
+      await up.getByTestId("login-form").waitFor();
+      await joins("Vic");
+      await signInOnPage(up, uma);
+      await up.getByTestId("empty-library").waitFor();
+      await up.goto(`${WEB}/friends`);
+      await cardOf("Vic").waitFor();
+      await settle();
+      equal(await notices.count(), 0, "news on the first look after signing in");
+      // Whoever comes after that look is news.
+      await joins("Zora");
+      await shows(async () => (await notices.filter({ hasText: "Zora is now your friend" }).count()) === 1, "Zora, who came after the first look, is announced");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "the website asks for notifications only when its button is pressed: never at page load, and never a visitor",
+    async () => {
+      const asked = (page) => page.evaluate(() => window.__notify.asked);
+      const offers = async (page) => (await page.getByTestId("notify-card").count()) + (await page.getByTestId("notify-blocked").count());
+
+      // A visitor who is not signed in: nothing is offered and nothing is asked, on no page.
+      const visitor = await newContext();
+      const vp = await visitor.newPage();
+      for (const path of ["/", "/de", "/login", "/reset", "/confirmed", "/privacy", "/imprint", "/friends", "/friends/loans"]) {
+        await vp.goto(`${WEB}${path}`);
+        await vp.waitForTimeout(300);
+        equal(await offers(vp), 0, `an offer of notifications to a visitor on ${path}`);
+        equal(await asked(vp), 0, `questions to a visitor's browser on ${path}`);
+      }
+      equal((await notified(vp)).length, 0, "notifications for a visitor");
+      await visitor.close();
+
+      // Abel is signed in, and his browser was never asked.
+      const abel = account("Abel");
+      const context = await newContext();
+      const ap = await context.newPage();
+      await signUp(ap, abel);
+      await ap.getByTestId("empty-library").waitFor();
+      // Nothing about it where there is no news to speak of, and no question out of the blue anywhere.
+      for (const path of ["/", "/lists", "/stats", "/quotes", "/settings", "/add"]) {
+        await ap.goto(`${WEB}${path}`);
+        await ap.locator("main#content h1").first().waitFor();
+        equal(await offers(ap), 0, `an offer of notifications on ${path}`);
+        equal(await asked(ap), 0, `questions to the browser on ${path}`);
+      }
+      // The friends page has a card that says what it is for, and what it can and cannot do.
+      await ap.goto(`${WEB}/friends`);
+      const card = ap.getByTestId("notify-card");
+      await card.waitFor();
+      equal(await card.locator("h2").innerText(), "NOTIFICATIONS", "the title of the card, as cards write their titles");
+      equal(
+        await card.locator("p").innerText(),
+        "Your browser can show a notification when a friend asks for a book, answers, joins by your code, or when a book is due. It does so while Shelfmark is open in a tab that is not in front. With no tab open nothing can be told: there is no push service.",
+        "what the card says",
+      );
+      equal((await card.locator("button").allInnerTexts()).join(" | "), "Allow notifications | Not now", "the buttons of the card");
+      equal(await asked(ap), 0, "questions to the browser before any click");
+      deepAudit(await audit(ap), "friends page with the card about notifications");
+      await ap.waitForTimeout(300);
+      await shot(ap, "notify-card", { fullPage: true });
+      // The reader closes the browser's question without an answer: the card stays, and nothing is remembered as a no.
+      await ap.getByTestId("notify-allow").click();
+      await until(async () => (await asked(ap)) === 1, "the browser is asked once the button is pressed");
+      await ap.waitForTimeout(300);
+      equal(await offers(ap), 1, "the card after a question that was closed without an answer");
+      equal(await ap.getByTestId("notify-blocked").count(), 0, "a line about a no that was never said");
+      // The loans page has the same card.
+      await ap.getByTestId("open-loans").click();
+      await ap.getByTestId("loans-page").waitFor();
+      await ap.getByTestId("notify-card").waitFor();
+      // "Not now" puts it away, on both pages, for this browser.
+      await ap.getByTestId("notify-later").click();
+      equal(await offers(ap), 0, "the card on the loans page after Not now");
+      await ap.goto(`${WEB}/friends`);
+      await ap.getByTestId("friends-page").waitFor();
+      await ap.getByTestId("friend-code").waitFor();
+      equal(await offers(ap), 0, "the card on the friends page after Not now");
+      equal(await ap.evaluate(() => localStorage.getItem("shelfmark.notify")), "later", "what the browser keeps about it");
+      equal(await asked(ap), 0, "questions to the browser on a page that was put away");
+      // That is about the browser, not the account: it stays when Abel signs out.
+      await ap.goto(`${WEB}/settings`);
+      await ap.getByTestId("sign-out").click();
+      await ap.getByTestId("login-form").waitFor();
+      equal(await ap.evaluate(() => localStorage.getItem("shelfmark.notify")), "later", "the card stays put away after signing out");
+      await context.close();
+
+      // In another browser, in German, Abel presses the button and says no when the browser asks.
+      const refusing = await newContext({ locale: "de-CH", viewport: PHONE });
+      const rp = await refusing.newPage();
+      await signInOnPage(rp, abel);
+      await rp.getByTestId("empty-library").waitFor();
+      await rp.goto(`${WEB}/friends`);
+      const karte = rp.getByTestId("notify-card");
+      await karte.waitFor();
+      equal(
+        await karte.locator("p").innerText(),
+        "Dein Browser kann eine Mitteilung zeigen, wenn jemand nach einem Buch fragt, antwortet, über deinen Code dazukommt oder wenn ein Buch fällig ist. Das tut er, solange Shelfmark in einem Tab offen ist, der nicht im Vordergrund ist. Ist kein Tab offen, kann nichts gemeldet werden: Einen Push-Dienst gibt es nicht.",
+        "what the card says, in German",
+      );
+      equal((await karte.locator("button").allInnerTexts()).join(" | "), "Mitteilungen erlauben | Nicht jetzt", "the buttons, in German");
+      deepAudit(await audit(rp), "friends page with the card, in German on a phone");
+      await rp.evaluate(() => {
+        window.__notify.answer = "denied";
+      });
+      await rp.getByTestId("notify-allow").click();
+      const line = rp.getByTestId("notify-blocked");
+      await line.waitFor();
+      equal(await asked(rp), 1, "questions to the browser after one click");
+      equal(await karte.count(), 0, "the card after a no");
+      equal(
+        await line.locator("p").innerText(),
+        "Mitteilungen sind aus. Dein Browser soll sie für diese Website nicht zeigen. Ändern kannst du das im Browser, in den Einstellungen für diese Website: meist über das Symbol neben der Adresse.",
+        "the line that says where to change a no",
+      );
+      deepAudit(await audit(rp), "friends page with the line about a no");
+      await rp.waitForTimeout(300);
+      await shot(rp, "notify-blocked", { fullPage: true });
+      // The no is the browser's to remember. The line is there again after a reload, and nothing is asked a second time.
+      await rp.reload();
+      await line.waitFor();
+      equal(await asked(rp), 0, "questions to the browser after a no");
+      // Nothing is shown by a browser that said no, in front or not.
+      await setHidden(rp, true);
+      await lookNow(rp);
+      await rp.waitForTimeout(500);
+      equal((await notified(rp)).length, 0, "notifications after a no");
+      await setHidden(rp, false);
+      // "OK" puts the line away.
+      await rp.getByTestId("notify-put-away").click();
+      equal(await offers(rp), 0, "the line after OK");
+      await refusing.close();
+
+      // A browser that was told no in its own settings, before the website ever asked: the line, and no question.
+      const blocked = await newContext({ notifications: "denied" });
+      const bp = await blocked.newPage();
+      await signInOnPage(bp, abel);
+      await bp.getByTestId("empty-library").waitFor();
+      await bp.goto(`${WEB}/friends/loans`);
+      await bp.getByTestId("notify-blocked").waitFor();
+      equal(
+        await bp.getByTestId("notify-blocked").locator("p").innerText(),
+        "Notifications are off. Your browser was told not to show them for this website. You can change that in the browser, in the settings for this website: usually through the icon next to the address.",
+        "the line, in English",
+      );
+      equal(await bp.getByTestId("notify-card").count(), 0, "a card for a browser that said no");
+      equal(await asked(bp), 0, "questions to a browser that said no");
+      await blocked.close();
+
+      // A browser that has no notifications at all is offered nothing.
+      const without = await newContext({ notifications: "none" });
+      const wp = await without.newPage();
+      await signInOnPage(wp, abel);
+      await wp.getByTestId("empty-library").waitFor();
+      for (const path of ["/friends", "/friends/loans"]) {
+        await wp.goto(`${WEB}${path}`);
+        await wp.locator("main#content h1").first().waitFor();
+        await wp.waitForTimeout(300);
+        equal(await offers(wp), 0, `an offer on ${path} in a browser without notifications`);
+      }
+      await without.close();
+
+      // A browser that allowed them already has nothing to be asked.
+      const allowed = await newContext({ notifications: "granted" });
+      const gp = await allowed.newPage();
+      await signInOnPage(gp, abel);
+      await gp.getByTestId("empty-library").waitFor();
+      await gp.goto(`${WEB}/friends`);
+      await gp.getByTestId("friend-code").waitFor();
+      await gp.waitForTimeout(300);
+      equal(await offers(gp), 0, "an offer in a browser that allowed notifications");
+      equal(await asked(gp), 0, "questions to a browser that allowed notifications");
+      equal((await notified(gp)).length, 0, "notifications without news");
+      await allowed.close();
+    },
+    null,
+  );
+
+  await test(
+    "once allowed, news that comes while the page is not in front is shown by the browser: one per loan, gone when it is dealt with, and never on top of the notice in the page",
+    async () => {
+      const dan = account("Dan");
+      const bea = account("Bea");
+      await signUpByApi(bea);
+      const context = await newContext();
+      const dp = await context.newPage();
+      await signUp(dp, dan);
+      await dp.getByTestId("empty-library").waitFor();
+      dan.session = await signIn(dan.email, dan.password);
+      const dansCode = (await rpc(dan.session.token, "shelfmark_hello")).code;
+      await rpc(dan.session.token, "shelfmark_add_friend", { p_code: (await rpc(bea.session.token, "shelfmark_hello")).code });
+      // Two books of Bea's that Dan asked for.
+      const knopf = await rpc(dan.session.token, "shelfmark_loan_ask", { p_friend: bea.session.id, p_book: 1, p_info: { title: "Jim Knopf" } });
+      const welle = await rpc(dan.session.token, "shelfmark_loan_ask", { p_friend: bea.session.id, p_book: 2, p_info: { title: "Die Welle" } });
+      await dp.goto(`${WEB}/friends/loans`);
+      const loanCard = (loan, state, on = dp) => on.locator(`[data-testid="loan"][data-loan="${loan.id}"][data-state="${state}"]`);
+      await loanCard(knopf, "asked").waitFor();
+      const all = () => notified(dp);
+      const up = () => notified(dp, true);
+      const tagsUp = async () => (await up()).map((n) => n.tag).sort().join(" ");
+      const notices = dp.locator(".toast");
+      /** Looks at the server until something shows. One look may join a look that was on its way before the news. */
+      const shows = (check, what, on = dp) =>
+        until(async () => {
+          await lookNow(on);
+          return check();
+        }, what);
+      const click = (tag) => dp.evaluate((wanted) => window.__notify.told.find((n) => n.tag === wanted && !n.closed).click(), tag);
+
+      // He allows notifications, by the button of the card.
+      await dp.evaluate(() => {
+        window.__notify.answer = "granted";
+      });
+      await dp.getByTestId("notify-allow").click();
+      await notices.filter({ hasText: "Notifications are on. Your browser shows them while Shelfmark is open in a tab that is not in front." }).waitFor();
+      equal(await dp.getByTestId("notify-card").count(), 0, "the card once notifications are allowed");
+      equal(await dp.evaluate(() => window.__notify.asked), 1, "questions to the browser");
+
+      // While the page is in front the notice in the page is enough: nothing is told twice.
+      await act(bea, knopf.id, "agree", { p_due: today + 14 });
+      await shows(async () => (await loanCard(knopf, "agreed").count()) === 1, "the yes arrives");
+      const yes = notices.filter({ hasText: "Bea said yes to “Jim Knopf”" });
+      await yes.waitFor();
+      equal(await yes.getAttribute("href"), "/friends/loans", "where the notice about a loan leads");
+      equal((await all()).length, 0, "notifications of the browser while the page is in front");
+
+      // Dan goes to another tab. What Bea does now, the browser tells.
+      await setHidden(dp, true);
+      await act(bea, knopf.id, "hand");
+      await shows(async () => (await all()).length === 1, "the browser tells of the handover");
+      equal(JSON.stringify((await all())[0]), JSON.stringify({ title: "Bea says “Jim Knopf” was handed over to you", body: "Open Shelfmark to confirm.", tag: `loan:${knopf.id}`, lang: "en" }), "the notification about a step that waits for Dan");
+      // The same news is not told again by the next look.
+      await lookNow(dp);
+      await dp.waitForTimeout(600);
+      equal((await all()).length, 1, "notifications after another look");
+      // The next step of the same loan takes the place of the one before.
+      await act(bea, knopf.id, "set_due", { p_due: today + 21 });
+      await shows(async () => (await all()).length === 2, "the browser tells of the new day");
+      equal((await up()).map((n) => n.title).join(" | "), "Bea changed the date for “Jim Knopf”", "what is up: one notification per loan");
+      equal((await up())[0].body, "", "news that asks for nothing has no second line");
+      // Another loan stands next to it.
+      await act(bea, welle.id, "agree", { p_due: today });
+      await shows(async () => (await up()).length === 2, "the browser tells of the other loan");
+      // And so does a friend who joins.
+      const cleo = account("Cleo");
+      await signUpByApi(cleo);
+      await rpc(cleo.session.token, "shelfmark_add_friend", { p_code: dansCode });
+      await shows(async () => (await up()).length === 3, "the browser tells of the friend who joined");
+      equal(
+        JSON.stringify((await up()).find((n) => n.tag === `friend:${cleo.session.id}`)),
+        JSON.stringify({ title: "Cleo is now your friend", body: "Somebody used your friend code. If you do not know them, remove them under Friends.", tag: `friend:${cleo.session.id}`, lang: "en" }),
+        "the notification about a friend who joined",
+      );
+
+      // A book that is due. Bea hands the second book over, Dan confirms on his phone, and it is wanted back today.
+      await act(bea, welle.id, "hand");
+      await shows(async () => (await up()).some((n) => n.title === "Bea says “Die Welle” was handed over to you"), "the browser tells of the second handover");
+      await act(dan, welle.id, "receive");
+      await shows(async () => (await up()).some((n) => n.tag === `due:${welle.id}`), "the browser reminds of the book that is due");
+      equal(JSON.stringify((await up()).find((n) => n.tag === `due:${welle.id}`)), JSON.stringify({ title: "“Die Welle” is due back to Bea", body: "Due back today", tag: `due:${welle.id}`, lang: "en" }), "the reminder");
+      // Dan answered the handover himself, on the phone: the notification about it went with that.
+      equal(await tagsUp(), [`due:${welle.id}`, `friend:${cleo.session.id}`, `loan:${knopf.id}`].sort().join(" "), "what is up now");
+      // A reminder is given once for the day the book is due on.
+      const told = (await all()).length;
+      await lookNow(dp);
+      await dp.waitForTimeout(600);
+      await lookNow(dp);
+      await dp.waitForTimeout(600);
+      equal((await all()).length, told, "notifications after two more looks");
+
+      // A click on a notification leads to the page it is about, and closes it. Dan was on his shelf.
+      await dp.locator('.sidebar [data-testid="nav-shelf"]').click();
+      // The book he borrowed stands there: his copy of it came with the loan.
+      await dp.getByTestId("greeting").waitFor();
+      await click(`friend:${cleo.session.id}`);
+      await dp.getByTestId("friends-page").waitFor();
+      equal(new URL(dp.url()).pathname, "/friends", "where the notification about a friend leads");
+      await click(`loan:${knopf.id}`);
+      await dp.getByTestId("loans-page").waitFor();
+      equal(new URL(dp.url()).pathname, "/friends/loans", "where the notification about a loan leads");
+      equal(await tagsUp(), `due:${welle.id}`, "what is up after two clicks");
+
+      // Back in front. What the browser still had up goes, and the page says it instead, once.
+      await setHidden(dp, false);
+      equal((await up()).length, 0, "notifications of the browser once the page is in front");
+      const reminder = notices.filter({ hasText: "“Die Welle” is due back to Bea" });
+      await reminder.waitFor();
+      equal(await reminder.locator(".toast-detail").innerText(), "Due back today", "the second line of the reminder in the page");
+      // What Dan followed from the browser is not said again by the page.
+      equal(await notices.filter({ hasText: "Cleo is now your friend" }).count(), 0, "the notice about a friend whose notification Dan followed");
+      equal(await notices.filter({ hasText: "Jim Knopf" }).count(), 0, "the notice about a loan whose notification Dan followed");
+      deepAudit(await audit(dp), "loans page with a reminder");
+      await dp.waitForTimeout(300);
+      await shot(dp, "loan-due-notice");
+
+      // A notification goes when Dan deals with what it is about on another device.
+      await setHidden(dp, true);
+      await act(bea, knopf.id, "set_due", { p_due: null });
+      await shows(async () => (await up()).some((n) => n.tag === `loan:${knopf.id}`), "a notification about the first loan");
+      await act(dan, knopf.id, "receive");
+      await shows(async () => !(await up()).some((n) => n.tag === `loan:${knopf.id}`), "the notification goes when Dan answers on his phone");
+
+      // With another tab of Shelfmark in front, that tab tells the news in its page, and the tab behind keeps quiet.
+      const front = await context.newPage();
+      await front.goto(`${WEB}/friends/loans`);
+      await loanCard(welle, "on_loan", front).waitFor();
+      const before = (await all()).length;
+      await act(bea, welle.id, "set_due", { p_due: today + 3 });
+      await lookNow(dp);
+      await dp.waitForTimeout(800);
+      await lookNow(dp);
+      await dp.waitForTimeout(400);
+      equal((await all()).length, before, "notifications from a tab behind while another tab is in front");
+      const inFront = front.locator(".toast").filter({ hasText: "Bea changed the date for “Die Welle”" });
+      await shows(async () => (await inFront.count()) === 1, "the tab in front tells the news in its page", front);
+      equal((await notified(front)).length, 0, "notifications of the browser from the tab in front");
+      await front.close();
+
+      // The permission is the browser's. Taken back there, nothing more is shown.
+      await dp.evaluate(() => localStorage.setItem("e2e.notifications", "denied"));
+      await act(bea, welle.id, "set_due", { p_due: today + 5 });
+      await lookNow(dp);
+      await dp.waitForTimeout(800);
+      equal((await all()).length, before, "notifications after the permission was taken back");
+      // In front again, the page says so where it offered them, and tells the news itself.
+      await setHidden(dp, false);
+      await dp.getByTestId("notify-blocked").waitFor();
+      await shows(async () => (await notices.filter({ hasText: "Bea changed the date for “Die Welle”" }).count()) === 1, "the page tells what the browser no longer may");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
     "the friend code can be copied and replaced",
     async () => {
       await annaContext.grantPermissions(["clipboard-read", "clipboard-write"], { origin: WEB });
@@ -4133,6 +4672,150 @@ async function main() {
       equal(asked.join(" | "), `list ${JSON.stringify({ prefix: sven.session.id, limit: 100, offset: 0 })} | remove ${nameOf(stuck)} | account`, "what was asked of the server, in this order");
       assert((await answers(stuck)) !== 200, "the picture of a book that was removed earlier no longer answers once the account is deleted");
       await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "earlier versions of the library are listed in the settings, one is brought back, and that is taken back again",
+    async () => {
+      const push = (who, document, expected) => rpc(who.session.token, "shelfmark_vault_push", { p_payload: document, p_expected: expected });
+      const history = async (who) => (await rpc(who.session.token, "shelfmark_vault_history")).versions;
+      const libraryOf = (titles, name) => ({ exportedAt: 1, books: titles.map((title, index) => ({ id: index + 1, title, authors: "Somebody" })), shelves: [], links: [], quotes: [], prefs: { profileName: name } });
+
+      // Edda's library as her phone saved it: three books first, and then, by a slip, only one of them.
+      const edda = account("Edda");
+      await signUpByApi(edda);
+      await push(edda, libraryOf(["Heidi", "Krabat", "Momo"], "Edda"), 0);
+      await push(edda, libraryOf(["Momo"], "Edda"), 1);
+      equal(JSON.stringify((await history(edda)).map((v) => [v.revision, v.books])), "[[1,3]]", "what the server kept when the second save replaced the first");
+      const kept = (await history(edda))[0];
+
+      const context = await newContext();
+      const page = await context.newPage();
+      await signInOnPage(page, edda);
+      await page.getByTestId("greeting").waitFor();
+      await page.goto(`${WEB}/settings`);
+      const card = page.getByTestId("history-card");
+      await card.waitFor();
+      equal(await card.locator("h2").innerText(), "EARLIER VERSIONS", "the title of the section");
+      assert((await card.locator("p").first().innerText()).startsWith("The server keeps up to ten earlier versions of your library"), "what the section says");
+      const rows = card.getByTestId("version");
+      await rows.first().waitFor();
+      const listed = async () => rows.evaluateAll((items) => items.map((item) => `${item.dataset.revision}:${item.dataset.books}`).join(" "));
+      equal(await listed(), "1:3", "the versions in the list");
+      // Date and time, and how many books it held.
+      const when = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(kept.at));
+      equal((await rows.first().innerText()).replace(/\s+/g, " "), `${when} 3 books Bring back`, "a version in the list");
+      deepAudit(await audit(page), "settings with earlier versions");
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await shot(page, "history");
+
+      // Edda adds a book here. That save is less than an hour after the last version was kept, so the list stays as it is.
+      await addByHand(page, { title: "Tschick", authors: "Wolfgang Herrndorf" });
+      await untilVault(edda, (v) => v.books.length === 2, "the book added on the website");
+      await page.goto(`${WEB}/settings`);
+      await rows.first().waitFor();
+      equal(await listed(), "1:3", "the versions after a save within the hour");
+
+      // She brings the library with three books back. It asks first, and says what happens.
+      await rows.first().getByTestId("version-restore").click();
+      const dialog = page.getByTestId("history-restore-dialog");
+      await dialog.waitFor();
+      const question = await dialog.innerText();
+      assert(question.includes(`Bring back the library of ${when}?`), `the question: ${question}`);
+      assert(question.includes("It replaces your library on every device. What you have now is kept as an earlier version."), "what bringing back does");
+      deepAudit(await audit(page), "question before bringing a version back");
+      await dialog.getByTestId("confirm").click();
+      await page.locator(".toast").filter({ hasText: `The library of ${when} is back.` }).waitFor();
+      // The page shows the restored library at once, without a reload: the shelf is one click away.
+      const restored = await untilVault(edda, (v) => v.books.length === 3, "three books on the server again");
+      equal(restored.books.map((b) => b.title).join(", "), "Heidi, Krabat, Momo", "the library that is back");
+      await page.locator('.sidebar [data-testid="nav-shelf"]').click();
+      await page.getByTestId("greeting").waitFor();
+      assert((await page.getByTestId("greeting").innerText()).includes("3 books"), `the shelf after bringing back: ${await page.getByTestId("greeting").innerText()}`);
+      // What she had before is kept in turn, with the book she added: nothing is lost by bringing something back.
+      await page.locator('.sidebar [data-testid="nav-settings"]').click();
+      await until(async () => (await listed()) === "3:2 1:3", "the list after bringing back");
+      equal(JSON.stringify((await history(edda)).map((v) => [v.revision, v.books])), "[[3,2],[1,3]]", "what the server keeps now");
+
+      // And she takes that back again: the library with the book she added.
+      await rows.first().getByTestId("version-restore").click();
+      await dialog.getByTestId("confirm").click();
+      const again = await untilVault(edda, (v) => v.books.length === 2, "two books on the server again");
+      equal(again.books.map((b) => b.title).sort().join(", "), "Momo, Tschick", "the library after taking it back");
+      await until(async () => (await listed()).startsWith("4:3 3:2"), "the list after taking it back");
+
+      // A change that is not saved yet is not thrown away by bringing a version back: nothing is brought back until it is saved.
+      await page.route("**/rest/v1/rpc/shelfmark_vault_push", (route) => route.abort());
+      await page.getByTestId("profile-name-field").fill("Edda E.");
+      await page.getByTestId("profile-name-field").blur();
+      await page.locator('[data-testid="save-state"][data-state="error"]:visible').waitFor();
+      const revisionBefore = (await vaultOf(edda)).revision;
+      await rows.first().getByTestId("version-restore").click();
+      await dialog.getByTestId("confirm").click();
+      const problem = card.getByTestId("history-problem");
+      await problem.waitFor();
+      equal(await problem.innerText(), "Your last changes could not be saved yet, so nothing was brought back: they would have been lost. Try again once they are saved.", "why nothing was brought back");
+      equal((await vaultOf(edda)).revision, revisionBefore, "the revision on the server after a refused try");
+      equal(await page.getByTestId("profile-name-field").inputValue(), "Edda E.", "what Edda typed is still there");
+      // Once the change is saved, it works, and the change is in the version that is kept in turn.
+      await page.unroute("**/rest/v1/rpc/shelfmark_vault_push");
+      await untilVault(edda, (v) => v.prefs.profileName === "Edda E.", "the change is saved once the connection is back", 20);
+      await waitSaved(page);
+      const withName = (await vaultOf(edda)).revision;
+      await rows.first().getByTestId("version-restore").click();
+      await dialog.getByTestId("confirm").click();
+      await untilVault(edda, (v) => v.books.length === 3, "the three books once more");
+      equal(await problem.count(), 0, "the problem after it worked");
+      await until(async () => (await listed()).startsWith(`${withName}:2 `), "the version with the last change is kept, and listed first");
+      await rows.first().getByTestId("version-restore").click();
+      await dialog.getByTestId("confirm").click();
+      const named = await untilVault(edda, (v) => v.books.length === 2, "back to the library with the last change");
+      equal(named.prefs.profileName, "Edda E.", "the change that was saved before bringing a version back");
+      await until(async () => (await page.getByTestId("profile-name-field").inputValue()) === "Edda E.", "the page shows the name again");
+
+      // A version that is no longer kept, because it was tidied away since the list was shown.
+      await page.route("**/rest/v1/rpc/shelfmark_vault_restore", (route) => route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ code: "P0001", message: "shelfmark:unknown_version" }) }));
+      await rows.first().getByTestId("version-restore").click();
+      await dialog.getByTestId("confirm").click();
+      await problem.waitFor();
+      equal(await problem.innerText(), "The server no longer keeps this version.", "a version that is gone");
+      await page.unroute("**/rest/v1/rpc/shelfmark_vault_restore");
+      // Never more than ten are kept, and the newest stands first.
+      const versions = await history(edda);
+      assert(versions.length <= 10 && versions.every((v, i) => i === 0 || versions[i - 1].revision > v.revision), `the versions the server keeps: ${JSON.stringify(versions)}`);
+
+      // A server from before earlier versions were kept says so in place of the list.
+      await page.route("**/rest/v1/rpc/shelfmark_vault_history", (route) =>
+        route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "PGRST202", message: "Could not find the function public.shelfmark_vault_history in the schema cache" }) }),
+      );
+      await page.reload();
+      const unavailable = page.getByTestId("history-unavailable");
+      await unavailable.waitFor();
+      equal(await unavailable.innerText(), "This server does not keep earlier versions yet.", "a server without earlier versions");
+      equal(await rows.count(), 0, "versions listed by a server that keeps none");
+      await context.close();
+
+      // A new account has none yet, and is told when the first one will be there. Here in German, on a phone.
+      const finn = account("Finn");
+      const german = await newContext({ locale: "de-CH", viewport: PHONE });
+      const fp = await german.newPage();
+      await signUp(fp, finn);
+      await fp.getByTestId("empty-library").waitFor();
+      await fp.goto(`${WEB}/settings`);
+      const karte = fp.getByTestId("history-card");
+      await karte.waitFor();
+      equal(await karte.locator("h2").innerText(), "FRÜHERE STÄNDE", "the title, in German");
+      equal(await karte.getByTestId("history-empty").innerText(), "Noch keine früheren Stände. Der erste wird bei deiner nächsten Änderung aufbewahrt.", "no versions yet, in German");
+      deepAudit(await audit(fp), "settings without earlier versions, in German on a phone");
+      // The next change keeps the first one.
+      await addByHand(fp, { title: "Heidi", authors: "Johanna Spyri" });
+      await fp.goto(`${WEB}/settings`);
+      await karte.getByTestId("version").first().waitFor();
+      equal(await karte.getByTestId("version").first().getByTestId("version-restore").innerText(), "Zurückholen", "the button, in German");
+      await german.close();
     },
     null,
   );

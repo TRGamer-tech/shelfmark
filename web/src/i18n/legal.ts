@@ -138,12 +138,16 @@ const en: LegalTexts = {
               "the day of the last sign of life. Once a day the browser of a signed-in reader sends one to Shelfmark's database: a free database is put to sleep when nothing happens for a week. It writes down the time, adds one to a counter and says nothing about you;",
               "your theme and its colours, so that the page does not open in other colours first;",
               "a reading timer that is running, so that it survives a closed window. Signing out removes it;",
-              "how each of your loans stood when this browser last looked, and when that was, so that it can tell you what is new. Signing out removes it, and so does deleting the account;",
+              "how each of your loans stood when this browser last looked, and when that was, which friends it has seen, and for which books it has told you that they are due, so that each piece of news is told once. Signing out removes it, and so does deleting the account;",
               "a copy of what you last shared with friends, so that the same shelf is not sent twice. Signing out removes it, and so does deleting the account;",
-              "the name you typed in when creating an account, kept under your e-mail address until your first sign-in puts it into your library.",
+              "the name you typed in when creating an account, kept under your e-mail address until your first sign-in puts it into your library;",
+              "that you put the card about notifications away, if you did. It belongs to the browser, not to an account, and stays until you clear the website's data.",
             ],
           },
           { p: "For the length of one visit the website may also note a single word for the next page, for example that an account was just deleted. It is gone once that page has read it." },
+          {
+            p: "Notifications are shown only if you allow them, and the website asks only when you press the button for it. They are made by your browser itself, from what the open page finds when it looks for news: a friend asked for a book, answered or joined by your code, or a book is due. Nothing is sent to a push service, so nothing can be told while no tab of Shelfmark is open. The permission is kept by your browser, where you can take it back at any time.",
+          },
         ],
       },
       {
@@ -156,6 +160,8 @@ const en: LegalTexts = {
               "Your e-mail address and your password. Signing in is done by the sign-in service of Supabase. According to Supabase the password is kept there in hashed form only. Shelfmark's own code passes it on when you type it and never stores it.",
               "A name, if you give one, and a friend code that is made for you. Also the time the account was set up, and the time it was last in touch with the server.",
               "Your whole library, as one document that only you get: books with your ratings, reviews and reading dates, lists, notes, quotes, reading sessions, goals, purchases with price and shop, the ornaments on your shelf, your themes and your settings.",
+              "Up to ten earlier versions of that library, so that a mistake can be undone: a few from the last hours and one for each of the last days on which it changed. Only you can list them and bring one back. What you delete from your library can therefore still be in an earlier version, until newer versions have taken its place or the account is deleted.",
+              "Who your friends are, and for each of them since when, and whether they came by your code or you by theirs.",
               "Cover photos you upload. They are kept as files, and a picture can be loaded by anybody who has its full address, without signing in. That is how friends get to see the covers on a shared shelf. The address is long and random, so it cannot be guessed. A picture is removed when its book is deleted or gets another cover, unless another book of yours still shows it.",
             ],
           },
@@ -169,7 +175,7 @@ const en: LegalTexts = {
         title: "What do friends see?",
         blocks: [
           {
-            p: "Whoever enters your friend code is connected with you at once, in both directions. There is no step in which you accept. So give the code only to people you want as friends. You can get a new code at any time, which makes the old one useless, and you can remove a friend.",
+            p: "Whoever enters your friend code is connected with you at once, in both directions. There is no step in which you accept, so the app and the website tell you when somebody joined that way. Give the code only to people you want as friends. You can get a new code at any time, which makes the old one useless, and you can remove a friend.",
           },
           {
             p: "Friends see your name and the part of your library you share: your books with title, author, ISBN, cover, description, format and number of pages, whether you own them and whether they can be borrowed. Reading status and lists are included only if you switch that on, and so are ratings, reviews and reading dates. Books you do not own are shared only together with the reading status. Notes, quotes, reading sessions, goals and purchases are never shared.",
@@ -244,7 +250,7 @@ const en: LegalTexts = {
         blocks: [
           { p: "Your account and your library are kept until you delete the account. There is no time limit after which they go by themselves." },
           {
-            p: "Deleting the account, in the app or in the settings of the website, removes your library, every cover photo you uploaded, what you shared with friends, your loans, your connections to friends, and the sign-in itself. Should the server not let the sign-in be removed along with the rest, the website tells you so. Should a cover photo not let itself be removed, with its book or with the account, nothing tells you: it stays on the server, and nothing points at it any more. Whoever runs the server can remove both by hand: write to the address above.",
+            p: "Deleting the account, in the app or in the settings of the website, removes your library and its earlier versions, every cover photo you uploaded, what you shared with friends, your loans, your connections to friends, and the sign-in itself. Should the server not let the sign-in be removed along with the rest, the website tells you so. Should a cover photo not let itself be removed, with its book or with the account, nothing tells you: it stays on the server, and nothing points at it any more. Whoever runs the server can remove both by hand: write to the address above.",
           },
           { p: "A copy of your library on a phone stays on that phone until you remove it there. So does what a friend's own library says about a book they lent to you or borrowed from you: your name on that book stays with them." },
           { p: "The backup in the settings is the export of your own data: one file with all of it." },
@@ -353,12 +359,16 @@ const de: LegalTexts = {
               "den Tag des letzten Lebenszeichens. Einmal am Tag schickt der Browser einer angemeldeten Person eines an die Datenbank von Shelfmark: Eine kostenlose Datenbank wird schlafen gelegt, wenn eine Woche lang nichts passiert. Es schreibt die Uhrzeit auf, zählt einen Zähler um eins hoch und sagt nichts über dich;",
               "dein Design und seine Farben, damit die Seite nicht zuerst in anderen Farben aufgeht;",
               "einen laufenden Lese-Timer, damit er ein geschlossenes Fenster übersteht. Beim Abmelden wird er entfernt;",
-              "wie jede deiner Ausleihen stand, als dieser Browser zuletzt nachgesehen hat, und wann das war, damit er dir sagen kann, was neu ist. Beim Abmelden wird das entfernt, beim Löschen des Kontos ebenso;",
+              "wie jede deiner Ausleihen stand, als dieser Browser zuletzt nachgesehen hat, und wann das war, welche Freunde er schon gesehen hat und für welche Bücher er dir gesagt hat, dass sie fällig sind, damit jede Neuigkeit einmal gemeldet wird. Beim Abmelden wird das entfernt, beim Löschen des Kontos ebenso;",
               "eine Kopie dessen, was du zuletzt mit Freunden geteilt hast, damit dasselbe Regal nicht zweimal gesendet wird. Beim Abmelden wird sie entfernt, beim Löschen des Kontos ebenso;",
-              "den Namen, den du beim Erstellen des Kontos eingetippt hast, abgelegt unter deiner E-Mail-Adresse, bis ihn die erste Anmeldung in deine Bibliothek schreibt.",
+              "den Namen, den du beim Erstellen des Kontos eingetippt hast, abgelegt unter deiner E-Mail-Adresse, bis ihn die erste Anmeldung in deine Bibliothek schreibt;",
+              "dass du die Karte zu den Mitteilungen weggelegt hast, falls du das getan hast. Das gehört zum Browser, nicht zu einem Konto, und bleibt, bis du die Daten der Website löschst.",
             ],
           },
           { p: "Für die Dauer eines Besuchs merkt sich die Website manchmal ein einzelnes Wort für die nächste Seite, zum Beispiel dass gerade ein Konto gelöscht wurde. Es ist weg, sobald diese Seite es gelesen hat." },
+          {
+            p: "Mitteilungen gibt es nur, wenn du sie erlaubst, und die Website fragt nur, wenn du den Knopf dafür drückst. Dein Browser macht sie selbst, aus dem, was die offene Seite findet, wenn sie nach Neuigkeiten schaut: Jemand hat nach einem Buch gefragt, geantwortet oder ist über deinen Code dazugekommen, oder ein Buch ist fällig. An einen Push-Dienst wird nichts geschickt, darum kann nichts gemeldet werden, solange kein Tab von Shelfmark offen ist. Die Erlaubnis liegt bei deinem Browser, wo du sie jederzeit zurücknehmen kannst.",
+          },
         ],
       },
       {
@@ -371,6 +381,8 @@ const de: LegalTexts = {
               "Deine E-Mail-Adresse und dein Passwort. Die Anmeldung läuft über den Anmeldedienst von Supabase. Laut Supabase liegt das Passwort dort nur als Hash vor. Der Code von Shelfmark reicht es beim Eintippen weiter und speichert es nie.",
               "Ein Name, wenn du einen angibst, und ein Freundescode, der für dich erzeugt wird. Dazu der Zeitpunkt, an dem das Konto eingerichtet wurde, und der Zeitpunkt des letzten Kontakts mit dem Server.",
               "Deine ganze Bibliothek als ein Dokument, das nur du bekommst: Bücher mit deinen Bewertungen, Rezensionen und Lesedaten, Listen, Notizen, Zitate, Lesesitzungen, Ziele, Käufe mit Preis und Laden, die Deko auf deinem Regal, deine Designs und deine Einstellungen.",
+              "Bis zu zehn frühere Stände dieser Bibliothek, damit sich ein Fehler rückgängig machen lässt: einige aus den letzten Stunden und je einer der letzten Tage, an denen sie sich geändert hat. Nur du kannst sie auflisten und einen zurückholen. Was du aus deiner Bibliothek löschst, kann darum noch in einem früheren Stand stehen, bis neuere Stände an seine Stelle getreten sind oder das Konto gelöscht wird.",
+              "Mit wem du befreundet bist, jeweils seit wann, und ob die Person über deinen Code dazugekommen ist oder du über ihren.",
               "Cover-Fotos, die du hochlädst. Sie liegen als Dateien vor, und ein Bild kann laden, wer seine vollständige Adresse hat, ohne Anmeldung. So sehen Freunde die Cover eines geteilten Regals. Die Adresse ist lang und zufällig, erraten lässt sie sich nicht. Ein Bild wird entfernt, wenn sein Buch gelöscht wird oder ein anderes Cover bekommt, es sei denn, ein anderes deiner Bücher zeigt es noch.",
             ],
           },
@@ -384,7 +396,7 @@ const de: LegalTexts = {
         title: "Was sehen Freunde?",
         blocks: [
           {
-            p: "Wer deinen Freundescode eingibt, ist sofort mit dir verbunden, in beide Richtungen. Einen Schritt, in dem du zustimmst, gibt es nicht. Gib den Code also nur Leuten, die du als Freunde haben willst. Du kannst jederzeit einen neuen Code holen, der alte gilt dann nicht mehr, und du kannst Freunde entfernen.",
+            p: "Wer deinen Freundescode eingibt, ist sofort mit dir verbunden, in beide Richtungen. Einen Schritt, in dem du zustimmst, gibt es nicht, darum sagen dir App und Website, wenn jemand so dazugekommen ist. Gib den Code nur Leuten, die du als Freunde haben willst. Du kannst jederzeit einen neuen Code holen, der alte gilt dann nicht mehr, und du kannst Freunde entfernen.",
           },
           {
             p: "Freunde sehen deinen Namen und den Teil deiner Bibliothek, den du teilst: deine Bücher mit Titel, Autor, ISBN, Cover, Beschreibung, Format und Seitenzahl, ob sie dir gehören und ob man sie ausleihen kann. Lesestatus und Listen sind nur dabei, wenn du das einschaltest, ebenso Bewertungen, Rezensionen und Lesedaten. Bücher, die dir nicht gehören, werden nur zusammen mit dem Lesestatus geteilt. Notizen, Zitate, Lesesitzungen, Ziele und Käufe werden nie geteilt.",
@@ -459,7 +471,7 @@ const de: LegalTexts = {
         blocks: [
           { p: "Dein Konto und deine Bibliothek bleiben, bis du das Konto löschst. Eine Frist, nach der sie von selbst verschwinden, gibt es nicht." },
           {
-            p: "Das Löschen des Kontos, in der App oder in den Einstellungen der Website, entfernt deine Bibliothek, alle Cover-Fotos, die du hochgeladen hast, was du mit Freunden geteilt hast, deine Ausleihen, deine Verbindungen zu Freunden und die Anmeldung selbst. Sollte der Server die Anmeldung nicht zusammen mit dem Rest entfernen lassen, sagt dir die Website das. Lässt sich ein Cover-Foto einmal nicht entfernen, mit seinem Buch oder mit dem Konto, sagt dir das niemand: Es bleibt auf dem Server liegen, und nichts verweist mehr darauf. Wer den Server betreibt, kann beides von Hand entfernen: Schreib an die Adresse oben.",
+            p: "Das Löschen des Kontos, in der App oder in den Einstellungen der Website, entfernt deine Bibliothek und ihre früheren Stände, alle Cover-Fotos, die du hochgeladen hast, was du mit Freunden geteilt hast, deine Ausleihen, deine Verbindungen zu Freunden und die Anmeldung selbst. Sollte der Server die Anmeldung nicht zusammen mit dem Rest entfernen lassen, sagt dir die Website das. Lässt sich ein Cover-Foto einmal nicht entfernen, mit seinem Buch oder mit dem Konto, sagt dir das niemand: Es bleibt auf dem Server liegen, und nichts verweist mehr darauf. Wer den Server betreibt, kann beides von Hand entfernen: Schreib an die Adresse oben.",
           },
           { p: "Eine Kopie deiner Bibliothek auf einem Handy bleibt auf diesem Handy, bis du sie dort entfernst. Ebenso bleibt, was die Bibliothek von jemand anderem über ein Buch sagt, das ihr einander geliehen habt: Dein Name auf diesem Buch bleibt dort stehen." },
           { p: "Das Backup in den Einstellungen ist der Export deiner eigenen Daten: eine Datei mit allem." },

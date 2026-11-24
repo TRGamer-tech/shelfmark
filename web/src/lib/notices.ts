@@ -4,6 +4,10 @@
 export interface Notice {
   id: number;
   text: string;
+  /** A second, smaller line: what to make of it. */
+  detail?: string;
+  /** Where the notice leads. With it the whole notice is a link. */
+  href?: string;
   /**
    * What the notice is about, a loan for instance. A newer notice about the same thing
    * takes the place of the older one, and the notice goes when that thing is dealt with.
@@ -14,12 +18,12 @@ export interface Notice {
 /** How many notices stand on the page at once. */
 export const NOTICES_AT_ONCE = 3;
 
-/** How long a notice stays, in milliseconds. */
+/** How long a notice stays, in milliseconds. Only the time the page can be seen counts. */
 export const NOTICE_MS = 6000;
 
-/** The name a notice about a loan goes by. */
-export function aboutLoan(loanId: string): string {
-  return `loan:${loanId}`;
+/** A notice with a second line takes longer to read. */
+export function stayOf(notice: Pick<Notice, "detail">): number {
+  return notice.detail ? NOTICE_MS * 2 : NOTICE_MS;
 }
 
 /**

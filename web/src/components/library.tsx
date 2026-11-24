@@ -5,24 +5,25 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { localZone } from "@/lib/dates";
+import type { Offer, Permission } from "@/lib/browserNotices";
+import { localZone, today } from "@/lib/dates";
 import type { Loan, LoanAction } from "@/lib/loans";
-import { followLoans, heldBookIds, readSeen, rememberStep, takeLoanAnswer } from "@/lib/loans";
+import { followLoans, heldBookIds } from "@/lib/loans";
 import type { SharedBook, Vault, VaultPrefs } from "@/lib/model";
 import { prefsOf, writeEnvelope } from "@/lib/model";
 import type { Change } from "@/lib/mutations";
 import { setPrefs } from "@/lib/mutations";
-import type { Notice } from "@/lib/notices";
-import { NOTICE_MS, aboutLoan, withNotice, withoutAbout, withoutNotice } from "@/lib/notices";
+import { aboutDue, aboutLoan, newsOf, readNewsMemory, rememberFriend, rememberNewsStep, takeAnswer, unsaidOf } from "@/lib/news";
 import { libraryEnvelope, libraryFingerprint } from "@/lib/share";
 import { droppedCoverFiles, removeCoverFiles } from "@/lib/supabase/covers";
-import type { FriendLibrary, ServerFriend } from "@/lib/social";
+import type { FriendLibrary, ServerFriend, SyncAnswer } from "@/lib/social";
 import { acceptLibraries, readSyncAnswer } from "@/lib/social";
 import type { Profile } from "@/lib/supabase/api";
 import type { SaveStatus } from "@/lib/sync";
-import { VaultStore, reasonOf } from "@/lib/sync";
+import { ServerError, VaultStore, reasonOf } from "@/lib/sync";
 import { useAuth } from "./auth";
 import { useI18n } from "./i18n";
+import { Notices, useTelling } from "./telling";
 import { useAppliedTheme } from "./theme";
 
 const REFRESH_MS = 60_000;
@@ -33,6 +34,8 @@ interface Library {
   /** Applies a change to the library: shown at once, saved right after. */
   mutate: (change: Change) => Promise<void>;
   status: SaveStatus;
+  /** The revision of the library as the server last confirmed it. It moves on with every save. */
+  revision: number;
   problem: string | null;
   pending: number;
   retry: () => void;
@@ -59,8 +62,20 @@ interface Library {
    * way the loans are fetched afresh, so that the page shows where the loan stands.
    */
   actLoan: (loan: Loan, action: LoanAction, detail?: { due?: number | null; reason?: string }) => Promise<void>;
-  /** Says something in a line that passes. [about] names what it is about: a later notice about the same thing takes its place. */
-  notify: (text: string, about?: string) => void;
+  /**
+   * Makes an earlier version the library again (lib/history.ts). What the reader changed
+   * last is saved first, so that it is in the version the server keeps in turn. Throws
+   * with "unsaved" when that cannot be saved now: then nothing is brought back.
+   */
+  restoreVersion: (revision: number) => Promise<void>;
+  /** Says something in a line that passes. */
+  notify: (text: string) => void;
+  /** What the friends and loans pages show about notifications of the browser: a card that asks, a line that says where to allow them, or nothing. */
+  notifyOffer: Offer;
+  /** Asks the browser whether it may show notifications. Only from a click. */
+  allowNotifications: () => Promise<Permission>;
+  /** "Not now": the card about notifications is put away for this browser. */
+  putNotifyOfferAway: () => void;
 }
 
 const Context = createContext<Library | null>(null);
@@ -101,7 +116,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [friendsProblem, setFriendsProblem] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState(0);
   const [loans, setLoans] = useState<Loan[]>([]);
-  const [toasts, setToasts] = useState<Notice[]>([]);
 
   const profileRef = useRef<Profile | null>(null);
   const librariesRef = useRef<Map<string, FriendLibrary>>(new Map());
@@ -116,13 +130,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const tRef = useRef(t);
   tRef.current = t;
 
-  const notify = useCallback((text: string, about?: string) => {
-    const id = Date.now() + Math.random();
-    setToasts((current) => withNotice(current, { id, text, about }));
-    window.setTimeout(() => setToasts((current) => withoutNotice(current, id)), NOTICE_MS);
-  }, []);
-  /** Takes back whatever stands on the page about something: it is no longer so, or the reader has dealt with it. */
-  const unsay = useCallback((about: string) => setToasts((current) => withoutAbout(current, about)), []);
+  // How the reader is told things: a notice in the page, and a notification of the browser while the page is not in front.
+  const telling = useTelling();
+  const { tell, unsay, mayLook } = telling;
+  const say = telling.notify;
+  const notify = useCallback((text: string) => say(text), [say]);
 
   // After a save that changes what friends see, the shared library is published again.
   // So it is when a loan changes which books can be asked for.
@@ -218,34 +230,34 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [store, publishIfChanged],
   );
 
-  // What every look at the loans leads to: the reader is told what the other side did,
-  // once, and the books follow. False when the answer came in late and nothing was taken from it.
+  // What every look at the server leads to: the reader is told what is news, once, and
+  // the books follow the loans. False when the answer came in late and nothing was taken from it.
   const seenKey = `shelfmark.loans.${userId}`;
-  const takeLoans = useCallback(
-    (next: Loan[], time: number): boolean => {
+  const takeNews = useCallback(
+    (answer: SyncAnswer): boolean => {
       // Two looks can race, and the one that asked first be answered last. What it says
       // is older than what the page shows.
-      if (time > 0 && time < loansAsOf.current) return false;
+      if (answer.time > 0 && answer.time < loansAsOf.current) return false;
       // What the browser saw before is kept in its storage, for all its windows: a step
-      // is told once, in the window that sees it first. An answer older than what another
-      // window saw already is not taken either: the books would follow loans as they
-      // no longer stand, and news that was told would be new again at the next look.
-      const look = takeLoanAnswer(readSeen(remembered(seenKey)), next, time);
+      // in a loan, a friend who joined and a book that is due are told once, in the
+      // window that sees them first. An answer older than what another window saw
+      // already is not taken either: the books would follow loans as they no longer
+      // stand, and news that was told would be new again at the next look.
+      const day = today();
+      const look = takeAnswer(readNewsMemory(remembered(seenKey)), answer, day);
       if (look.late) return false;
-      loansAsOf.current = Math.max(loansAsOf.current, time);
-      loansRef.current = next;
-      setLoans(next);
+      loansAsOf.current = Math.max(loansAsOf.current, answer.time);
+      loansRef.current = answer.loans;
+      setLoans(answer.loans);
       // A notice goes when the reader has answered it, here or on another device, and
       // when the next step of the same loan takes its place.
-      for (const id of look.notices.unsay) unsay(aboutLoan(id));
-      for (const { loan, key } of look.notices.say) {
-        notify(tRef.current(key, loan.peerName.trim() !== "" ? loan.peerName : tRef.current("friends_someone"), loan.book.title), aboutLoan(loan.id));
-      }
+      for (const about of unsaidOf(look)) unsay(about);
+      for (const news of newsOf(look, day, tRef.current("friends_someone"))) tell(news);
       remember(seenKey, JSON.stringify(look.memory));
-      bringInLine(next);
+      bringInLine(answer.loans);
       return true;
     },
-    [seenKey, notify, unsay, bringInLine],
+    [seenKey, tell, unsay, bringInLine],
   );
 
   // The reader's own step, answered by the server with the loan as it stands now. It
@@ -260,7 +272,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       loansRef.current = next;
       setLoans(next);
       unsay(aboutLoan(now.id));
-      const memory = rememberStep(readSeen(remembered(seenKey)), now, gone);
+      unsay(aboutDue(now.id));
+      const memory = rememberNewsStep(readNewsMemory(remembered(seenKey)), now, gone, today());
       if (memory) remember(seenKey, JSON.stringify(memory));
       bringInLine(next);
     },
@@ -292,7 +305,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         }
         // The reader took a step in a loan while this was on its way: what it says about
         // loans is older than that step, and the step asks again by itself.
-        const taken = steps.current !== stepsBefore || takeLoans(answer.loans, answer.time);
+        const taken = steps.current !== stepsBefore || takeNews(answer);
         setFriendsProblem(null);
         setLastSync(Date.now());
         if (taken) break;
@@ -302,7 +315,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     } finally {
       setFriendsBusy(false);
     }
-  }, [api, userId, takeLoans]);
+  }, [api, userId, takeNews]);
 
   /** One look at a time. [afresh] waits for a look that is on its way and then looks again, for news that is certain to be newer. */
   const sync = useCallback(
@@ -359,11 +372,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // Changes made on the phone appear here: a look every minute, and whenever the tab comes back.
   useEffect(() => {
     const look = () => {
-      if (document.visibilityState !== "visible") return;
-      // A library that was not opened is read again, without taking the message away meanwhile.
-      if (store.getState().status === "failed") void store.load(true);
-      else void store.refresh();
-      void syncFriends();
+      // A tab that is not in front looks only to have the browser tell the news, if the
+      // reader allowed that, and only while no other tab of Shelfmark is in front.
+      void mayLook().then((may) => {
+        if (!may) return;
+        // A library that was not opened is read again, without taking the message away meanwhile.
+        if (store.getState().status === "failed") void store.load(true);
+        else void store.refresh();
+        void syncFriends();
+      });
     };
     const timer = window.setInterval(look, REFRESH_MS);
     document.addEventListener("visibilitychange", look);
@@ -375,7 +392,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", look);
       window.removeEventListener("online", look);
     };
-  }, [store, syncFriends]);
+  }, [store, syncFriends, mayLook]);
 
   // A save that failed is tried again by itself, the reader does not have to press anything.
   useEffect(() => {
@@ -435,6 +452,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const addFriend = useCallback(
     async (code: string) => {
       const friend = await api.addFriend(code);
+      // Whoever the reader adds themselves is no news to them, in whatever window the next look happens.
+      const memory = rememberFriend(readNewsMemory(remembered(seenKey)), friend.id);
+      if (memory) remember(seenKey, JSON.stringify(memory));
       // The new friend should see a shelf right away, even if nothing was saved in this session yet.
       // Only a library that is open: what could not be read is not shown to anybody as empty.
       const status = store.getState().status;
@@ -442,7 +462,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       void syncFriends();
       return friend.name;
     },
-    [api, store, publishIfChanged, syncFriends],
+    [api, store, seenKey, publishIfChanged, syncFriends],
   );
 
   const removeFriend = useCallback(
@@ -470,6 +490,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     async (loan: Loan, action: LoanAction, detail: { due?: number | null; reason?: string } = {}) => {
       // Whatever the page still says about this loan, the reader is answering it now.
       unsay(aboutLoan(loan.id));
+      unsay(aboutDue(loan.id));
       try {
         // A loan that was put away is gone from the list. Any other stays where it stood, as it is now.
         takeStep(await api.loanAct(loan.id, action, detail.due, detail.reason), action === "hide");
@@ -480,12 +501,30 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [api, sync, takeStep, unsay],
   );
 
+  const restoreVersion = useCallback(
+    async (revision: number) => {
+      // What the reader changed last has to be on the server first. The server keeps the
+      // library it replaces as an earlier version, and only what was saved is in it: a
+      // change that is still waiting here would be gone without a word.
+      if (!(await store.settled())) {
+        await store.flush();
+        if (!(await store.settled())) throw new ServerError("unsaved");
+      }
+      await api.restore(revision);
+      await store.reread();
+      // The books follow the loans as they stand today, not as they stood when that version was saved.
+      if (loansRef.current) bringInLine(loansRef.current);
+    },
+    [api, store, bringInLine],
+  );
+
   const value = useMemo<Library>(
     () => ({
       vault: state.vault,
       prefs,
       mutate,
       status: state.status,
+      revision: state.revision,
       problem: state.problem,
       pending: state.pending,
       retry,
@@ -504,21 +543,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       loans,
       askLoan,
       actLoan,
+      restoreVersion,
       notify,
+      notifyOffer: telling.offer,
+      allowNotifications: telling.allowNotifications,
+      putNotifyOfferAway: telling.putOfferAway,
     }),
-    [state, prefs, mutate, retry, settled, profile, setName, newCode, friends, libraries, friendsBusy, friendsProblem, lastSync, syncFriends, addFriend, removeFriend, loans, askLoan, actLoan, notify],
+    [state, prefs, mutate, retry, settled, profile, setName, newCode, friends, libraries, friendsBusy, friendsProblem, lastSync, syncFriends, addFriend, removeFriend, loans, askLoan, actLoan, restoreVersion, notify, telling.offer, telling.allowNotifications, telling.putOfferAway],
   );
 
   return (
     <Context.Provider value={value}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((toast) => (
-          <div key={toast.id} className="toast">
-            {toast.text}
-          </div>
-        ))}
-      </div>
+      <Notices notices={telling.notices} onFollow={telling.dismiss} />
     </Context.Provider>
   );
 }

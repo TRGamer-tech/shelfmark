@@ -8,6 +8,10 @@ import { ENVELOPE_VERSION, readEnvelope } from "./model.ts";
 export interface ServerFriend {
   id: string;
   name: string;
+  /** This friend came by my code: they typed it in, and I was not asked. False for a friend whose code I typed in. */
+  joined: boolean;
+  /** Since when we are friends, in milliseconds. Zero from a server that does not say. */
+  since: number;
 }
 
 export interface ServerLibrary {
@@ -48,7 +52,7 @@ export function readSyncAnswer(raw: unknown): SyncAnswer {
     code: text(source.code),
     name: text(source.name),
     time: number(source.time),
-    friends: items(source.friends).map((f) => ({ id: text(f.id), name: text(f.name) })),
+    friends: items(source.friends).map((f) => ({ id: text(f.id), name: text(f.name), joined: f.joined === true, since: number(f.since) })),
     libraries: items(source.libraries).map((l) => ({ owner: text(l.owner), at: number(l.at), payload: l.payload })),
     // "messages" is a leftover of the mailbox borrow requests used to travel through. It is always empty.
     loans: readLoans(source.loans),

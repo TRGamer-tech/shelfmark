@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { useI18n } from "@/components/i18n";
 import { useLibrary } from "@/components/library";
 import { LoanView } from "@/components/Loans";
+import { NotifyCard } from "@/components/NotifyCard";
 import { Card, EmptyHint, IconButton, PageHead } from "@/components/ui";
 import type { Loan, LoanSection } from "@/lib/loans";
 import { LOAN_SECTIONS, sectionOf } from "@/lib/loans";
@@ -51,6 +52,7 @@ export default function LoansPage() {
           ))}
         </section>
       ))}
+      <NotifyCard />
     </div>
   );
 }

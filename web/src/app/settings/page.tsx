@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth";
 import { AutoSaveField } from "@/components/AutoSave";
+import { HistoryCard } from "@/components/HistoryCard";
 import { useI18n } from "@/components/i18n";
 import { ImportCard, ImportFlow } from "@/components/ImportCard";
 import { LegalLinks } from "@/components/LegalLinks";
@@ -259,6 +260,8 @@ export default function SettingsPage() {
           </p>
         ) : null}
       </Card>
+
+      <HistoryCard />
 
       <ImportCard problem={importProblem} onFile={(file) => void chosen(file, "import")} />
 

@@ -175,6 +175,20 @@ export class VaultStore {
     }
   }
 
+  /**
+   * Reads the library again after something else than a save from here replaced it on
+   * the server: an earlier version that was brought back. Unlike refresh this says when
+   * it did not work, by throwing, so that the page does not go on showing the library
+   * that was replaced as if nothing had happened.
+   */
+  async reread(): Promise<void> {
+    while (this.flushing) await this.flushing;
+    const understood = this.take(await this.api.pull(0));
+    if (understood && this.pending.length === 0 && this.status !== "loading") this.status = "idle";
+    this.publish();
+    if (understood && this.pending.length > 0) void this.flush();
+  }
+
   /** The one way to change the library: shown at once, then saved. */
   mutate(change: Change): Promise<void> {
     this.pending.push(change);

@@ -4,7 +4,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Notice } from "../src/lib/notices.ts";
-import { NOTICES_AT_ONCE, NOTICE_MS, aboutLoan, withNotice, withoutAbout, withoutNotice } from "../src/lib/notices.ts";
+import { aboutLoan } from "../src/lib/news.ts";
+import { NOTICES_AT_ONCE, NOTICE_MS, stayOf, withNotice, withoutAbout, withoutNotice } from "../src/lib/notices.ts";
 
 const texts = (shown: Notice[]) => shown.map((notice) => notice.text);
 
@@ -56,4 +57,7 @@ test("a notice goes when what it is about is dealt with, and when its time is up
   assert.equal(withoutNotice(shown, 9), shown);
   // The time is up after a few seconds, long enough to read a sentence.
   assert.ok(NOTICE_MS >= 4000 && NOTICE_MS <= 10000);
+  // Two lines take longer to read than one.
+  assert.equal(stayOf({}), NOTICE_MS);
+  assert.ok(stayOf({ detail: "If you do not know them, remove them under Friends." }) > NOTICE_MS);
 });

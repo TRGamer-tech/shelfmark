@@ -3,6 +3,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { VaultVersion } from "../history.ts";
+import { readVersions } from "../history.ts";
 import type { Loan, LoanAction, LoanBook } from "../loans.ts";
 import { readLoan } from "../loans.ts";
 import type { PullAnswer, VaultApi } from "../sync.ts";
@@ -114,6 +116,18 @@ export function makeApi(client: SupabaseClient) {
       if (action === "agree" || action === "set_due") args.p_due = due ?? null;
       if (reason !== undefined && reason.trim() !== "") args.p_reason = reason.trim();
       return loanFrom(await call(client, "shelfmark_loan_act", args));
+    },
+    /** The earlier versions of the library that the server keeps, the newest first. Refused with "setup" by a server that keeps none yet. */
+    async history(): Promise<VaultVersion[]> {
+      return readVersions(await call(client, "shelfmark_vault_history"));
+    },
+    /**
+     * Makes an earlier version the library again, as a new revision. The server keeps the
+     * library it replaces in turn. Refused with "unknown_version" when that version is
+     * no longer kept.
+     */
+    async restore(revision: number): Promise<number> {
+      return number((await call(client, "shelfmark_vault_restore", { p_revision: revision })).revision);
     },
     async deleteAccount(): Promise<{ loginKept: boolean }> {
       const answer = await call(client, "shelfmark_delete_account");

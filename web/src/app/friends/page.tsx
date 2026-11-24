@@ -8,6 +8,7 @@ import type { FormEvent } from "react";
 import { Icon } from "@/components/icons";
 import { useI18n } from "@/components/i18n";
 import { useLibrary } from "@/components/library";
+import { NotifyCard } from "@/components/NotifyCard";
 import { Button, Card, ConfirmDialog, Dialog, EmptyHint, Field, IconButton, NameDialog, PageHead, Switch } from "@/components/ui";
 import { formatMoment } from "@/lib/dates";
 import { waitingCount } from "@/lib/loans";
@@ -177,6 +178,8 @@ export default function FriendsPage() {
           <Icon name="forward" />
         </Link>
       </Card>
+
+      <NotifyCard />
 
       <h2 className="section-title">{t("friends_libraries")}</h2>
       {friends.length === 0 ? <EmptyHint>{t("friends_empty")}</EmptyHint> : null}

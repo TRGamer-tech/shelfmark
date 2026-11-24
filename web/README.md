@@ -42,7 +42,9 @@ It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependen
 - `src/lib` holds the logic, free of React and tested by itself: the library document and
   its defaults (`model.ts`), every change a reader can make (`mutations.ts`), saving by
   revision with the conflict path (`sync.ts`), what friends get (`share.ts`, `social.ts`),
-  loans between friends (`loans.ts`), statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), themes (`theme.ts`),
+  loans between friends (`loans.ts`), what is news and how the reader is told (`news.ts`,
+  `notices.ts`, `browserNotices.ts`), the earlier versions the server keeps (`history.ts`),
+  statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), themes (`theme.ts`),
   the seven book catalogues (`catalogue/`), lists of books from other apps
   (`csvImport.ts`) and the reading timer (`timer.ts`). Most of it is a port of the Kotlin
   code of the app, file by file, and says so at the top.
@@ -135,8 +137,11 @@ sync, what passes through untouched, and that nothing is written over it), what 
 cover does to a book, which pictures a save leaves without a book and the requests for
 uploaded pictures, loans between friends (who may take which step, what is news and
 that it is told once, what waits and what is due, how the books follow the loans, with
-the values the app is tested with as well), the notices at the foot of the page, what
-the address says after every kind of mail link and where
+the values the app is tested with as well), friends who join and books that are due
+(told once, never from an answer that comes in late), the notices at the foot of the
+page, notifications of the browser (when the reader is asked, what goes to the
+browser and what stays in the page, one per loan, what a click leads to, against a
+stand-in for the browser), earlier versions of the library, what the address says after every kind of mail link and where
 each kind leads, the script that decides between front page and shelf, picking the newest
 release of the app, the words, numbers and colours of the front page, the imprint and the
 privacy notice (who is named on them, and what they say about the code), the reading
@@ -162,7 +167,9 @@ Set `SHELFMARK_E2E_DSN` if the database is not
 `host=127.0.0.1 port=54329 user=postgres dbname=shelfmark_web`. `npm run e2e -- --no-build`
 reuses the last build, and `npm run e2e -- --only=timer` runs only the tests whose name
 holds that word (for tests that stand on their own: most build on the ones before them).
-A stand-in server that already answers on one of the two ports is
+Every test browser gets a stand-in for the notifications of the browser, which notes what would
+be shown instead of showing it, and a way to take a page out of sight: a test browser
+does neither by itself. A stand-in server that already answers on one of the two ports is
 used as it is, so stop an old one after `supabase/dev_server.py` changed. The links of
 mails are played with the helpers of the stand-in (`/auth/v1/dev/confirm`,
 `/auth/v1/dev/recovery`), which hand out what the link in a real mail would lead to.
@@ -211,10 +218,13 @@ The website does what the app does, with these exceptions:
   backup as one `.json` file, which the phone reads as well, and imports a list as one
   `.csv` file. It says so when it is given a zip.
 - The library file of the desktop Shelfmark, which the phone accepts as a backup.
-- Telling the reader what happened in a loan while the site is closed, and reminding
-  them on the day a book is due back. The phone shows a notification for both. The
-  website says what is new the next time it is open, in a line that passes, and shows
-  what is due on the page of the loans and on the book.
+- Telling the reader anything while no tab of the site is open. There is no push
+  service: the phone looks in the background and shows a notification, the website
+  can only do that from an open tab (see "Notifications" below). What happened in the
+  meantime is said the next time the site is open.
+- "Which library counts?", with its choice to merge. That question comes up when a
+  phone that already holds books signs in to an account that holds others. The website
+  has no library before signing in, so there is never a second one to choose or merge.
 
 ## Notes
 
@@ -245,10 +255,47 @@ The website does what the app does, with these exceptions:
   nothing, or the news told in between would be new again. There is one notice per
   loan (`src/lib/notices.ts`): the next step takes the place of the one before, and
   the notice goes when the reader answers it, here or on another device, as the
-  notifications of the app do. Borrow requests as they were
+  notifications of the app do. A book that is due is told once for the day it was
+  due on, to the lender and to the borrower, as the phone reminds. Borrow requests as they were
   before, kept in the library and sent as messages or files, are gone: a library that
   still carries them is read and written without them, and such a file is told that it
   comes from an older version.
+- A friend who joins is news (`../supabase/README.md`, "Friends who join"). Whoever
+  types in a friend code is connected at once and its owner is never asked, so the
+  owner is told: a friend the server marks as `joined` whom this browser has not seen
+  before is announced once, with the hint that they can be removed and a way to the
+  friends page. Whoever the reader added themselves is not, and the first look after
+  signing in tells nobody. Which friends a browser has seen is kept with what it saw
+  of the loans, under the same rules (`src/lib/news.ts`): once per browser, and an
+  answer that comes in late changes nothing.
+- Notifications (`src/lib/browserNotices.ts`, `src/components/telling.tsx`). Every
+  piece of news is a notice at the foot of the page. A notice that was put up while
+  the page could not be seen waits there for the reader: its time only runs while the
+  page is in front. If the reader allowed it, the browser also shows a notification
+  for news that comes while the page is not in front: one per loan (the next step
+  takes the place of the one before, by the tag), one per friend, one per book that is
+  due. A click on it brings the tab to the front on the loans or the friends page. It
+  goes when what it is about is dealt with, here or on another device, and when the
+  page comes to the front, where the notice says the same. While the page is in front
+  nothing goes to the browser, so nothing is told twice. The site asks for the
+  permission only from the button of a card on the friends page and on the loans
+  page, never at page load and never a visitor. "Not now" puts the card away for the
+  browser (`shelfmark.notify`), a no in the browser leaves a line that says where to
+  change it, and a browser that cannot show notifications to a page is offered
+  nothing. A tab that is not in front looks at the server every minute only when it
+  could tell the browser, and only while no other tab of Shelfmark is in front (the
+  tab in front holds a lock the others can see): that one finds the news itself. With
+  no tab open nothing is told.
+- Earlier versions (`../supabase/README.md`, "Earlier versions"; `src/lib/history.ts`,
+  `src/components/HistoryCard.tsx`). The settings list the up to ten versions the
+  server keeps, with the day, the time and the number of books, and bring one back
+  after a question. What the reader changed last is saved first: the server keeps
+  the library it replaces as an earlier version, and only what was saved is in it. If
+  that cannot be saved, nothing is brought back, and the page says why. Afterwards the
+  library is read again at once, and the books follow the loans as they stand today.
+  A server without the two functions is told from one that keeps none yet. Pictures
+  are not brought back: an uploaded cover that was removed with its book stays removed,
+  and the book that is back shows the drawn cover.
 - The book search routes need no sign-in. They can only ask the seven catalogues the
   questions the app asks, so they are of little use to anybody else, but they are open.
 - Pictures of covers are loaded by the browser straight from wherever the catalogue

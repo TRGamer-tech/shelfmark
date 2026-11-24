@@ -174,17 +174,58 @@ test("the notice says when an uploaded picture goes, and what the end of a frien
   }
 });
 
+test("the notice says what the server keeps of earlier versions and of who joined, and how notifications are made", () => {
+  const sentences = {
+    en: [
+      // shelfmark.vault_history: ten at most, listed and brought back by the owner only, gone with the account.
+      "Up to ten earlier versions of that library",
+      "Only you can list them and bring one back.",
+      "What you delete from your library can therefore still be in an earlier version",
+      "removes your library and its earlier versions",
+      // shelfmark.friendships.joined and created_at.
+      "whether they came by your code or you by theirs",
+      "the app and the website tell you when somebody joined that way",
+      // No push service: the browser makes the notification from what the open page finds.
+      "Nothing is sent to a push service, so nothing can be told while no tab of Shelfmark is open.",
+      "the website asks only when you press the button for it",
+      "that you put the card about notifications away",
+    ],
+    de: [
+      "Bis zu zehn frühere Stände dieser Bibliothek",
+      "Nur du kannst sie auflisten und einen zurückholen.",
+      "kann darum noch in einem früheren Stand stehen",
+      "entfernt deine Bibliothek und ihre früheren Stände",
+      "ob die Person über deinen Code dazugekommen ist oder du über ihren",
+      "darum sagen dir App und Website, wenn jemand so dazugekommen ist",
+      "An einen Push-Dienst wird nichts geschickt, darum kann nichts gemeldet werden, solange kein Tab von Shelfmark offen ist.",
+      "die Website fragt nur, wenn du den Knopf dafür drückst",
+      "dass du die Karte zu den Mitteilungen weggelegt hast",
+    ],
+  };
+  for (const lang of ["en", "de"] as const) {
+    const whole = textOf(LEGAL[lang].privacy);
+    for (const sentence of sentences[lang]) assert.ok(whole.includes(sentence), `${lang}: ${sentence}`);
+  }
+  // No company is named for notifications: there is none between the browser and the reader.
+  assert.ok(!/Firebase|FCM|APNs|Web Push|OneSignal/i.test(textOf(LEGAL.en.privacy) + textOf(LEGAL.de.privacy)));
+  assert.equal(PRIVACY_AS_OF, "2026-11-24");
+});
+
 test("what the notice says about the browser is what the code keeps there", () => {
   // Every key the website writes into the storage of the browser, found in its own code.
-  const sources = ["../src/lib/supabase/api.ts", "../src/components/i18n.tsx", "../src/components/Providers.tsx", "../src/components/theme.tsx", "../src/components/timer.tsx", "../src/components/library.tsx", "../src/components/auth.tsx", "../src/app/login/page.tsx", "../src/app/settings/page.tsx"];
+  const sources = ["../src/lib/supabase/api.ts", "../src/components/i18n.tsx", "../src/components/Providers.tsx", "../src/components/theme.tsx", "../src/components/timer.tsx", "../src/components/library.tsx", "../src/components/telling.tsx", "../src/components/auth.tsx", "../src/app/login/page.tsx", "../src/app/settings/page.tsx"];
   const keys = new Set<string>();
   for (const path of sources) for (const match of read(path).matchAll(/["`](shelfmark\.[a-z]+)/g)) keys.add(match[1]);
   // One entry of the notice for each of them. A new key means a new sentence there.
-  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.lang", "shelfmark.loans", "shelfmark.name", "shelfmark.notice", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
+  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.lang", "shelfmark.loans", "shelfmark.name", "shelfmark.notice", "shelfmark.notify", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
   const section = LEGAL.en.privacy.sections.find((s) => s.id === "browser");
   const list = section?.blocks.find((block): block is { list: string[] } => "list" in block);
-  // Language, daily check, sign-in, theme (two keys), timer, loans, shared copy, name: eight entries, and the note for the next page as a sentence.
-  assert.equal(list?.list.length, 8);
+  // Language, daily check, sign-in, theme (two keys), timer, news told (loans, friends, due books), shared copy, name,
+  // the card about notifications: nine entries, and the note for the next page as a sentence.
+  assert.equal(list?.list.length, 9);
+  // What is remembered of the news is one entry of the browser (lib/news.ts, NewsMemory), and the notice names its three parts.
+  const told = list?.list.find((entry) => entry.includes("loans stood")) ?? "";
+  for (const part of ["which friends it has seen", "that they are due"]) assert.ok(told.includes(part), part);
   // What goes with the sign-in when the reader signs out is what the notice says goes.
   const signOut = /const signOut = [\s\S]*?\}, \[client\]\);/.exec(read("../src/components/auth.tsx"))?.[0] ?? "";
   for (const key of ["shelfmark.published", "shelfmark.timer", "shelfmark.loans"]) assert.ok(signOut.includes(key), `signing out removes ${key}`);
