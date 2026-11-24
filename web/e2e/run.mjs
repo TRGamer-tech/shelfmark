@@ -52,6 +52,11 @@ const zed = account("Zed");
 const today = Math.floor(Date.now() / 86_400_000);
 const isoToday = new Date(today * 86_400_000).toISOString().slice(0, 10);
 
+/** A day as the English and the German pages write it, and as a date field holds it. */
+const enDay = (day) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(day * 86_400_000));
+const deDay = (day) => new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(day * 86_400_000));
+const iso = (day) => new Date(day * 86_400_000).toISOString().slice(0, 10);
+
 const DESKTOP = { width: 1440, height: 900 };
 const PHONE = { width: 360, height: 780 };
 
@@ -111,6 +116,22 @@ const USED_UP = "#error=access_denied&error_code=otp_expired&error_description=E
 
 /** A call to the stand-in for Supabase, as the Android app or a mail program would make it. */
 const post = (base, path, body) => fetch(`${base}${path}`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+/** An account made by talking to the server directly, as the Android app would make it. Saying hello makes its profile, with a name or without one. */
+async function signUpByApi(who, name = who.name) {
+  const created = await (await post(SERVER, "/auth/v1/signup", { email: who.email, password: who.password })).json();
+  who.session = { token: created.access_token, id: created.user.id };
+  await rpc(who.session.token, "shelfmark_hello", name === "" ? {} : { p_name: name });
+}
+
+/** The loans of an account as the server lists them: one record that both sides read. */
+const loansOf = async (who) => (await rpc(who.session.token, "shelfmark_sync", { p_known: {} })).loans;
+
+/** A step in a loan, taken by talking to the server directly, as another device of that person would. */
+const act = (who, loanId, action, more = {}) => rpc(who.session.token, "shelfmark_loan_act", { p_loan: loanId, p_action: action, ...more });
+
+/** Makes a page look at the server now, as it does by itself every minute and whenever its window comes to the front. */
+const lookNow = (page) => page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
 const FRONT_LINK_FAILED =
   "This link does not work any more: it is too old, or it was used before. If your address is confirmed already, sign in. If signing in tells you to confirm your address, you can have the mail sent again from there. For a new password, choose “Forgot the password?”.";
@@ -1270,6 +1291,8 @@ async function main() {
   const benContext = await newContext({ viewport: PHONE, locale: "de-CH" });
   const benPage = await benContext.newPage();
   let benCode = "";
+  // The id of the wish Anna makes for a book of Ben's. It becomes her borrowed copy.
+  let annasMomo = 0;
 
   await test(
     "a second account, in German, on a phone-sized screen",
@@ -1314,7 +1337,7 @@ async function main() {
   );
 
   await test(
-    "exchange the friend code, see the friend's shelf, ask to borrow, answer yes",
+    "exchange the friend code, see the friend's shelf, ask for a book, and get a yes with a day",
     async () => {
       await page.goto(`${WEB}/friends`);
       await page.getByTestId("friend-code").filter({ hasText: /^[A-Z2-9]{5}-[A-Z2-9]{5}$/ }).waitFor();
@@ -1338,80 +1361,333 @@ async function main() {
       await page.getByTestId("friend-book").waitFor();
       equal(await page.getByTestId("friend-review").innerText(), "Zeit ist Leben.", "the friend's review");
       assert((await page.getByTestId("friend-book").innerText()).includes("Ben owns this book"), "who owns it");
-      await page.getByTestId("request-note").fill("For the holidays?");
+
+      // Anna asks for it, with a few words.
+      await page.getByTestId("loan-note-field").fill("For the holidays?");
       await page.getByTestId("ask-to-borrow").click();
-      await page.getByTestId("request-state").waitFor();
-      equal(await page.getByTestId("request-state").innerText(), "Request sent, waiting for Ben", "the request is on its way");
-      await until(async () => (await rpc(ben.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] })).messages.length === 1, "the request waits on the server for Ben");
-      const asked = await untilVault(anna, (v) => v.requests?.length === 1, "the request in Anna's library");
-      equal(asked.requests[0].incoming, false, "an outgoing request");
-      equal(asked.requests[0].bookTitle, "Momo", "the book asked for");
-      equal(asked.requests[0].peerName, "Ben", "whom it was asked of");
-      assert(/^[0-9a-f-]{36}$/.test(asked.requests[0].id), "the id of a request is a UUID");
-      assert(!("status" in asked.requests[0]), "waiting is the default and is left out");
+      const mine = page.getByTestId("my-loan");
+      await mine.locator('[data-testid="loan"][data-state="asked"]').waitFor();
+      equal(await mine.getByTestId("loan-standing").innerText(), `You asked on ${enDay(today)}. Waiting for Ben.`, "how the loan stands for Anna");
+      equal(await mine.getByTestId("loan-note").innerText(), "“For the holidays?”", "the note she wrote");
+      equal((await mine.locator(".loan-actions button").allInnerTexts()).join(" | "), "Take the question back", "what Anna can do now");
+      equal(await page.getByTestId("ask-to-borrow").count(), 0, "ways to ask a second time");
+      // On the server it is one record that both of them read.
+      const [asked] = await loansOf(anna);
+      equal([asked.state, asked.role, asked.peerName, asked.byMe].join(" "), "asked borrower Ben true", "the loan as Anna reads it");
+      equal(JSON.stringify(Object.entries(asked.book).sort()), JSON.stringify(Object.entries({ title: "Momo", authors: "Michael Ende", isbn: "", coverUrl: "", pageCount: 304, format: "UNKNOWN" }).sort()), "what was noted of the book");
+      equal(asked.note, "For the holidays?", "the note");
+      const benVault = (await vaultOf(ben)).vault;
+      const [benSees] = await loansOf(ben);
+      equal([benSees.id, benSees.state, benSees.role, benSees.peerName, benSees.byMe].join(" "), `${asked.id} asked lender Anna false`, "the same loan as Ben reads it");
+      equal(benSees.bookId, bookOf(benVault, "Momo").id, "the book it is about, by its id in Ben's library");
+      assert(/^[0-9a-f-]{36}$/.test(asked.id), "the id of a loan is a UUID");
+      // Neither library holds a copy of it: borrow requests in the vault are a thing of the past.
+      assert(!("requests" in (await vaultOf(anna)).vault) && !("requests" in benVault), "no requests in either library");
+
       // A friend's book can go straight onto my wishlist. It is not mine, so it is not offered to others.
       await page.getByTestId("add-to-wishlist").click();
       const wished = bookOf(await untilVault(anna, (v) => bookOf(v, "Momo"), "Momo on Anna's wishlist"), "Momo");
       equal(wished.status, "WISHLIST", "the list it went on");
       equal(wished.ownership, "NOT_OWNED", "who owns it");
       equal(wished.authors, "Michael Ende", "what came along from the friend's shelf");
+      annasMomo = wished.id;
       await page.keyboard.press("Escape");
+
+      // Ben finds something waiting: on the Friends item of the bar, on the friends page, and on the page of the loans. In German.
+      await benPage.goto(`${WEB}/friends`);
+      const badge = benPage.locator('.bottombar [data-testid="nav-friends"] .nav-badge');
+      await badge.waitFor();
+      equal(await badge.innerText(), "1", "what waits for Ben, on the navigation");
+      equal(await benPage.getByTestId("loans-waiting").innerText(), "1 Ausleihe wartet auf dich", "the same on the friends page");
+      await benPage.getByTestId("open-loans").click();
+      await benPage.getByTestId("loans-page").waitFor();
+      equal(benPage.url(), `${WEB}/friends/loans`, "the address of the loans");
+      equal(await benPage.locator("h1").innerText(), "Ausleihen", "the headline");
+      const todo = benPage.getByTestId("loans-todo");
+      await todo.getByTestId("loan-card").waitFor();
+      equal((await todo.locator("h2").innerText()).toLowerCase(), "wartet auf dich", "the section it is listed in");
+      equal(await todo.getByTestId("loan-line").innerText(), "«Momo» für Anna", "which book, and who");
+      equal(await todo.getByTestId("loan-standing").innerText(), "Anna möchte dieses Buch ausleihen.", "how the loan stands for Ben");
+      equal(await todo.getByTestId("loan-note").innerText(), "«For the holidays?»", "the note Anna wrote");
+      equal((await todo.locator(".loan-actions button").allInnerTexts()).join(" | "), "Ja sagen | Nein sagen", "what Ben can do now");
+      deepAudit(await audit(benPage), "loans page on a phone");
+      await benPage.waitForTimeout(300);
+      await shot(benPage, "loans-question-phone");
+
+      // The page of the book shows the same question, with the same buttons.
+      await todo.getByTestId("loan-open-book").click();
+      await benPage.getByTestId("book-page").waitFor();
+      const onBook = benPage.getByTestId("book-loans");
+      equal(await onBook.getByTestId("loan-standing").innerText(), "Anna möchte dieses Buch ausleihen.", "the question on the page of the book");
+      // A yes comes with the day the book is wanted back by, or with no fixed date.
+      await onBook.getByTestId("loan-agree").click();
+      const yes = benPage.getByTestId("loan-yes-dialog");
+      await yes.waitFor();
+      const asks = await yes.innerText();
+      assert(asks.includes("«Momo» an Anna verleihen?") && asks.includes("Das Buch ist für Anna reserviert, bis du es übergibst. Bis wann möchtest du es zurück?"), `what the yes asks: ${asks}`);
+      assert(asks.includes("Bis zu einem Datum") && asks.includes("Kein festes Datum"), "the two choices");
+      assert(await benPage.getByTestId("due-pick").isChecked(), "a date is what is offered first");
+      equal(await benPage.getByTestId("due-date").inputValue(), iso(today + 28), "the day offered: in four weeks");
+      equal(await benPage.getByTestId("due-date").getAttribute("min"), iso(today), "the earliest day that can be picked");
+      // A day that has passed is no day to ask a book back by.
+      await benPage.getByTestId("due-date").fill(iso(today - 1));
+      assert(await benPage.getByTestId("due-confirm").isDisabled(), "a day before today cannot be confirmed");
+      deepAudit(await audit(benPage), "dialog for a yes");
+      await shot(benPage, "loan-yes-dialog-phone");
+      await benPage.getByTestId("due-date").fill(iso(today + 14));
+      await benPage.getByTestId("due-confirm").click();
+      await onBook.locator('[data-testid="loan"][data-state="agreed"]').waitFor();
+      equal(await onBook.getByTestId("loan-standing").innerText(), "Reserviert für Anna.", "after the yes");
+      equal(await onBook.getByTestId("loan-due").innerText(), `Zurück bis ${deDay(today + 14)}`, "the day on the loan");
+      equal((await onBook.locator(".loan-actions button").allInnerTexts()).join(" | "), "Ich habe es übergeben | Datum ändern | Zusage zurücknehmen", "what Ben can do now");
+      const [agreed] = await loansOf(ben);
+      equal([agreed.state, agreed.dueOn, agreed.byMe].join(" "), `agreed ${today + 14} true`, "the loan on the server after the yes");
+      // Reserved is not lent: the book counts as lent only once it is handed over. Lending by hand still works as it did.
+      assert(!("lentTo" in bookOf((await vaultOf(ben)).vault, "Momo")), "a reserved book is not marked as lent");
+      equal(await benPage.getByTestId("mark-lent").count(), 1, "the way to mark it as lent by hand");
+      // But nobody else can ask for it now: Ben's shelf is published again and says so
+      // ("available" is left out when it is false, as every default is).
+      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books[0].available !== true, "the reserved book is no longer offered on Ben's shelf");
+
+      // Anna hears of the yes while the site is open, and finds the loan on Ben's shelf.
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Ben said yes to “Momo”" }).waitFor();
+      await page.goto(`${WEB}/friends`);
+      await page.getByTestId("friend-card").getByTestId("open-friend").click();
+      await page.getByTestId("cover").click();
+      const reserved = page.getByTestId("my-loan").locator('[data-testid="loan"][data-state="agreed"]');
+      await reserved.waitFor();
+      equal(await reserved.getByTestId("loan-standing").innerText(), "Ben said yes. The book is reserved for you.", "the yes at Anna's");
+      equal(await reserved.getByTestId("loan-due").innerText(), `Back by ${enDay(today + 14)}`, "the day at Anna's");
+      equal(await reserved.getByTestId("loan-hint").innerText(), "Arrange the handover between you. Ben confirms it first, then you.", "who confirms the handover first");
+      // The lender says first that the book was handed over: until then there is nothing for Anna to confirm.
+      equal((await reserved.locator(".loan-actions button").allInnerTexts()).join(" | "), "Take the question back", "what Anna can do while it is reserved");
+      equal(await page.locator('.sidebar [data-testid="nav-friends"] .nav-badge').count(), 0, "nothing waits for Anna");
+      deepAudit(await audit(page), "a friend's book with a loan of mine");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-reserved");
+      await page.keyboard.press("Escape");
+    },
+    () => page,
+  );
+
+  await test(
+    "the book changes hands when both have said so, stands on the borrower's shelf while it is out, and is back when both have said so",
+    async () => {
+      const loanId = (await loansOf(ben))[0].id;
+      const momo = bookOf((await vaultOf(ben)).vault, "Momo");
+      const atBens = (state) => benPage.locator(`[data-testid="loan"][data-loan="${loanId}"][data-state="${state}"]`);
+      const atAnnas = (state) => page.locator(`[data-testid="loan"][data-loan="${loanId}"][data-state="${state}"]`);
+      const buttons = (loan) => loan.locator(".loan-actions button").allInnerTexts().then((all) => all.join(" | "));
+
+      // Ben says that he handed it over. That alone does not make it lent.
+      await benPage.goto(`${WEB}/friends/loans`);
+      await atBens("agreed").getByTestId("loan-hand").click();
+      await atBens("handed").waitFor();
+      equal(await atBens("handed").getByTestId("loan-standing").innerText(), "Du hast gesagt, du hast es übergeben. Warte auf die Bestätigung von Anna.", "after Ben's word");
+      equal(await buttons(atBens("handed")), "Doch noch nicht übergeben | Datum ändern | Zusage zurücknehmen", "what Ben can do now");
+      assert(!("lentTo" in bookOf((await vaultOf(ben)).vault, "Momo")), "handed over by one side is not lent yet");
+
+      // Now it is Anna's turn, and the site says so wherever she is.
+      await page.goto(`${WEB}/friends`);
+      await page.locator(".toast").filter({ hasText: "Ben says “Momo” was handed over to you" }).waitFor();
+      const annaBadge = page.locator('.sidebar [data-testid="nav-friends"] .nav-badge');
+      await annaBadge.waitFor();
+      equal(await annaBadge.innerText(), "1", "what waits for Anna, on the navigation");
+      equal(await page.getByTestId("loans-waiting").innerText(), "1 loan waits for you", "the same on the friends page");
+      await page.getByTestId("open-loans").click();
+      await page.getByTestId("loans-todo").locator(`[data-loan="${loanId}"]`).waitFor();
+      equal(await atAnnas("handed").getByTestId("loan-line").innerText(), "“Momo” from Ben", "which book, and who");
+      equal(await atAnnas("handed").getByTestId("loan-standing").innerText(), "Ben says the book was handed over to you. Do you have it?", "the question to Anna");
+      equal(await buttons(atAnnas("handed")), "I have it | I did not get it", "what Anna can do now");
+      deepAudit(await audit(page), "loans page");
+      await page.waitForTimeout(300);
+      await shot(page, "loans-waiting");
+      // She does not have it yet, and says so. It is reserved again, and Ben hears of it.
+      await atAnnas("handed").getByTestId("loan-not_received").click();
+      await atAnnas("agreed").waitFor();
+      await lookNow(benPage);
+      await benPage.locator(".toast").filter({ hasText: "Anna hat «Momo» nicht bekommen" }).waitFor();
+      await atBens("agreed").getByTestId("loan-hand").click();
+      await atBens("handed").waitFor();
+      await lookNow(page);
+      await atAnnas("handed").getByTestId("loan-receive").click();
+      await atAnnas("on_loan").waitFor();
+
+      // On loan. For Anna it is listed under what she borrowed.
+      await page.getByTestId("loans-borrowed").locator(`[data-loan="${loanId}"]`).waitFor();
+      equal(await page.getByTestId("loans-todo").count(), 0, "things waiting for Anna");
+      equal(await atAnnas("on_loan").getByTestId("loan-standing").innerText(), `Borrowed from Ben since ${enDay(today)}.`, "on loan, at Anna's");
+      equal(await atAnnas("on_loan").getByTestId("loan-due").innerText(), `Back by ${enDay(today + 14)}`, "the day");
+      equal(await atAnnas("on_loan").getByTestId("loan-hint").innerText(), "When you give the book back, say so here. Ben confirms it then.", "who confirms the return first");
+      equal(await buttons(atAnnas("on_loan")), "I gave it back", "what Anna can do now");
+      // The book stands on her own shelf as borrowed. Her wish for it is that copy: there is no second Momo.
+      const withCopy = await untilVault(anna, (v) => bookOf(v, "Momo")?.ownership === "BORROWED", "Momo on Anna's shelf as borrowed");
+      const copy = bookOf(withCopy, "Momo");
+      equal(withCopy.books.filter((b) => b.title === "Momo").length, 1, "copies of Momo in Anna's library");
+      equal(copy.id, annasMomo, "the wish became the borrowed copy");
+      equal([copy.borrowedFrom, copy.loanId, copy.status].join(" "), `Ben ${loanId} WISHLIST`, "what the copy says");
+      // Its page shows the loan with its steps, in the place of the free "borrowed from" field.
+      await atAnnas("on_loan").getByTestId("loan-open-book").click();
+      await page.getByTestId("book-page").waitFor();
+      equal(page.url(), `${WEB}/book?id=${copy.id}`, "the page of the borrowed copy");
+      const onCopy = page.getByTestId("book-loans");
+      equal(await onCopy.getByTestId("loan-standing").innerText(), `Borrowed from Ben since ${enDay(today)}.`, "the loan on the page of the copy");
+      equal(await onCopy.getByTestId("loan-give_back").innerText(), "I gave it back", "the step Anna can take there");
+      equal(await page.getByTestId("borrowed-from").count(), 0, "free fields for whom it was borrowed from");
+      equal(await page.getByTestId("own-BORROWED").getAttribute("aria-pressed"), "true", "what the book says about whose it is");
+      assert(await page.getByTestId("own-OWNED").isDisabled(), "while the loan runs, the loan says whose book it is");
+      deepAudit(await audit(page), "page of a borrowed copy");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-borrowed-copy");
+      // The copy cannot be deleted while the loan runs: the next look at the server would bring it back. The page says so.
+      await page.getByTestId("delete-book").click();
+      const tied = page.getByTestId("book-in-loan");
+      await tied.waitFor();
+      assert((await tied.innerText()).includes("This book is part of a loan. End the loan first."), "why the borrowed copy cannot be deleted");
+      equal(await page.getByTestId("confirm").count(), 0, "ways to delete it all the same");
+      equal(await tied.getByTestId("to-loans").getAttribute("href"), "/friends/loans", "where the loan can be ended");
+      await page.keyboard.press("Escape");
+      await tied.waitFor({ state: "detached" });
+      assert(bookOf((await vaultOf(anna)).vault, "Momo"), "the copy is still in Anna's library");
+      // And on the shelf it stands with the others.
       await page.goto(`${WEB}/?status=WISHLIST`);
       await page.getByTestId("shelf-WISHLIST").waitFor();
-      await page.locator('[data-testid="spine"], [data-testid="leaning"]').first().click();
-      await page.getByTestId("delete-book").click();
-      await page.getByTestId("confirm").click();
-      await untilVault(anna, (v) => !bookOf(v, "Momo"), "the wish taken back");
 
-      // Ben finds the request waiting, with the note, in German.
-      await benPage.goto(`${WEB}/friends/requests`);
-      const incoming = benPage.getByTestId("incoming-request");
-      await incoming.waitFor();
-      const question = await incoming.innerText();
-      assert(question.includes("Anna") && question.includes("Momo") && question.includes("For the holidays?"), `the question Ben is asked: ${question}`);
-      // The request is in Ben's library exactly once, however often the page looks.
-      await benPage.reload();
-      await benPage.getByTestId("incoming-request").waitFor();
-      equal((await vaultOf(ben)).vault.requests.length, 1, "copies of the request in Ben's library");
-      // The message was taken off the server once it was safely in the library.
-      await until(async () => (await rpc(ben.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] })).messages.length === 0, "the message is acknowledged");
-
-      await benPage.getByTestId("answer-yes").click();
-      await benPage.getByTestId("request-status").filter({ hasText: "Zugesagt" }).waitFor();
-      // The page says when the answer has left.
-      await benPage.getByText("Gesendet", { exact: true }).waitFor();
-      const answered = await untilVault(ben, (v) => v.requests[0].status === "ACCEPTED", "the answer in Ben's library");
-      // Saying yes marks Ben's copy as lent to Anna.
-      equal(bookOf(answered, "Momo").lentTo, "Anna", "who has the book now");
-      equal(bookOf(answered, "Momo").lentSince, today, "since when");
-      const momo = bookOf(answered, "Momo");
+      // Ben hears that she has it. Now his copy is lent: to her, since today, by this loan.
+      await lookNow(benPage);
+      await benPage.locator(".toast").filter({ hasText: "Anna hat «Momo» jetzt" }).waitFor();
+      const lent = bookOf(await untilVault(ben, (v) => bookOf(v, "Momo").lentTo === "Anna", "Momo lent to Anna in Ben's library"), "Momo");
+      equal([lent.lentSince, lent.loanId].join(" "), `${today} ${loanId}`, "since when, and by which loan");
+      await benPage.getByTestId("loans-lent").locator(`[data-loan="${loanId}"]`).waitFor();
+      equal(await atBens("on_loan").getByTestId("loan-standing").innerText(), `Verliehen an Anna seit ${deDay(today)}.`, "on loan, at Ben's");
+      equal(await buttons(atBens("on_loan")), "Datum ändern | Ich habe es schon zurück", "what Ben can do now");
+      // On the page of his book the loan stands where lending by hand was.
       await benPage.goto(`${WEB}/book?id=${momo.id}`);
-      await benPage.getByTestId("lent-to").waitFor();
-      assert((await benPage.getByTestId("lent-to").innerText()).startsWith("Verliehen an Anna seit"), "the book page says it is lent");
+      await atBens("on_loan").waitFor();
+      equal(await benPage.getByTestId("lent-to").count() + (await benPage.getByTestId("returned").count()) + (await benPage.getByTestId("mark-lent").count()), 0, "controls for lending by hand while the loan has the book");
+      // Nor can the lender delete the book that is out: the loan would point at nothing.
+      await benPage.getByTestId("delete-book").click();
+      await benPage.getByTestId("book-in-loan").waitFor();
+      assert((await benPage.getByTestId("book-in-loan").innerText()).includes("Dieses Buch ist Teil einer Ausleihe. Schliess die Ausleihe zuerst ab."), "why the lent book cannot be deleted, in German");
+      await benPage.getByTestId("book-in-loan").getByRole("button", { name: "OK" }).click();
+      await benPage.getByTestId("book-in-loan").waitFor({ state: "detached" });
+      assert(bookOf((await vaultOf(ben)).vault, "Momo"), "the book is still in Ben's library");
       await benPage.goto(`${WEB}/`);
       await benPage.getByTestId("filter-lent").waitFor();
       assert((await benPage.getByTestId("filter-lent").innerText()).includes("Verliehen"), "a chip for what is lent out");
 
-      // The answer arrives at Anna's, and the book is no longer free to borrow.
-      await page.goto(`${WEB}/friends/requests`);
-      await page.locator('[data-testid="request-status"][data-status="ACCEPTED"]').waitFor();
-      equal(await page.getByTestId("request-status").innerText(), "Accepted", "the answer at Anna's");
-      const informed = await untilVault(anna, (v) => v.requests[0].status === "ACCEPTED" && v.requests[0].answeredAt > 0, "the answer in Anna's library");
-      equal(informed.requests.length, 1, "requests in Anna's library");
-      await page.goto(`${WEB}/friends`);
-      await page.getByTestId("sync-now").click();
-      await page.getByTestId("friend-card").getByTestId("open-friend").click();
-      await page.getByTestId("cover").click();
-      await page.getByTestId("request-state").waitFor();
-      equal(await page.getByTestId("request-state").innerText(), "Ben said yes", "the state of the request on the friend's book");
-      await page.keyboard.press("Escape");
+      // Ben changes the day: no fixed date after all. Anna is told.
+      await benPage.goto(`${WEB}/book?id=${momo.id}`);
+      await atBens("on_loan").getByTestId("loan-set_due").click();
+      const change = benPage.getByTestId("loan-due-dialog");
+      await change.waitFor();
+      assert((await change.innerText()).includes("Bis wann möchtest du es zurück?"), "what the dialog asks");
+      equal(await benPage.getByTestId("due-date").inputValue(), iso(today + 14), "the day that stands now");
+      await benPage.getByTestId("due-open").check();
+      equal(await benPage.getByTestId("due-date").count(), 0, "date fields for no fixed date");
+      await benPage.getByTestId("due-confirm").click();
+      await benPage.locator('[data-testid="loan-due"]').filter({ hasText: "Kein festes Datum" }).waitFor();
+      equal((await loansOf(ben))[0].dueOn, null, "the day on the server");
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Ben changed the date for “Momo”" }).waitFor();
+
+      // Time passes and the day comes. (The page offers no day in the past, so the server is told directly.)
+      await act(ben, loanId, "set_due", { p_due: today });
+      await lookNow(benPage);
+      // On the day itself the book is due, and not late yet.
+      await benPage.locator('[data-testid="loan-due"][data-late="false"]').filter({ hasText: "Heute fällig" }).waitFor();
+      const dueAtBens = benPage.locator('[data-testid="loan-due"][data-late="true"]');
+      await act(ben, loanId, "set_due", { p_due: today - 2 });
+      await lookNow(benPage);
+      await dueAtBens.filter({ hasText: `War am ${deDay(today - 2)} fällig` }).waitFor();
+      const warning = (locator) => locator.evaluate((line) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--danger-text)";
+        document.body.appendChild(probe);
+        const same = getComputedStyle(line).color === getComputedStyle(probe).color;
+        probe.remove();
+        return same;
+      });
+      assert(await warning(dueAtBens), "what is due is written in the warning colour, at the lender's");
+      await benPage.waitForTimeout(300);
+      await shot(benPage, "loan-overdue-phone");
+      // Both sides see it, on the page of the loans and on the book.
+      await page.goto(`${WEB}/friends/loans`);
+      const dueAtAnnas = page.locator('[data-testid="loan-due"][data-late="true"]');
+      await dueAtAnnas.waitFor();
+      equal(await dueAtAnnas.innerText(), `Was due back on ${enDay(today - 2)}`, "the overdue loan at the borrower's");
+      assert(await warning(dueAtAnnas), "in the warning colour there as well");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-overdue");
+      await page.goto(`${WEB}/book?id=${copy.id}`);
+      await dueAtAnnas.waitFor();
+
+      // Anna gives it back and says so. That alone does not end the loan.
+      await atAnnas("on_loan").getByTestId("loan-give_back").click();
+      await atAnnas("given_back").waitFor();
+      equal(await atAnnas("given_back").getByTestId("loan-standing").innerText(), "You said you gave it back. Waiting for Ben to confirm.", "after Anna's word");
+      equal(await buttons(atAnnas("given_back")), "Not given back yet", "what Anna can do now");
+      equal(bookOf((await vaultOf(ben)).vault, "Momo").lentTo, "Anna", "still lent until Ben has it back");
+      // Ben finds it waiting, and has not got it.
+      await benPage.goto(`${WEB}/friends/loans`);
+      await benPage.locator(".toast").filter({ hasText: "Anna sagt, «Momo» sei zurückgegeben" }).waitFor();
+      await benPage.getByTestId("loans-todo").locator(`[data-loan="${loanId}"]`).waitFor();
+      equal(await benPage.locator('.bottombar [data-testid="nav-friends"] .nav-badge').innerText(), "1", "what waits for Ben");
+      equal(await atBens("given_back").getByTestId("loan-standing").innerText(), "Anna sagt, das Buch sei zurückgegeben. Hast du es?", "the question to Ben");
+      equal(await buttons(atBens("given_back")), "Ich habe es zurück | Ich habe es nicht zurückbekommen | Datum ändern", "what Ben can do now");
+      await atBens("given_back").getByTestId("loan-not_returned").click();
+      await atBens("on_loan").waitFor();
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Ben did not get “Momo” back" }).waitFor();
+      await atAnnas("on_loan").getByTestId("loan-give_back").click();
+      await atAnnas("given_back").waitFor();
+      await lookNow(benPage);
+      await atBens("given_back").getByTestId("loan-take_back").click();
+      await atBens("returned").waitFor();
+
+      // Back. Ben's copy is at home again, and can be asked for again.
+      await benPage.getByTestId("loans-past").locator(`[data-loan="${loanId}"]`).waitFor();
+      equal(await atBens("returned").getByTestId("loan-standing").innerText(), `Zurück von Anna seit ${deDay(today)}.`, "the loan at its end, at Ben's");
+      equal(await buttons(atBens("returned")), "Weglegen", "what is left to do with it");
+      equal(await atBens("returned").getByTestId("loan-due").count(), 0, "days on a loan that is over");
+      const home = bookOf(await untilVault(ben, (v) => !("lentTo" in bookOf(v, "Momo")), "Momo at home in Ben's library"), "Momo");
+      assert(!("loanId" in home) && !("lentSince" in home), "nothing of the loan is left on Ben's copy");
+      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books[0].available === true, "the book is offered on Ben's shelf again");
+      // Anna's copy stays with her as read and not hers, with what she noted in it.
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Ben has “Momo” back" }).waitFor();
+      const kept = bookOf(await untilVault(anna, (v) => bookOf(v, "Momo").ownership === "NOT_OWNED", "Anna's copy says: not mine"), "Momo");
+      equal([kept.borrowedFrom, kept.loanId, kept.status].join(" "), `Ben ${loanId} WISHLIST`, "what the copy keeps");
+      await atAnnas("returned").waitFor();
+      equal(await atAnnas("returned").getByTestId("loan-standing").innerText(), `Given back to Ben on ${enDay(today)}.`, "the loan at its end, at Anna's");
+      equal(await page.getByTestId("own-NOT_OWNED").getAttribute("aria-pressed"), "true", "whose the copy is now");
+      assert(await page.getByTestId("own-OWNED").isEnabled(), "after the return it is hers to say whose it is");
+      // A loan that is over can be put away, by each side for itself.
+      await atAnnas("returned").getByTestId("loan-hide").click();
+      await page.getByTestId("book-loans").waitFor({ state: "detached" });
+      equal((await loansOf(anna)).length, 0, "loans Anna still sees");
+      equal((await loansOf(ben)).length, 1, "loans Ben still sees");
+      // The loan is put away, so the copy is a book borrowed by hand like any other. Saying by
+      // hand that it is hers now (she bought it) ends what the book says about the loan.
+      assert(bookOf((await vaultOf(anna)).vault, "Momo").loanId, "the copy still names the loan it came in by");
+      await page.getByTestId("own-OWNED").click();
+      const hers = bookOf(await untilVault(anna, (v) => bookOf(v, "Momo").ownership === undefined, "Momo is Anna's own now"), "Momo");
+      assert(!("loanId" in hers), "a loan ended by hand is forgotten by the book");
+      // She does not keep it after all. Deleted now, it stays deleted: the loan is over.
+      await page.getByTestId("delete-book").click();
+      await page.getByTestId("confirm").click();
+      await untilVault(anna, (v) => !bookOf(v, "Momo"), "the copy taken off Anna's shelf");
+      await lookNow(page);
+      await page.waitForTimeout(600);
+      assert(!bookOf((await vaultOf(anna)).vault, "Momo"), "a deleted copy does not come back after the return");
 
       // Ben stops sharing ratings: the review disappears from what Anna sees.
       await benPage.goto(`${WEB}/friends`);
       await benPage.getByTestId("share-ratings").click();
       await untilVault(ben, (v) => v.prefs.shareRatings === false, "ratings no longer shared");
       await until(async () => {
-        const news = await rpc(anna.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] });
+        const news = await rpc(anna.session.token, "shelfmark_sync", { p_known: {} });
         return news.libraries[0]?.payload.library.includesRatings === false;
       }, "the published library without ratings");
       await page.goto(`${WEB}/friends`);
@@ -1420,75 +1696,433 @@ async function main() {
       await page.getByTestId("cover").click();
       await page.getByTestId("friend-book").waitFor();
       equal(await page.getByTestId("friend-opinion").count(), 0, "the friend's opinion once they stopped sharing it");
+      // After a loan that is over, the book can be asked for again.
+      equal(await page.getByTestId("ask-to-borrow").count(), 1, "the way to ask again");
       await page.keyboard.press("Escape");
     },
     () => page,
   );
 
   await test(
-    "what a friend publishes under another name, or sends in another's name, is ignored",
+    "a question taken back, a no with its reason, a yes taken back, and somebody who is told that the book went to another",
     async () => {
-      // Carl becomes Anna's friend and then misbehaves, talking to the server directly.
+      const momo = bookOf((await vaultOf(ben)).vault, "Momo");
+      const openMomo = async () => {
+        await page.goto(`${WEB}/friends`);
+        await page.getByTestId("friend-card").filter({ hasText: "Ben" }).getByTestId("open-friend").click();
+        await page.getByTestId("cover").click();
+        await page.getByTestId("friend-book").waitFor();
+      };
+      const buttons = (loan) => loan.locator(".loan-actions button").allInnerTexts().then((all) => all.join(" | "));
+
+      // Anna asks again, and thinks better of it.
+      await openMomo();
+      await page.getByTestId("ask-to-borrow").click();
+      const mine = page.getByTestId("my-loan");
+      await mine.locator('[data-state="asked"]').waitFor();
+      equal(await mine.getByTestId("loan-note").count(), 0, "notes when none was written");
+      await mine.getByTestId("loan-withdraw").click();
+      const last = page.getByTestId("last-loan");
+      await last.locator('[data-state="withdrawn"]').waitFor();
+      equal(await last.getByTestId("loan-standing").innerText(), "You took the question back.", "after taking the question back");
+      equal(await buttons(last), "Put away", "what is left to do with it");
+      // Asking again is possible right below.
+      equal(await page.getByTestId("ask-to-borrow").count(), 1, "the way to ask again");
+      await benPage.goto(`${WEB}/friends/loans`);
+      const withdrawnAtBens = benPage.getByTestId("loans-past").locator('[data-state="withdrawn"]');
+      await withdrawnAtBens.waitFor();
+      equal(await withdrawnAtBens.getByTestId("loan-standing").innerText(), "Anna hat die Anfrage zurückgezogen.", "the question taken back, at Ben's");
+      equal(await benPage.locator('.bottombar [data-testid="nav-friends"] .nav-badge').count(), 0, "nothing waits for Ben");
+      await last.getByTestId("loan-hide").click();
+      await last.waitFor({ state: "detached" });
+
+      // She asks once more, and Ben says no, with a reason.
+      await page.getByTestId("ask-to-borrow").click();
+      await mine.locator('[data-state="asked"]').waitFor();
+      await lookNow(benPage);
+      await benPage.locator(".toast").filter({ hasText: "Anna möchte «Momo» ausleihen" }).waitFor();
+      const question = benPage.getByTestId("loans-todo").locator('[data-testid="loan"]');
+      await question.getByTestId("loan-decline").click();
+      const no = benPage.getByTestId("loan-no-dialog");
+      await no.waitFor();
+      assert((await no.innerText()).includes("Anna absagen?"), "what the no asks");
+      equal(await no.locator("label").innerText(), "Grund (optional)", "the reason may be left out");
+      await benPage.getByTestId("reason-field").fill("Das lese ich gerade selbst");
+      await benPage.getByTestId("reason-confirm").click();
+      const declinedAtBens = benPage.getByTestId("loans-past").locator('[data-state="declined"]');
+      await declinedAtBens.waitFor();
+      equal(await declinedAtBens.getByTestId("loan-standing").innerText(), "Du hast Anna abgesagt.", "the no, at Ben's");
+      equal(await declinedAtBens.getByTestId("loan-reason").innerText(), "Grund: Das lese ich gerade selbst", "the reason, at Ben's");
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Ben said no to “Momo”" }).waitFor();
+      await last.locator('[data-state="declined"]').waitFor();
+      equal(await last.getByTestId("loan-standing").innerText(), "Ben said no.", "the no, at Anna's");
+      equal(await last.getByTestId("loan-reason").innerText(), "Reason: Das lese ich gerade selbst", "the reason, at Anna's");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-declined");
+      await last.getByTestId("loan-hide").click();
+      await last.waitFor({ state: "detached" });
+
+      // Carl is a friend of Ben's too. He talks to the server directly, as another device would.
       const response = await fetch(`${SERVER}/auth/v1/signup`, { method: "POST", headers: { apikey: KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email: carl.email, password: carl.password }) });
       const session = await response.json();
       carl.session = { token: session.access_token, id: session.user.id };
       await rpc(carl.session.token, "shelfmark_hello", { p_name: "Carl" });
+      await rpc(carl.session.token, "shelfmark_add_friend", { p_code: benCode });
+      const ask = (who) => rpc(who.session.token, "shelfmark_loan_ask", { p_friend: ben.session.id, p_book: momo.id, p_info: { title: "Momo", authors: "Michael Ende" } });
+
+      // While Anna still looks at the book as free, Carl asks and Ben says yes. Her question comes too late, and she is told why.
+      const carls = await ask(carl);
+      await act(ben, carls.id, "agree", { p_due: null });
+      await page.getByTestId("ask-to-borrow").click();
+      equal(await page.getByTestId("ask-problem").innerText(), "This book is reserved for somebody else or on loan.", "asking for a book that somebody else has reserved");
+      equal(await page.getByTestId("my-loan").count(), 0, "loans made by a question that was refused");
+      equal((await loansOf(anna)).length, 0, "loans of Anna's on the server");
+
+      // Ben takes the yes back. The page asks first, and a reason can be given.
+      await benPage.goto(`${WEB}/friends/loans`);
+      const reservedForCarl = benPage.getByTestId("loans-open").locator(`[data-loan="${carls.id}"]`);
+      await reservedForCarl.waitFor();
+      equal(await reservedForCarl.getByTestId("loan-standing").innerText(), "Reserviert für Carl.", "the book reserved for Carl");
+      equal(await reservedForCarl.getByTestId("loan-due").innerText(), "Kein festes Datum", "a yes without a day");
+      await reservedForCarl.getByTestId("loan-cancel").click();
+      const sure = benPage.getByTestId("loan-cancel-dialog");
+      await sure.waitFor();
+      assert((await sure.innerText()).includes("Zusage zurücknehmen?"), "the question before the yes is taken back");
+      equal((await loansOf(carl))[0].state, "agreed", "nothing happens before Ben confirms");
+      await benPage.getByTestId("reason-field").fill("Ich brauche es doch selbst");
+      await benPage.getByTestId("reason-confirm").click();
+      const cancelled = benPage.getByTestId("loans-past").locator(`[data-loan="${carls.id}"][data-state="cancelled"]`);
+      await cancelled.waitFor();
+      equal(await cancelled.getByTestId("loan-standing").innerText(), "Du hast die Zusage zurückgenommen.", "the yes taken back, at Ben's");
+      const [told] = await loansOf(carl);
+      equal([told.state, told.reason, told.byMe].join(" | "), "cancelled | Ich brauche es doch selbst | false", "what Carl is told");
+
+      // Two people ask for the same book. Whoever does not get it is told that it went to somebody else. There is no waiting list.
+      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books[0].available === true, "the book is offered on Ben's shelf again");
+      await openMomo();
+      await page.getByTestId("ask-to-borrow").click();
+      await mine.locator('[data-state="asked"]').waitFor();
+      const annas = (await loansOf(anna))[0];
+      const second = await ask(carl);
+      await benPage.goto(`${WEB}/friends`);
+      const badge = benPage.locator('.bottombar [data-testid="nav-friends"] .nav-badge');
+      await badge.filter({ hasText: "2" }).waitFor();
+      equal(await benPage.getByTestId("loans-waiting").innerText(), "2 Ausleihen warten auf dich", "two questions wait for Ben");
+      await benPage.getByTestId("open-loans").click();
+      await benPage.getByTestId("loans-todo").getByTestId("loan-card").first().waitFor();
+      equal(await benPage.getByTestId("loans-todo").getByTestId("loan-card").count(), 2, "questions for the same book");
+      // The page of the book shows both of them.
+      equal((await benPage.getByTestId("loans-todo").getByTestId("loan-line").allInnerTexts()).sort().join(" | "), "«Momo» für Anna | «Momo» für Carl", "who asked");
+      await benPage.getByTestId("loans-todo").locator(`[data-loan="${second.id}"]`).getByTestId("loan-agree").click();
+      await benPage.getByTestId("due-open").check();
+      await benPage.getByTestId("due-confirm").click();
+      await benPage.getByTestId("loans-open").locator(`[data-loan="${second.id}"][data-state="agreed"]`).waitFor();
+      const passedOver = benPage.getByTestId("loans-past").locator(`[data-loan="${annas.id}"][data-state="declined"]`);
+      await passedOver.waitFor();
+      equal(await passedOver.getByTestId("loan-standing").innerText(), "Es ging an jemand anderen, und Anna weiss Bescheid.", "what Ben reads about the question that lost out");
+      equal(await benPage.locator('.bottombar [data-testid="nav-friends"] .nav-badge').count(), 0, "nothing waits for Ben any more");
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "“Momo” went to somebody else" }).waitFor();
+      await last.locator('[data-state="declined"]').waitFor();
+      equal(await last.getByTestId("loan-standing").innerText(), "Somebody else got it. Ask again later.", "what Anna is told");
+      equal(await last.getByTestId("loan-reason").count(), 0, "reasons quoted for a book that went to somebody else");
+      const [taken] = await loansOf(anna);
+      equal([taken.state, taken.reason].join(" "), "declined taken", "the loan on the server");
+      // Ben's shelf says that the book cannot be had now, once it is published again.
+      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books[0].available !== true, "the reserved book is not offered on Ben's shelf");
+      await openMomo();
+      equal(await page.getByTestId("not-available").innerText(), "This book cannot be borrowed at the moment.", "the book while somebody else has it reserved");
+      equal(await page.getByTestId("ask-to-borrow").count(), 0, "ways to ask for it now");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-taken");
+      await last.getByTestId("loan-hide").click();
+      await page.keyboard.press("Escape");
+
+      // A step that is no longer possible: Carl took his question back while Ben's page still shows the yes.
+      await act(carl, second.id, "withdraw");
+      await benPage.getByTestId("loans-open").locator(`[data-loan="${second.id}"]`).getByTestId("loan-hand").click();
+      await benPage.locator(".toast").filter({ hasText: "Das geht nicht mehr, die Ausleihe ist inzwischen weiter. So steht sie jetzt." }).waitFor();
+      const gone = benPage.getByTestId("loans-past").locator(`[data-loan="${second.id}"][data-state="withdrawn"]`);
+      await gone.waitFor();
+      equal(await gone.getByTestId("loan-standing").innerText(), "Carl hat die Anfrage zurückgezogen.", "where the loan really stands");
+      assert(!("lentTo" in bookOf((await vaultOf(ben)).vault, "Momo")), "a step that was refused changes no book");
+
+      // A server from before the loans has no such function. The page says so in words.
+      await page.route("**/rest/v1/rpc/shelfmark_loan_ask", (route) => route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "PGRST202", message: "Could not find the function public.shelfmark_loan_ask in the schema cache" }) }));
+      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books[0].available === true, "the book is offered on Ben's shelf again");
+      await openMomo();
+      await page.getByTestId("ask-to-borrow").click();
+      equal(await page.getByTestId("ask-problem").innerText(), "The server is not ready for this version of the app yet.", "asking on a server without loans");
+      await page.unroute("**/rest/v1/rpc/shelfmark_loan_ask");
+      await page.keyboard.press("Escape");
+      // And an app from before the loans is told by the server that it is too old.
+      const old = await fetch(`${SERVER}/rest/v1/rpc/shelfmark_send`, { method: "POST", headers: { apikey: KEY, Authorization: `Bearer ${carl.session.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ p_to: ben.session.id, p_payload: { app: "shelfmark", v: 1, type: "lend_request" } }) });
+      equal(`${old.status} ${(await old.json()).message}`, "400 shelfmark:outdated", "what an old version is told when it sends a borrow request");
+    },
+    () => page,
+  );
+
+  await test(
+    "a lender who has the book back before the borrower said so closes the loan, the old address leads to the loans, and an old file is told what it is",
+    async () => {
+      const momo = bookOf((await vaultOf(ben)).vault, "Momo");
+      // Carl borrows Momo, and both confirm the handover. He then forgets all about it.
+      const loan = await rpc(carl.session.token, "shelfmark_loan_ask", { p_friend: ben.session.id, p_book: momo.id, p_info: { title: "Momo", authors: "Michael Ende" }, p_note: "Bitte!" });
+      await act(ben, loan.id, "agree", { p_due: today + 7 });
+      await act(ben, loan.id, "hand");
+      await act(carl, loan.id, "receive");
+      // Whoever still has the address of the borrow requests is taken to the loans.
+      await benPage.goto(`${WEB}/friends/requests`);
+      await benPage.getByTestId("loans-page").waitFor();
+      equal(benPage.url(), `${WEB}/friends/loans`, "where the old address leads");
+      const out = benPage.getByTestId("loans-lent").locator(`[data-loan="${loan.id}"]`);
+      await out.waitFor();
+      equal(await out.getByTestId("loan-standing").innerText(), `Verliehen an Carl seit ${deDay(today)}.`, "the loan to Carl");
+      equal(bookOf(await untilVault(ben, (v) => bookOf(v, "Momo").lentTo === "Carl", "Momo lent to Carl in Ben's library"), "Momo").loanId, loan.id, "the loan the book carries");
+      // The book is back on Ben's shelf. Carl never said so. Ben closes the loan himself, after being asked.
+      await out.getByTestId("loan-close").click();
+      const sure = benPage.getByTestId("loan-close-dialog");
+      await sure.waitFor();
+      assert((await sure.innerText()).includes("Carl hat noch nicht gesagt, dass das Buch zurückgegeben wurde. Die Ausleihe trotzdem abschliessen?"), "the question before the loan is closed");
+      equal((await loansOf(carl)).find((l) => l.id === loan.id).state, "on_loan", "nothing happens before Ben confirms");
+      await sure.getByTestId("confirm").click();
+      await benPage.getByTestId("loans-past").locator(`[data-loan="${loan.id}"][data-state="returned"]`).waitFor();
+      await untilVault(ben, (v) => !("lentTo" in bookOf(v, "Momo")) && !("loanId" in bookOf(v, "Momo")), "Momo at home again");
+      const closed = (await loansOf(carl)).find((l) => l.id === loan.id);
+      equal([closed.state, String(closed.givenBackAt), closed.byMe].join(" "), "returned null false", "what Carl reads: back, without his word");
+      // Ben puts away what is over. A loan both have put away is gone from the server with the next daily check.
+      for (const id of (await loansOf(ben)).map((l) => l.id)) await act(ben, id, "hide");
+      for (const id of (await loansOf(carl)).map((l) => l.id)) await act(carl, id, "hide");
+      await rpc(ben.session.token, "shelfmark_ping");
+      await benPage.getByTestId("sync-now").click();
+      await benPage.getByText("Noch keine Ausleihen. Öffne das Regal von jemandem und frag nach einem Buch.").waitFor();
+      equal(await benPage.getByTestId("loan-card").count(), 0, "loans left on Ben's page");
+
+      // A file with a borrow request, as the app used to send them, cannot be opened any more. The page says where it comes from.
+      await page.goto(`${WEB}/settings`);
+      await page.getByTestId("backup-file").setInputFiles(`${FIXTURES}old/lend-request.json`);
+      equal(await page.getByTestId("backup-problem").innerText(), "This file comes from an older version of Shelfmark. Borrowing now works between accounts, without files.", "a file with a borrow request");
+      await page.getByTestId("import-file").setInputFiles(`${FIXTURES}old/lend-answer.json`);
+      equal(await page.getByTestId("import-problem").innerText(), "This file comes from an older version of Shelfmark. Borrowing now works between accounts, without files.", "a file with the answer to one");
+    },
+    () => page,
+  );
+
+  await test(
+    "what a friend publishes under another name is ignored, and a book lent to a friend stays lent when the friendship ends",
+    async () => {
+      // Carl becomes Anna's friend as well, and then misbehaves.
       const annaCode = (await rpc(anna.session.token, "shelfmark_hello")).code;
       await rpc(carl.session.token, "shelfmark_add_friend", { p_code: annaCode });
       // A library that claims to be Ben's.
       await rpc(carl.session.token, "shelfmark_publish", {
         p_library: { app: "shelfmark", v: 1, type: "library", library: { ownerId: ben.session.id, ownerName: "Ben", createdAt: 1, includesStatus: true, includesRatings: true, books: [{ id: 1, title: "Forged" }] } },
       });
-      // A request that claims to come from Ben, and an answer to Anna's request that Carl has no business giving.
-      const annaVault = (await vaultOf(anna)).vault;
-      await rpc(carl.session.token, "shelfmark_send", {
-        p_to: anna.session.id,
-        p_payload: { app: "shelfmark", v: 1, type: "lend_request", request: { requestId: "forged-1", bookId: 1, bookTitle: "Forged", fromId: ben.session.id, fromName: "Ben", toId: anna.session.id, createdAt: 1 } },
-      });
-      await rpc(carl.session.token, "shelfmark_send", {
-        p_to: anna.session.id,
-        p_payload: { app: "shelfmark", v: 1, type: "lend_answer", answer: { requestId: annaVault.requests[0].id, accepted: false, bookTitle: "Momo", fromId: carl.session.id, fromName: "Carl", toId: anna.session.id, answeredAt: 5 } },
-      });
-      // An honest request from Carl does arrive.
-      await rpc(carl.session.token, "shelfmark_send", {
-        p_to: anna.session.id,
-        p_payload: { app: "shelfmark", v: 1, type: "lend_request", request: { requestId: "carl-1", bookId: bookOf(annaVault, "Dracula").id, bookTitle: "Dracula", bookAuthors: "Bram Stoker", fromId: carl.session.id, fromName: "Carl", toId: anna.session.id, createdAt: Date.now() } },
-      });
+      // An honest question does arrive: he would like to borrow Dracula.
+      const dracula = bookOf((await vaultOf(anna)).vault, "Dracula");
+      const loan = await rpc(carl.session.token, "shelfmark_loan_ask", { p_friend: anna.session.id, p_book: dracula.id, p_info: { title: "Dracula", authors: "Bram Stoker", pageCount: 418, format: "PAPERBACK", rating: 5 }, p_note: "For Halloween" });
       await page.goto(`${WEB}/friends`);
-      await page.getByTestId("sync-now").click();
+      await page.locator(".toast").filter({ hasText: "Carl would like to borrow “Dracula”" }).waitFor();
       const carlCard = page.getByTestId("friend-card").filter({ hasText: "Carl" });
       await carlCard.waitFor();
       assert((await carlCard.innerText()).includes("has not shared a library yet"), "a library under a false name counts for nobody");
-      const vault = await untilVault(anna, (v) => v.requests.some((r) => r.id === "carl-1"), "Carl's honest request");
-      assert(!vault.requests.some((r) => r.id === "forged-1"), "the forged request was dropped");
-      equal(vault.requests.find((r) => !r.incoming).status, "ACCEPTED", "Ben's yes stands, whatever Carl says");
-      await until(async () => (await rpc(anna.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] })).messages.length === 0, "all four messages are acknowledged, the forged ones too");
-      // A badge on the friends tab says that somebody is waiting.
-      await page.getByTestId("requests-waiting").waitFor();
-      equal(await page.getByTestId("requests-waiting").innerText(), "1 request waits for your answer", "the waiting request is announced");
-      // Anna says no. The book stays where it is.
-      await page.getByTestId("open-requests").click();
-      await page.getByTestId("incoming-request").waitFor();
-      await page.getByTestId("answer-no").click();
-      const declined = await untilVault(anna, (v) => v.requests.find((r) => r.id === "carl-1").status === "DECLINED", "the no");
-      assert(!("lentTo" in bookOf(declined, "Dracula")), "a book that was not lent is not marked as lent");
-      // The answer is sent once it is safely in Anna's library, which is a moment later.
-      let news;
-      await until(async () => {
-        news = await rpc(carl.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] });
-        return news.messages.length > 0;
-      }, "the answer on its way to Carl");
-      equal(news.messages.length, 1, "messages waiting for Carl");
-      equal(news.messages[0].payload.answer.accepted, false, "the answer Carl gets");
-      equal(news.messages[0].payload.answer.fromId, anna.session.id, "who answered");
-      // Friends can be removed again.
+      // The Friends item of the navigation and the friends page say that something waits.
+      const badge = page.locator('.sidebar [data-testid="nav-friends"] .nav-badge');
+      await badge.waitFor();
+      equal(await badge.innerText(), "1", "what waits for Anna");
+      equal(await page.getByTestId("loans-waiting").innerText(), "1 loan waits for you", "the waiting question is announced");
+
+      // The page of her book has the question, and everything that follows from it.
+      await page.goto(`${WEB}/book?id=${dracula.id}`);
+      const onBook = page.getByTestId("book-loans");
+      const at = (state) => onBook.locator(`[data-testid="loan"][data-loan="${loan.id}"][data-state="${state}"]`);
+      await at("asked").waitFor();
+      equal(await at("asked").getByTestId("loan-standing").innerText(), "Carl would like to borrow this book.", "the question on the page of the book");
+      equal(await at("asked").getByTestId("loan-note").innerText(), "“For Halloween”", "the note");
+      await at("asked").getByTestId("loan-agree").click();
+      const yes = page.getByTestId("loan-yes-dialog");
+      await yes.waitFor();
+      const asks = await yes.innerText();
+      assert(asks.includes("Lend “Dracula” to Carl?") && asks.includes("The book is reserved for Carl until you hand it over. When would you like it back?"), `what the yes asks: ${asks}`);
+      deepAudit(await audit(page), "dialog for a yes");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-yes-dialog");
+      await page.getByTestId("due-open").check();
+      await page.getByTestId("due-confirm").click();
+      await at("agreed").waitFor();
+      equal(await at("agreed").getByTestId("loan-standing").innerText(), "Reserved for Carl.", "after the yes");
+      equal(await at("agreed").getByTestId("loan-due").innerText(), "No fixed date", "a yes without a day");
+      equal(await badge.count(), 0, "nothing waits for Anna any more");
+      await at("agreed").getByTestId("loan-hand").click();
+      await at("handed").waitFor();
+      equal(await at("handed").getByTestId("loan-standing").innerText(), "You said you handed it over. Waiting for Carl to confirm.", "after Anna's word");
+      // Not handed over after all: she takes that back, and hands it over the next day.
+      await at("handed").getByTestId("loan-undo_hand").click();
+      await at("agreed").getByTestId("loan-hand").click();
+      await at("handed").waitFor();
+      assert(!("lentTo" in bookOf((await vaultOf(anna)).vault, "Dracula")), "not lent before Carl has confirmed");
+      equal(await page.getByTestId("mark-lent").count(), 1, "lending by hand, while no loan has the book");
+      await act(carl, loan.id, "receive");
+      await lookNow(page);
+      await page.locator(".toast").filter({ hasText: "Carl has “Dracula” now" }).waitFor();
+      await at("on_loan").waitFor();
+      equal(await at("on_loan").getByTestId("loan-standing").innerText(), `Lent to Carl since ${enDay(today)}.`, "on loan");
+      equal(await page.getByTestId("mark-lent").count() + (await page.getByTestId("returned").count()), 0, "controls for lending by hand while the loan has the book");
+      const lent = bookOf(await untilVault(anna, (v) => bookOf(v, "Dracula").lentTo === "Carl", "Dracula lent to Carl in Anna's library"), "Dracula");
+      equal([lent.lentSince, lent.loanId].join(" "), `${today} ${loan.id}`, "since when, and by which loan");
+      // What Carl's device makes of it, by the rule both clients share: a copy with an id made from the loan's id.
+      equal((await loansOf(carl)).find((l) => l.id === loan.id).book.title, "Dracula", "the book as the loan names it");
+      deepAudit(await audit(page), "page of a book that is out on a loan");
+      await page.waitForTimeout(300);
+      await shot(page, "loan-lent-book");
+
+      // Friends can be removed again. A book that is out stays a loan: it is still in somebody else's hands.
       await page.goto(`${WEB}/friends`);
       await page.getByTestId("friend-card").filter({ hasText: "Carl" }).getByTestId("remove-friend").click();
+      assert((await page.locator("dialog[open]").innerText()).includes("A book that is reserved or on loan stays a loan."), "what removing a friend does to loans");
       await page.getByTestId("confirm").click();
       await page.getByTestId("friend-card").filter({ hasText: "Carl" }).waitFor({ state: "detached" });
-      equal((await rpc(anna.session.token, "shelfmark_sync", { p_known: {}, p_ack: [] })).friends.length, 1, "friends left");
+      equal((await rpc(anna.session.token, "shelfmark_sync", { p_known: {} })).friends.length, 1, "friends left");
+      await page.getByTestId("open-loans").click();
+      await page.getByTestId("loans-lent").locator(`[data-loan="${loan.id}"][data-state="on_loan"]`).waitFor();
+      equal(bookOf((await vaultOf(anna)).vault, "Dracula").lentTo, "Carl", "the book is still lent");
     },
     page,
+  );
+
+  await test(
+    "a friend without a name, a loan that vanishes with its account, and a friendship that ends with questions open",
+    async () => {
+      const nora = account("Nora");
+      const context = await newContext();
+      const np = await context.newPage();
+      // Looks at the server until the page shows the news. One look may join a look that was on its way before the news.
+      const lookUntil = (seen, what) =>
+        until(async () => {
+          await lookNow(np);
+          return seen();
+        }, what);
+      await signUp(np, nora);
+      await np.getByTestId("empty-library").waitFor();
+      await addByHand(np, { title: "Heidi", authors: "Johanna Spyri" });
+      await addByHand(np, { title: "Krabat", authors: "Otfried Preussler" });
+      nora.session = await signIn(nora.email, nora.password);
+      await until(async () => (await rpc(nora.session.token, "shelfmark_hello")).name === "Nora", "the name Nora gave herself reaches her profile");
+      const noraCode = (await rpc(nora.session.token, "shelfmark_hello")).code;
+      const heidi = bookOf((await vaultOf(nora)).vault, "Heidi");
+      const krabat = bookOf((await vaultOf(nora)).vault, "Krabat");
+
+      // Pia never gave herself a name. She borrows Heidi.
+      const pia = account("Pia");
+      await signUpByApi(pia, "");
+      equal((await rpc(pia.session.token, "shelfmark_hello")).name, "", "the name of somebody who never gave one");
+      await rpc(pia.session.token, "shelfmark_add_friend", { p_code: noraCode });
+      const loan = await rpc(pia.session.token, "shelfmark_loan_ask", { p_friend: nora.session.id, p_book: heidi.id, p_info: { title: "Heidi", authors: "Johanna Spyri" } });
+      equal(loan.peerName, "Nora", "the lender's name, for Pia");
+      await act(nora, loan.id, "agree", { p_due: null });
+      await act(nora, loan.id, "hand");
+      await act(pia, loan.id, "receive");
+      await np.goto(`${WEB}/book?id=${heidi.id}`);
+      const onBook = np.getByTestId("book-loans").locator('[data-testid="loan"][data-state="on_loan"]');
+      await onBook.waitFor();
+      // The page speaks of somebody. The book carries a question mark: an empty name would mean that it is at home.
+      equal(await onBook.getByTestId("loan-standing").innerText(), `Lent to Someone since ${enDay(today)}.`, "a loan to a friend without a name");
+      const lent = bookOf(await untilVault(nora, (v) => bookOf(v, "Heidi").loanId === loan.id, "Heidi lent by the loan"), "Heidi");
+      equal(lent.lentTo, "?", "the name the book carries for a friend who has none");
+      equal(lent.lentSince, today, "the day the book carries");
+
+      // The book cannot be deleted while it is out.
+      await np.getByTestId("delete-book").click();
+      await np.getByTestId("book-in-loan").waitFor();
+      assert((await np.getByTestId("book-in-loan").innerText()).includes("This book is part of a loan. End the loan first."), "why the book cannot be deleted");
+      deepAudit(await audit(np), "the notice for a book that is part of a loan");
+      await np.waitForTimeout(300);
+      await shot(np, "book-in-loan");
+      await np.getByTestId("book-in-loan").getByRole("button", { name: "OK" }).click();
+      await np.getByTestId("book-in-loan").waitFor({ state: "detached" });
+
+      // Pia deletes her account. The loan is gone with it: nothing on the server tells of it any more.
+      await rpc(pia.session.token, "shelfmark_delete_account");
+      equal((await loansOf(nora)).length, 0, "loans Nora still reads");
+      await lookUntil(async () => (await np.getByTestId("book-loans").count()) === 0, "the loan leaves the page of the book");
+      // The book is lent by hand again, as to somebody without Shelfmark, with the controls for that.
+      equal(await np.getByTestId("lent-to").innerText(), `Lent to ? since ${enDay(today)}`, "what the book says once its loan is gone");
+      equal(bookOf((await vaultOf(nora)).vault, "Heidi").loanId, loan.id, "the book still names the loan that is gone");
+      // "Got it back", said by hand, ends it and empties the loan the book carried.
+      await np.getByTestId("returned").click();
+      const home = bookOf(await untilVault(nora, (v) => !("lentTo" in bookOf(v, "Heidi")), "Heidi at home again"), "Heidi");
+      assert(!("loanId" in home) && !("lentSince" in home), "nothing of the loan is left on the book");
+      await np.getByTestId("mark-lent").waitFor();
+      // Now it can be deleted like any book.
+      await np.getByTestId("delete-book").click();
+      await np.getByTestId("confirm").click();
+      await untilVault(nora, (v) => !bookOf(v, "Heidi"), "Heidi deleted");
+
+      // Otto is a friend with a name. He asks Nora for Krabat, and Nora asks him for a book of his.
+      const otto = account("Otto");
+      await signUpByApi(otto);
+      await rpc(otto.session.token, "shelfmark_add_friend", { p_code: noraCode });
+      const his = await rpc(otto.session.token, "shelfmark_loan_ask", { p_friend: nora.session.id, p_book: krabat.id, p_info: { title: "Krabat" } });
+      const hers = await rpc(nora.session.token, "shelfmark_loan_ask", { p_friend: otto.session.id, p_book: 5, p_info: { title: "Jim Knopf" } });
+      // A book somebody asked for cannot be deleted either: the question would point at nothing.
+      await np.goto(`${WEB}/book?id=${krabat.id}`);
+      await np.getByTestId("book-loans").locator('[data-state="asked"]').waitFor();
+      await np.getByTestId("delete-book").click();
+      await np.getByTestId("book-in-loan").waitFor();
+      equal(await np.getByTestId("confirm").count(), 0, "ways to delete a book somebody asked for");
+      await np.keyboard.press("Escape");
+      await np.getByTestId("book-in-loan").waitFor({ state: "detached" });
+
+      // Nora ends the friendship. Her own question is taken back, Otto's is answered with a no.
+      await np.goto(`${WEB}/friends`);
+      const card = np.getByTestId("friend-card").filter({ hasText: "Otto" });
+      await card.waitFor();
+      await card.getByTestId("remove-friend").click();
+      assert((await np.locator("dialog[open]").innerText()).includes("Questions nobody answered yet end with it."), "what ending a friendship does to open questions");
+      await np.getByTestId("confirm").click();
+      await card.waitFor({ state: "detached" });
+      const ottos = await loansOf(otto);
+      const asOttoReads = (id) => {
+        const found = ottos.find((l) => l.id === id);
+        return `${found?.state} ${found?.byMe}`;
+      };
+      equal(asOttoReads(his.id), "declined false", "Otto's question, as Otto reads it");
+      equal(asOttoReads(hers.id), "withdrawn false", "Nora's question, as Otto reads it");
+      await np.getByTestId("open-loans").click();
+      const past = np.getByTestId("loans-past");
+      await past.locator(`[data-loan="${his.id}"][data-state="declined"]`).waitFor();
+      equal(await past.locator(`[data-loan="${his.id}"]`).getByTestId("loan-standing").innerText(), "You said no to Otto.", "what Nora reads about Otto's question");
+      equal(await past.locator(`[data-loan="${hers.id}"]`).getByTestId("loan-standing").innerText(), "You took the question back.", "what Nora reads about her own");
+      equal(await np.locator('.sidebar [data-testid="nav-friends"] .nav-badge').count(), 0, "nothing waits for Nora");
+
+      // The other way round. Paul ends the friendship while a question of his and one of Nora's are open:
+      // his is taken back, hers is answered with a no, and Nora is told both.
+      const paul = account("Paul");
+      await signUpByApi(paul);
+      await rpc(paul.session.token, "shelfmark_add_friend", { p_code: noraCode });
+      const pauls = await rpc(paul.session.token, "shelfmark_loan_ask", { p_friend: nora.session.id, p_book: krabat.id, p_info: { title: "Krabat" } });
+      const noras = await rpc(nora.session.token, "shelfmark_loan_ask", { p_friend: paul.session.id, p_book: 7, p_info: { title: "Tintenherz" } });
+      const waiting = np.getByTestId("loans-todo").locator(`[data-loan="${pauls.id}"][data-state="asked"]`);
+      await lookUntil(async () => (await waiting.count()) === 1, "Paul's question on Nora's page");
+      await np.getByTestId("loans-open").locator(`[data-loan="${noras.id}"][data-state="asked"]`).waitFor();
+      await rpc(paul.session.token, "shelfmark_remove_friend", { p_friend: nora.session.id });
+      const told = np.locator(".toast").filter({ hasText: "Paul said no to “Tintenherz”" });
+      await lookUntil(async () => (await told.count()) === 1, "Nora is told that her question was answered with a no");
+      await np.locator(".toast").filter({ hasText: "Paul no longer asks for “Krabat”" }).waitFor();
+      equal(await past.locator(`[data-loan="${noras.id}"]`).getByTestId("loan-standing").innerText(), "Paul said no.", "Nora's question after Paul ended the friendship");
+      equal(await past.locator(`[data-loan="${pauls.id}"]`).getByTestId("loan-standing").innerText(), "Paul took the question back.", "Paul's question after he ended the friendship");
+      equal(await np.locator('.sidebar [data-testid="nav-friends"] .nav-badge').count(), 0, "nothing waits for Nora after that either");
+
+      // With the questions gone, the book can be deleted.
+      await np.goto(`${WEB}/book?id=${krabat.id}`);
+      await np.getByTestId("book-overview").waitFor();
+      await np.getByTestId("delete-book").click();
+      await np.getByTestId("confirm").click();
+      await untilVault(nora, (v) => v.books.length === 0, "Krabat deleted");
+      await context.close();
+    },
+    null,
   );
 
   await test(
@@ -1670,7 +2304,10 @@ async function main() {
       assert(bookOf(restored, "Faust"), "the lost book is back");
       equal(restored.quotes.length, 1, "quotes after restoring");
       equal(restored.sessions.length, 2, "sessions after restoring");
-      equal(restored.requests.length, 2, "requests after restoring");
+      // The book that is out on a loan came back with what the loan wrote on it.
+      equal(bookOf(restored, "Dracula").lentTo, "Carl", "who has the lent book, after restoring");
+      assert(bookOf(restored, "Dracula").loanId, "the loan it carries, after restoring");
+      assert(!("requests" in restored), "borrow requests are no part of a library any more");
     },
     page,
   );
@@ -1679,7 +2316,7 @@ async function main() {
     "every page can be used by keyboard and names its controls",
     async () => {
       const dracula = bookOf((await vaultOf(anna)).vault, "Dracula");
-      for (const path of ["/", `/book?id=${dracula.id}`, `/book/edit?id=${dracula.id}`, "/add", "/add/manual", "/lists", "/quotes", "/stats", "/stats/goals", "/stats/calendar", "/stats/recap", "/stats/milestones", "/friends", "/friends/requests", "/settings"]) {
+      for (const path of ["/", `/book?id=${dracula.id}`, `/book/edit?id=${dracula.id}`, "/add", "/add/manual", "/lists", "/quotes", "/stats", "/stats/goals", "/stats/calendar", "/stats/recap", "/stats/milestones", "/friends", "/friends/loans", "/settings"]) {
         await page.goto(`${WEB}${path}`);
         await page.locator("main#content h1").first().waitFor();
         await page.waitForTimeout(250);
@@ -1749,9 +2386,13 @@ async function main() {
       equal(await page.locator('svg[data-ornament="CANDLE"]').count(), 1, "the candle is still on its shelf");
       await page.goto(`${WEB}/quotes`);
       await page.getByTestId("quote-card").waitFor();
-      await page.goto(`${WEB}/friends/requests`);
-      await page.getByTestId("request-card").first().waitFor();
-      equal(await page.getByTestId("request-card").count(), 2, "requests after signing in again");
+      // The loans are on the server, so they are there after signing in again. A browser that
+      // was signed out remembers nothing of them, and so has no news to tell: this is how things stand.
+      await page.goto(`${WEB}/friends/loans`);
+      await page.getByTestId("loans-lent").getByTestId("loan-card").waitFor();
+      equal(await page.getByTestId("loan-card").count(), 1, "loans after signing in again");
+      equal(await page.getByTestId("loan-line").innerText(), "“Dracula” for Carl", "the loan that is still running");
+      equal(await page.locator(".toast").count(), 0, "notices about loans that are no news");
     },
     page,
   );
@@ -2240,7 +2881,7 @@ async function main() {
         ],
         "/privacy": [
           "<title>Privacy notice - Shelfmark</title>",
-          "As of 23 November 2026",
+          "As of 24 November 2026",
           'href="mailto:martin@schmidtbit.ch"',
           "Vercel (Vercel Inc., USA)",
           "Shelfmark itself sets no cookies.",
@@ -2255,7 +2896,7 @@ async function main() {
         "/de/impressum": ["<title>Impressum - Shelfmark</title>", "privates, nicht kommerzielles Projekt und Open Source unter der MIT-Lizenz", 'href="mailto:martin@schmidtbit.ch"', "Deutsche Nationalbibliothek", 'href="/de/datenschutz"'],
         "/de/datenschutz": [
           "<title>Datenschutzerklärung - Shelfmark</title>",
-          "Stand: 23. November 2026",
+          "Stand: 24. November 2026",
           "Shelfmark selbst setzt keine Cookies.",
           "an 7 Kataloge: Open Library, Google Books, Apple Books, lobid, Deutsche Nationalbibliothek, K10plus und swisscovery",
           "Laut Google sendet das ML Kit Nutzungs- und Diagnosezahlen über sich selbst an Google.",
@@ -2287,15 +2928,15 @@ async function main() {
       await page.goto(`${WEB}/privacy`);
       await page.getByTestId("legal-privacy").waitFor();
       equal(await page.locator("h1").innerText(), "Privacy notice", "the headline");
-      equal(await page.getByTestId("as-of").innerText(), "As of 23 November 2026", "the day the notice is from");
+      equal(await page.getByTestId("as-of").innerText(), "As of 24 November 2026", "the day the notice is from");
       equal(await page.getByTestId("operator").innerText(), "E-mail: martin@schmidtbit.ch", "who answers, as far as it is filled in");
       equal(await page.evaluate(() => document.documentElement.lang), "en", "the language the page says it is in");
       equal(await page.evaluate(() => document.documentElement.dataset.world), "front", "the look of the page");
       // It is organised by the reader's questions, and each of them is a way into the text.
       const questions = await page.locator(".legal-contents a").allInnerTexts();
-      equal(questions.length, 11, "questions the notice answers");
+      equal(questions.length, 12, "questions the notice answers");
       equal(questions.join(" | "), (await page.locator(".sheet h2").allInnerTexts()).join(" | "), "the list of questions is the list of sections");
-      for (const question of ["What happens when I just look at this website?", "What does the website keep in my browser?", "What do friends see?", "What about the Android app?", "How long is it kept, and how do I delete it?", "What are my rights?"]) {
+      for (const question of ["What happens when I just look at this website?", "What does the website keep in my browser?", "What do friends see?", "What is kept when I lend or borrow a book?", "What about the Android app?", "How long is it kept, and how do I delete it?", "What are my rights?"]) {
         assert(questions.includes(question), `the notice answers: ${question}`);
       }
       deepAudit(await audit(page), "privacy notice");
@@ -2317,11 +2958,11 @@ async function main() {
       await page.getByTestId("legal-privacy").waitFor();
       equal(page.url(), `${WEB}/de/datenschutz`, "the address of the German notice");
       equal((await page.locator("h1").innerText()).replaceAll(String.fromCharCode(0xad), ""), "Datenschutzerklärung", "its headline");
-      equal(await page.getByTestId("as-of").innerText(), "Stand: 23. November 2026", "the day, in German");
+      equal(await page.getByTestId("as-of").innerText(), "Stand: 24. November 2026", "the day, in German");
       equal(await page.getByTestId("operator").innerText(), "E-Mail: martin@schmidtbit.ch", "who answers");
       equal(await page.evaluate(() => document.documentElement.lang), "de", "the language the page says it is in");
       equal(await page.evaluate(() => localStorage.getItem("shelfmark.lang")), "de", "the choice of language is remembered");
-      equal(await page.locator(".legal-contents a").count(), 11, "questions the German notice answers");
+      equal(await page.locator(".legal-contents a").count(), 12, "questions the German notice answers");
       deepAudit(await audit(page), "privacy notice in German");
       await page.waitForTimeout(300);
       await shot(page, "privacy-de", { fullPage: true, animations: "disabled" });
@@ -2368,7 +3009,7 @@ async function main() {
       const still = await plain.newPage();
       await still.goto(`${WEB}/de/datenschutz`);
       assert(await still.locator(".sheet h2").first().isVisible(), "the text can be read without scripts");
-      equal(await still.locator(".sheet section").count(), 11, "sections of the notice without scripts");
+      equal(await still.locator(".sheet section").count(), 12, "sections of the notice without scripts");
       equal(await still.locator(".legal").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(42, 29, 23)", "the dark wood of the room, without scripts");
       equal(await still.locator(".legal").getAttribute("lang"), "de", "the language of the text is said without scripts as well");
       await plain.close();
@@ -2684,13 +3325,16 @@ async function main() {
       const rated = vault.books.find((b) => b.rating > 0 && b.review && b.startedOn && b.finishedOn);
       assert(vault.books.length >= 2 && rated, "two books, one of them rated, reviewed and dated");
       assert(vault.shelves.length >= 1 && vault.links.some((l) => vault.shelves.some((s) => s.id === l.shelfId)), "a list with a book on it");
-      for (const part of ["quotes", "sessions", "notes", "purchases", "goals", "ornaments", "requests"]) assert(vault[part]?.length >= 1, `at least one of ${part}`);
+      for (const part of ["quotes", "sessions", "notes", "purchases", "goals", "ornaments"]) assert(vault[part]?.length >= 1, `at least one of ${part}`);
+      // Borrow requests are gone from the library. What a loan between friends leaves in it is on the book.
+      assert(!("requests" in vault), "no requests in the document");
+      const lent = vault.books.find((b) => b.loanId);
+      assert(lent && lent.lentTo === "Carl" && Number.isSafeInteger(lent.lentSince) && /^[0-9a-f-]{36}$/.test(lent.loanId), "a book that is out on a loan, with who has it, since when, and the loan");
       assert(vault.prefs && vault.prefs.profileName === "Anna" && vault.prefs.viewMode === "SPINES", "the settings");
       const text = JSON.stringify(vault, null, 2) + "\n";
       // The app reads strictly: a null where it expects a value, or a missing field without a default, and it reads nothing.
       assert(!/\bnull\b/.test(text), "no nulls in the document");
       for (const book of vault.books) assert(typeof book.title === "string" && Number.isSafeInteger(book.id), "books have a title and a whole number as id");
-      for (const request of vault.requests) for (const key of ["id", "incoming", "bookRemoteId", "bookTitle", "peerId", "peerName"]) assert(key in request, `a request has ${key}`);
       for (const goal of vault.goals) for (const key of ["target", "startDay", "endDay"]) assert(key in goal, `a goal has ${key}`);
       for (const theme of vault.prefs.customThemes) for (const key of ["id", "name", "background", "card", "accent", "text"]) assert(Number.isInteger(theme[key]) || typeof theme[key] === "string", `a theme has ${key}`);
       writeFileSync(`${WEB_DIR}e2e/fixtures/vault-from-web.json`, text);
@@ -3032,6 +3676,319 @@ async function main() {
   );
 
   await test(
+    "a library the website cannot read is not opened and never replaced, and a word it does not know passes through untouched",
+    async () => {
+      const push = (who, document, expected) => rpc(who.session.token, "shelfmark_vault_push", { p_payload: document, p_expected: expected });
+      const onServer = (who) => rpc(who.session.token, "shelfmark_vault_pull", { p_known: 0 });
+      // The same thing whatever order its fields are written in.
+      const canon = (value) => JSON.stringify(value, (key, part) => (part && typeof part === "object" && !Array.isArray(part) ? Object.fromEntries(Object.entries(part).sort(([a], [b]) => (a < b ? -1 : 1))) : part));
+
+      // A library as a newer version of the app could write it: with words nobody here has
+      // heard of, wherever a fixed set is expected, and with fields this website does not know.
+      const future = {
+        exportedAt: 5,
+        books: [
+          { id: 1, title: "Paused", authors: "A. Writer", pageCount: 200, format: "COMIC", status: "PAUSED", ownership: "LIBRARY", mood: "bright" },
+          { id: 2, title: "Plain", authors: "B. Writer", status: "READ" },
+        ],
+        shelves: [{ id: 3, name: "Later" }],
+        links: [{ bookId: 1, shelfId: 3 }],
+        quotes: [],
+        goals: [{ id: 4, kind: "CHAPTERS", target: 30, startDay: today - 10, endDay: today + 10, repeat: "QUARTERLY" }],
+        ornaments: [
+          { id: 5, shelfKey: "READ", kind: "TEAPOT", position: 1 },
+          { id: 6, shelfKey: "attic", kind: "ROBOT" },
+        ],
+        prefs: { profileName: "Quin", theme: "aurora", viewMode: "GRID", sort: "COLOUR" },
+        shelfColour: "oak",
+      };
+      const quin = account("Quin");
+      await signUpByApi(quin);
+      await push(quin, future, 0);
+      // Rosa is a friend, and sees what Quin's website shows to friends.
+      const rosa = account("Rosa");
+      await signUpByApi(rosa);
+      await rpc(rosa.session.token, "shelfmark_add_friend", { p_code: (await rpc(quin.session.token, "shelfmark_hello")).code });
+      const shelfForRosa = async () => (await rpc(rosa.session.token, "shelfmark_sync", { p_known: {} })).libraries[0]?.payload.library.books ?? [];
+
+      const context = await newContext();
+      const qp = await context.newPage();
+      await signInOnPage(qp, quin);
+      await qp.getByTestId("greeting").waitFor();
+      // A view nobody here knows is drawn as the usual one.
+      await qp.getByTestId("cover-shelf").first().waitFor();
+      await until(async () => (await shelfForRosa()).length === 2, "Quin's shelf, as a friend sees it");
+      equal((await shelfForRosa()).map((b) => `${b.status} ${b.ownership ?? "OWNED"} ${b.format ?? "UNKNOWN"}`).join(", "), "PAUSED LIBRARY COMIC, READ OWNED UNKNOWN", "the words a friend is shown");
+      // Every page that shows such a thing copes with it. What a page chokes on, the browser reports.
+      for (const path of ["/", "/lists", "/stats", "/stats/goals", "/stats/recap", "/stats/milestones", "/settings", "/book?id=1", "/book/edit?id=1"]) {
+        await qp.goto(`${WEB}${path}`);
+        await qp.locator("main#content h1").first().waitFor();
+        await qp.waitForTimeout(250);
+      }
+      // Looking changed nothing.
+      equal((await onServer(quin)).revision, 1, "saves made by looking at a library with unknown words");
+
+      // The reader corrects the book and rates it, gives the goal another target and themselves another name.
+      await qp.getByTestId("field-publisher").fill("Press");
+      await qp.getByTestId("save-book").click();
+      await qp.getByTestId("book-page").waitFor();
+      await qp.getByTestId("star4").click();
+      await waitSaved(qp);
+      // They read in it, too. That moves the bookmark, and leaves alone a status nobody here knows:
+      // a book that is "not started" would count as being read from here on, this one is something else.
+      await qp.getByTestId("tab-reading").click();
+      await qp.getByTestId("log-session-reading").click();
+      await qp.getByTestId("session-to").fill("50");
+      await qp.getByTestId("session-minutes").fill("30");
+      await qp.getByTestId("session-save").click();
+      await waitSaved(qp);
+      await qp.goto(`${WEB}/stats/goals`);
+      await qp.getByTestId("goal-card").locator("button.entry-button").click();
+      await qp.getByTestId("goal-target").fill("40");
+      await qp.getByTestId("goal-save").click();
+      await qp.goto(`${WEB}/settings`);
+      await qp.getByTestId("profile-name-field").fill("Quin Q.");
+      await qp.getByTestId("profile-name-field").blur();
+      await untilVault(quin, (v) => v.prefs.profileName === "Quin Q." && v.books[0].rating === 4 && v.books[0].publisher === "Press" && v.books[0].currentPage === 50 && v.goals[0].target === 40, "the five changes saved");
+      await waitSaved(qp);
+      const after = (await onServer(quin)).payload;
+      const expected = structuredClone(future);
+      Object.assign(expected.books[0], { rating: 4, publisher: "Press", currentPage: 50 });
+      expected.goals[0].target = 40;
+      expected.prefs.profileName = "Quin Q.";
+      // Everything else is what it was, word for word: nothing was turned into a word this website knows.
+      for (const part of ["shelves", "links", "quotes", "goals", "ornaments", "prefs", "shelfColour"]) equal(canon(after[part]), canon(expected[part]), `${part} as the website saved them`);
+      const paused = { ...after.books[0] };
+      delete paused.updatedAt;
+      equal(canon(paused), canon(expected.books[0]), "the book with the words this website does not know");
+      equal(canon(after.books[1]), canon(expected.books[1]), "the book nobody touched");
+      equal(after.sessions.length, 1, "the reading session");
+      equal(Object.keys(after).sort().join(","), "books,exportedAt,goals,links,ornaments,prefs,quotes,sessions,shelfColour,shelves", "the parts of the library as the website saved it");
+
+      // While the site is open, another device with a newer app saves in a format this website does not know.
+      // The reader, who cannot know, rates the book once more: that save meets the other one.
+      await qp.goto(`${WEB}/book?id=1`);
+      await qp.getByTestId("book-page").waitFor();
+      const revision = (await onServer(quin)).revision;
+      const newer = { ...after, format: 2, volumes: [1, 2, 3] };
+      await push(quin, newer, revision);
+      await qp.getByTestId("star5").click();
+      const closed = qp.getByTestId("load-failed");
+      await closed.waitFor();
+      equal(await closed.getAttribute("data-problem"), "newer", "why the library was closed");
+      equal(await closed.locator("h2").innerText(), "Your library was not opened", "the headline");
+      equal(await qp.getByTestId("load-problem").innerText(), "It was last saved by a newer version of Shelfmark than this website knows. The website needs an update before it can open it. Nothing was changed.", "what the page says");
+      deepAudit(await audit(qp), "page for a library that was not opened");
+      await qp.waitForTimeout(300);
+      await shot(qp, "library-not-opened");
+      // The message stays, after asking again and on every page of the library, and nothing is written.
+      await qp.getByRole("button", { name: "Try again" }).click();
+      await qp.waitForTimeout(500);
+      await closed.waitFor();
+      equal(await closed.getAttribute("data-problem"), "newer", "the reason after asking again");
+      await qp.goto(`${WEB}/book?id=1`);
+      await closed.waitFor();
+      equal(await qp.getByTestId("book-page").count(), 0, "pages of a library that is not open");
+      await qp.goto(`${WEB}/friends`);
+      await closed.waitFor();
+      await qp.waitForTimeout(800);
+      const untouched = await onServer(quin);
+      equal(untouched.revision, revision + 1, "the revision after the library became unreadable");
+      equal(canon(untouched.payload), canon(newer), "the library of the newer version, as it was left");
+      // Friends are not shown an empty shelf in its place either.
+      equal((await shelfForRosa()).length, 2, "books a friend still sees");
+
+      // A damaged library: the same, in other words. Here in German, for somebody who signs in fresh.
+      const damaged = { ...after, books: "lost" };
+      await push(quin, damaged, revision + 1);
+      const german = await newContext({ locale: "de-CH" });
+      const gp = await german.newPage();
+      await signInOnPage(gp, quin);
+      const kaputt = gp.getByTestId("load-failed");
+      await kaputt.waitFor();
+      equal(await kaputt.getAttribute("data-problem"), "unreadable", "why the library was not opened");
+      equal(await kaputt.locator("h2").innerText(), "Deine Bibliothek wurde nicht geöffnet", "the headline, in German");
+      equal(await gp.getByTestId("load-problem").innerText(), "Sie lässt sich nicht lesen: Sie ist beschädigt oder so geschrieben, wie es diese Website nicht kennt. Es wurde nichts verändert, und von hier aus wird nichts darüber geschrieben.", "what the page says, in German");
+      await gp.waitForTimeout(800);
+      equal(canon((await onServer(quin)).payload), canon(damaged), "the damaged library, as it was left");
+      equal((await onServer(quin)).revision, revision + 2, "the revision of the damaged library");
+      // Signing out still works from there. At the address of the site that leads to the front page.
+      await gp.getByRole("button", { name: "Abmelden" }).click();
+      await gp.getByTestId("landing").waitFor();
+      equal(await gp.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("shelfmark.auth")).length), 0, "nothing of the sign-in stays in the browser");
+      await german.close();
+
+      // Once the library can be read again, asking again opens it.
+      await push(quin, after, revision + 2);
+      await qp.getByRole("button", { name: "Try again" }).click();
+      await qp.getByTestId("friends-page").waitFor();
+      // The same when it happens while the site is only looked at: the next look at the server closes the library ...
+      const halfWritten = { ...after, books: [{ id: 1, title: "Paused", pageCount: "many" }] };
+      await push(quin, halfWritten, revision + 3);
+      await lookNow(qp);
+      await closed.waitFor();
+      equal(await closed.getAttribute("data-problem"), "unreadable", "why the library was closed while it was looked at");
+      await qp.waitForTimeout(600);
+      equal(canon((await onServer(quin)).payload), canon(halfWritten), "the half-written library, as it was left");
+      equal((await onServer(quin)).revision, revision + 4, "the revision of the half-written library");
+      // ... and the look after it was repaired opens it again, without anybody pressing anything.
+      await push(quin, after, revision + 4);
+      await lookNow(qp);
+      await qp.getByTestId("friends-page").waitFor();
+      await qp.goto(`${WEB}/`);
+      await qp.getByTestId("greeting").waitFor();
+      assert((await qp.getByTestId("greeting").innerText()).includes("Quin Q."), "the library is open again");
+
+      // A backup file is held to the same: a newer or damaged one is not restored as what could be made of it.
+      await qp.goto(`${WEB}/settings`);
+      writeFileSync(`${OUTPUT}backup-newer.json`, JSON.stringify({ app: "shelfmark", v: 1, type: "backup", backup: newer }));
+      await qp.getByTestId("backup-file").setInputFiles(`${OUTPUT}backup-newer.json`);
+      equal(await qp.getByTestId("backup-problem").innerText(), "This file comes from a newer version of Shelfmark. Please update the app.", "a backup in a newer format");
+      writeFileSync(`${OUTPUT}backup-damaged.json`, JSON.stringify({ app: "shelfmark", v: 1, type: "backup", backup: halfWritten }));
+      await qp.getByTestId("backup-file").setInputFiles(`${OUTPUT}backup-damaged.json`);
+      await until(async () => (await qp.getByTestId("backup-problem").innerText()) === "This is not a Shelfmark backup.", "a damaged backup is refused");
+      equal(await qp.getByTestId("restore-dialog").count(), 0, "offers to restore what cannot be read");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
+    "a cover picture goes with its book: when the book is deleted, when it gets another cover, and with the account at the latest",
+    async () => {
+      const sven = account("Sven");
+      const context = await newContext();
+      const sp = await context.newPage();
+      await signUp(sp, sven);
+      await sp.getByTestId("empty-library").waitFor();
+      sven.session = await signIn(sven.email, sven.password);
+      const answers = async (address) => (await fetch(address)).status;
+      const gone = (address, what) => until(async () => (await answers(address)) !== 200, what);
+      /** What the server says is in Sven's folder. */
+      const folder = async () => {
+        const listed = await fetch(`${SERVER}/storage/v1/object/list/shelfmark-covers`, {
+          method: "POST",
+          headers: { apikey: KEY, Authorization: `Bearer ${sven.session.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ prefix: sven.session.id, limit: 100, offset: 0 }),
+        });
+        return (await listed.json()).map((entry) => entry.name);
+      };
+      const nameOf = (address) => address.split("/").pop();
+      let colour = 40;
+      /** Uploads a picture in the form that is open, and returns the address the form shows for it. */
+      const upload = async (shownBefore = null) => {
+        writeFileSync(`${OUTPUT}cover-sven.png`, png(300, 450, [colour, 90, 120]));
+        colour += 30;
+        await sp.getByTestId("cover-file").setInputFiles(`${OUTPUT}cover-sven.png`);
+        const picture = sp.locator('[data-testid="book-form"] img[src*="/storage/v1/object/public/shelfmark-covers/"]');
+        await until(async () => (await picture.count()) === 1 && (await picture.getAttribute("src")) !== shownBefore, "the uploaded picture in the form");
+        return picture.getAttribute("src");
+      };
+      const edit = async (title) => {
+        await sp.goto(`${WEB}/book/edit?id=${bookOf((await vaultOf(sven)).vault, title).id}`);
+        await sp.getByTestId("book-form").waitFor();
+      };
+      const save = async () => {
+        await sp.getByTestId("save-book").click();
+        await sp.getByTestId("book-page").waitFor();
+        await waitSaved(sp);
+      };
+      const remove = async () => {
+        await sp.getByTestId("delete-book").click();
+        await sp.getByTestId("confirm").click();
+      };
+
+      // A book gets a picture.
+      await addByHand(sp, { title: "Ronja", authors: "Astrid Lindgren" });
+      await edit("Ronja");
+      const first = await upload();
+      await save();
+      await untilVault(sven, (v) => bookOf(v, "Ronja").coverUrl === first, "the first picture in the library");
+      equal(await answers(first), 200, "the picture while its book shows it");
+      equal((await folder()).join(), nameOf(first), "what is in the folder of the account");
+      // Nobody else is told what is in that folder.
+      const tilda = account("Tilda");
+      await signUpByApi(tilda);
+      const asTilda = await fetch(`${SERVER}/storage/v1/object/list/shelfmark-covers`, {
+        method: "POST",
+        headers: { apikey: KEY, Authorization: `Bearer ${tilda.session.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix: sven.session.id, limit: 100, offset: 0 }),
+      });
+      equal(JSON.stringify(await asTilda.json()), "[]", "what another account is told about the folder");
+
+      // The book gets another cover: the old picture is removed once that is saved, the new one is there.
+      await edit("Ronja");
+      const second = await upload(first);
+      assert(second !== first, "another upload has another address");
+      equal(await answers(first), 200, "the old picture while the change is not saved");
+      await save();
+      await untilVault(sven, (v) => bookOf(v, "Ronja").coverUrl === second, "the second picture in the library");
+      await gone(first, "the address of the replaced picture stops answering");
+      equal(await answers(second), 200, "the new picture");
+
+      // A picture that was uploaded and then not used is not left behind either.
+      await edit("Ronja");
+      const unused = await upload(second);
+      equal(await answers(unused), 200, "the picture that is only in the form");
+      await sp.locator('[data-testid="book-form"] header a').first().click();
+      await sp.getByTestId("book-page").waitFor();
+      await gone(unused, "the address of the picture that was never saved stops answering");
+      equal(await answers(second), 200, "the cover the book still shows");
+      equal(bookOf((await vaultOf(sven)).vault, "Ronja").coverUrl, second, "the cover in the library after leaving the form");
+
+      // Another book shows the same picture, by its address. Deleting one of the two leaves it.
+      await addByHand(sp, { title: "Ronja, second copy", authors: "Astrid Lindgren" });
+      await edit("Ronja, second copy");
+      await sp.getByTestId("cover-address").fill(second);
+      await sp.getByTestId("cover-address-use").click();
+      await save();
+      await untilVault(sven, (v) => v.books.filter((b) => b.coverUrl === second).length === 2, "two books with the same picture");
+      await remove();
+      await untilVault(sven, (v) => v.books.length === 1, "one of the two deleted");
+      await sp.waitForTimeout(800);
+      equal(await answers(second), 200, "a picture another book still shows");
+      // The last book that shows it is deleted: now the picture goes.
+      await openBook(sp, sven, "Ronja");
+      await remove();
+      await untilVault(sven, (v) => v.books.length === 0, "the book deleted");
+      await gone(second, "the address of the picture stops answering once its book is deleted");
+      equal((await folder()).length, 0, "pictures left in the folder of the account");
+
+      // A picture that cannot be removed does not stop its book from being deleted.
+      await addByHand(sp, { title: "Emil", authors: "Erich Kaestner" });
+      await edit("Emil");
+      const stuck = await upload();
+      await save();
+      await untilVault(sven, (v) => bookOf(v, "Emil").coverUrl === stuck, "the picture of the third book");
+      await sp.route("**/storage/v1/object/shelfmark-covers/**", (route) => (route.request().method() === "DELETE" ? route.abort() : route.continue()));
+      await remove();
+      await untilVault(sven, (v) => v.books.length === 0, "the book is deleted although its picture could not be removed");
+      await sp.getByTestId("empty-library").waitFor();
+      await sp.waitForTimeout(600);
+      equal(await answers(stuck), 200, "the picture that could not be removed");
+      await sp.unroute("**/storage/v1/object/shelfmark-covers/**");
+
+      // The account is deleted. No book names that picture any more, but the folder is asked what it holds, and everything in it goes.
+      const asked = [];
+      sp.on("request", (r) => {
+        if (r.url().endsWith("/storage/v1/object/list/shelfmark-covers")) asked.push(`list ${r.postData()}`);
+        if (r.method() === "DELETE" && r.url().includes("/storage/v1/object/shelfmark-covers/")) asked.push(`remove ${nameOf(r.url())}`);
+        if (r.url().endsWith("/rest/v1/rpc/shelfmark_delete_account")) asked.push("account");
+      });
+      await sp.goto(`${WEB}/settings`);
+      await sp.getByTestId("delete-account").click();
+      await sp.getByTestId("delete-account-check").check();
+      await sp.getByTestId("delete-account-confirm").click();
+      await sp.getByTestId("login-notice").waitFor();
+      equal(await sp.getByTestId("login-notice").innerText(), "Your account is deleted.", "the notice after deleting");
+      equal(asked.join(" | "), `list ${JSON.stringify({ prefix: sven.session.id, limit: 100, offset: 0 })} | remove ${nameOf(stuck)} | account`, "what was asked of the server, in this order");
+      assert((await answers(stuck)) !== 200, "the picture of a book that was removed earlier no longer answers once the account is deleted");
+      await context.close();
+    },
+    null,
+  );
+
+  await test(
     "delete the account, after a confirmation that names what goes, and its pictures with it",
     async () => {
       const context = await newContext();
@@ -3096,7 +4053,7 @@ async function main() {
       const stored = await fetch(file, { method: "POST", headers: { apikey: KEY, Authorization: `Bearer ${yuri.session.token}`, "Content-Type": "image/png", "x-upsert": "true" }, body: COVER_PNG });
       equal(stored.status, 200, "Yuri's picture is on the server");
       const kept = file.replace("/object/", "/object/public/");
-      await rpc(yuri.session.token, "shelfmark_vault_push", { p_payload: { books: [{ id: 1, title: "Stuck", coverUrl: kept }], shelves: [], links: [], quotes: [] }, p_expected: 0 });
+      await rpc(yuri.session.token, "shelfmark_vault_push", { p_payload: { exportedAt: 1, books: [{ id: 1, title: "Stuck", coverUrl: kept }], shelves: [], links: [], quotes: [] }, p_expected: 0 });
       const second = await newContext();
       const yuriPage = await second.newPage();
       await yuriPage.route("**/storage/v1/object/shelfmark-covers/**", (route) => (route.request().method() === "DELETE" ? route.abort() : route.continue()));

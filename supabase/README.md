@@ -88,13 +88,17 @@ in local time (`LocalDate.toEpochDay`). Moments (`addedAt`, `createdAt`, `starte
 `updatedAt`) are milliseconds since 1970.
 
 **A library a client cannot read is never replaced.** A document that is damaged, has a
-shape the client does not know, carries a word it does not know where a fixed set is
-expected (an ornament, a format, a status that a newer version invented), or names a
-`format` higher than the client knows (a document without `format` is format 1, and so is
-everything written today) stops the sync on that device: the client says that it needs an
-update, and writes nothing over the document, neither its own library nor an empty one.
-"No document yet" (revision 0) is the only case in which a client writes without having
-read.
+shape the client does not know, or names a `format` higher than the client knows (a
+document without `format` is format 1, and so is everything written today) stops the sync
+on that device: the client says that it needs an update, and writes nothing over the
+document, neither its own library nor an empty one. "No document yet" (revision 0) is the
+only case in which a client writes without having read.
+
+A word the client does not know where a fixed set is expected (an ornament, a format, a
+status that a newer version invented) has to come back the way it came. A client that can
+keep it as it is and write it back unchanged does that (the website does). A client that
+would have to turn it into something else, or drop the entry, stops instead, as for a
+document it cannot read (the Android app does, its words are fixed types).
 
 ## Cover photos
 

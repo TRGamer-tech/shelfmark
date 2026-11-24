@@ -9,17 +9,21 @@ import { BookCover } from "@/components/BookCover";
 import { useI18n } from "@/components/i18n";
 import { statusKey } from "@/components/labels";
 import { useLibrary } from "@/components/library";
+import { LoanView } from "@/components/Loans";
 import { RatingBar, SpiceBar } from "@/components/Ratings";
 import type { ShelfItem } from "@/components/Shelves";
 import { CoverShelf } from "@/components/Shelves";
 import { Button, Chip, Dialog, EmptyHint, PageHead, TextArea } from "@/components/ui";
 import { formatDay, today } from "@/lib/dates";
-import { newId, newRequestId } from "@/lib/ids";
-import type { LendRequest, ReadingStatus, SharedBook, SharedLibrary } from "@/lib/model";
-import { newBook, requestCodec } from "@/lib/model";
+import { newId } from "@/lib/ids";
+import { myLoanOf } from "@/lib/loans";
+import type { ReadingStatus, SharedBook, SharedLibrary } from "@/lib/model";
+import { newBook } from "@/lib/model";
 import { addBook } from "@/lib/mutations";
 import { withDefaultsFor } from "@/lib/rules";
 import { coverAddressOf } from "@/lib/shelf";
+import { loanProblemKey } from "@/lib/supabase/errors";
+import { reasonOf } from "@/lib/sync";
 
 type FriendFilter = { kind: "all" } | { kind: "owned" } | { kind: "available" } | { kind: "status"; status: ReadingStatus } | { kind: "list"; name: string };
 
@@ -40,9 +44,9 @@ function matches(book: SharedBook, filter: FriendFilter): boolean {
   }
 }
 
-function FriendBookDialog({ friendId, friendName, library, book, request, onClose }: { friendId: string; friendName: string; library: SharedLibrary; book: SharedBook; request: LendRequest | undefined; onClose: () => void }) {
+function FriendBookDialog({ friendId, friendName, library, book, onClose }: { friendId: string; friendName: string; library: SharedLibrary; book: SharedBook; onClose: () => void }) {
   const { t, locale } = useI18n();
-  const { vault, mutate, askToBorrow } = useLibrary();
+  const { vault, mutate, loans, askLoan } = useLibrary();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -50,28 +54,24 @@ function FriendBookDialog({ friendId, friendName, library, book, request, onClos
   const ownership = book.ownership === "BORROWED" ? "friend_borrowed" : book.ownership === "NOT_OWNED" ? "friend_not_owned" : "friend_owns";
   const opinion = library.includesRatings && (book.rating > 0 || book.spice > 0 || book.review.trim() !== "");
 
+  // My own loan of this book: the one that is running, or else how the last one ended.
+  const { open, last } = myLoanOf(loans, friendId, book.id);
+  // Once the book is with me, it stands on my own shelf as well.
+  const copy = open ? vault.books.find((mine) => mine.loanId === open.id) : undefined;
+
   const ask = async () => {
     if (busy) return;
     setBusy(true);
     setProblem(null);
-    const asked: LendRequest = {
-      ...requestCodec.read({}),
-      id: newRequestId(),
-      incoming: false,
-      bookRemoteId: book.id,
-      bookTitle: book.title,
-      bookAuthors: book.authors,
-      isbn: book.isbn,
-      peerId: friendId,
-      peerName: friendName,
-      note: note.trim(),
-      status: "PENDING",
-      createdAt: Date.now(),
-      answeredAt: null,
-    };
-    const sent = await askToBorrow(asked);
-    if (!sent) setProblem(t("web_request_send_failed"));
-    setBusy(false);
+    try {
+      await askLoan(friendId, book, note);
+      setNote("");
+    } catch (error) {
+      const reason = reasonOf(error);
+      setProblem(t(loanProblemKey(reason), reason));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const wish = () => {
@@ -123,24 +123,34 @@ function FriendBookDialog({ friendId, friendName, library, book, request, onClos
       ) : null}
       {book.description.trim() !== "" ? <p className="blurb blurb-clamped">{book.description}</p> : null}
 
-      {request ? (
-        <p className="strong accent" data-testid="request-state">
-          {t(request.status === "ACCEPTED" ? "friend_request_accepted" : request.status === "DECLINED" ? "friend_request_declined" : "friend_request_sent", friendName)}
-        </p>
-      ) : book.available ? (
-        <>
-          <TextArea label={t("friend_request_note")} rows={2} value={note} onChange={(event) => setNote(event.target.value.slice(0, 200))} data-testid="request-note" />
-          <Button wide onClick={() => void ask()} disabled={busy} data-testid="ask-to-borrow">
-            {t("friend_ask_to_borrow")}
-          </Button>
-        </>
+      {open ? (
+        <div className="loan-box" data-testid="my-loan">
+          <LoanView loan={open} bookHref={copy ? `/book?id=${copy.id}` : undefined} />
+        </div>
       ) : (
-        <p className="muted" data-testid="not-available">
-          {t("friend_not_available")}
-        </p>
+        <>
+          {/* A loan that is over stays in view until it is put away. Asking again is possible all the same. */}
+          {last ? (
+            <div className="loan-box" data-testid="last-loan">
+              <LoanView loan={last} />
+            </div>
+          ) : null}
+          {book.available ? (
+            <>
+              <TextArea label={t("friend_borrow_note")} rows={2} value={note} onChange={(event) => setNote(event.target.value.slice(0, 300))} data-testid="loan-note-field" />
+              <Button wide onClick={() => void ask()} disabled={busy} data-testid="ask-to-borrow">
+                {t("friend_ask_to_borrow")}
+              </Button>
+            </>
+          ) : (
+            <p className="muted" data-testid="not-available">
+              {t("friend_not_available")}
+            </p>
+          )}
+        </>
       )}
       {problem ? (
-        <p className="problem" role="alert">
+        <p className="problem" role="alert" data-testid="ask-problem">
           {problem}
         </p>
       ) : null}
@@ -153,7 +163,7 @@ function FriendBookDialog({ friendId, friendName, library, book, request, onClos
 
 export default function FriendLibraryPage() {
   const { t, plural } = useI18n();
-  const { vault, friends, libraries, syncFriends, lastSync } = useLibrary();
+  const { friends, libraries, syncFriends, lastSync } = useLibrary();
   const friendId = useSearchParams().get("id") ?? "";
   const [filter, setFilter] = useState<FriendFilter>({ kind: "all" });
   const [openId, setOpenId] = useState<number | null>(null);
@@ -215,7 +225,6 @@ export default function FriendLibraryPage() {
           friendName={name}
           library={entry.library}
           book={open}
-          request={vault.requests.find((r) => !r.incoming && r.peerId === friendId && r.bookRemoteId === open.id)}
           onClose={() => setOpenId(null)}
         />
       ) : null}

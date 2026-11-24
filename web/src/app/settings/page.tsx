@@ -16,9 +16,9 @@ import type { ImportPlan } from "@/lib/csvImport";
 import { decodeText, isZip, parseImport } from "@/lib/csvImport";
 import { toIsoDate, today } from "@/lib/dates";
 import type { CustomTheme, Vault } from "@/lib/model";
-import { CUSTOM_THEME_PREFIX, ENVELOPE_VERSION, THEME_SYSTEM, looksLikeVault, makeEnvelope, readVault, writeEnvelope } from "@/lib/model";
+import { CUSTOM_THEME_PREFIX, ENVELOPE_VERSION, THEME_SYSTEM, inspectVault, isOldRequestFile, looksLikeVault, makeEnvelope, writeEnvelope } from "@/lib/model";
 import { deleteCustomTheme, restoreBackup, saveCustomTheme, setPrefs } from "@/lib/mutations";
-import { removeCovers } from "@/lib/supabase/covers";
+import { removeAllCovers } from "@/lib/supabase/covers";
 import { serverProblemKey } from "@/lib/supabase/errors";
 import { reasonOf } from "@/lib/sync";
 import type { ThemePreset } from "@/lib/theme";
@@ -41,8 +41,12 @@ function Swatch({ preset, selected, onPick, label, testId }: { preset: ThemePres
   );
 }
 
-/** Reads a backup file. Null when it is not one, "newer" when a later version of Shelfmark wrote it. */
-function backupOf(text: string): Vault | "newer" | null {
+/**
+ * Reads a backup file. Null when it is not one, "newer" when a later version of
+ * Shelfmark wrote it, "old_request" for a borrow request or its answer from the time
+ * when those were sent as files.
+ */
+function backupOf(text: string): Vault | "newer" | "old_request" | null {
   let raw: unknown;
   try {
     // Without the invisible mark some programs put at the very start of a text file.
@@ -52,12 +56,20 @@ function backupOf(text: string): Vault | "newer" | null {
   }
   if (typeof raw !== "object" || raw === null) return null;
   const file = raw as Record<string, unknown>;
+  // A library is taken from a file by the rules it is taken from the server by: one that
+  // is damaged or newer than this website knows is not restored as what could be made of it.
+  const libraryOf = (document: unknown): Vault | "newer" | null => {
+    if (!looksLikeVault(document)) return null;
+    const read = inspectVault(document);
+    return read.ok ? read.vault : read.why === "newer" ? "newer" : null;
+  };
   if (file.app === "shelfmark") {
     if (typeof file.v === "number" && file.v > ENVELOPE_VERSION) return "newer";
-    return looksLikeVault(file.backup) ? readVault(file.backup) : null;
+    if (isOldRequestFile(file)) return "old_request";
+    return libraryOf(file.backup);
   }
   // The bare library, without the envelope around it, is accepted as well.
-  return looksLikeVault(file) ? readVault(file) : null;
+  return libraryOf(file);
 }
 
 export default function SettingsPage() {
@@ -120,6 +132,7 @@ export default function SettingsPage() {
       const text = decodeText(bytes);
       const backup = backupOf(text);
       if (backup === "newer") return problem(t("import_newer_version"));
+      if (backup === "old_request") return problem(t("import_old_request"));
       if (backup) return setRestoring(backup);
       const plan = parseImport(text);
       if (plan) return setImporting(plan);
@@ -137,17 +150,19 @@ export default function SettingsPage() {
     setAccountProblem(null);
     try {
       // The cover pictures go first: once the account is gone, nobody may remove them any more.
+      // All of them, also those of books that were removed long ago: the folder is asked what it holds.
       if (user) {
         const token = await client.auth.getSession().then(
           ({ data }) => data.session?.access_token,
           () => undefined,
         );
-        if (token) await removeCovers(config, token, user.id, vault.books);
+        if (token) await removeAllCovers(config, token, user.id, vault.books);
       }
       const { loginKept } = await api.deleteAccount();
       try {
         window.sessionStorage.setItem("shelfmark.notice", loginKept ? "login_kept" : "deleted");
         if (user) window.localStorage.removeItem(`shelfmark.published.${user.id}`);
+        if (user) window.localStorage.removeItem(`shelfmark.loans.${user.id}`);
         window.localStorage.removeItem("shelfmark.theme");
       } catch {
         // The notice on the sign-in page is a courtesy, not a necessity.

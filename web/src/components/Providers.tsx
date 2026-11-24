@@ -85,6 +85,8 @@ const LIBRARY_PATHS = new Set([
   "/book/timer",
   "/friends",
   "/friends/library",
+  "/friends/loans",
+  // Where borrow requests used to be. It leads to the loans.
   "/friends/requests",
   "/lists",
   "/quotes",

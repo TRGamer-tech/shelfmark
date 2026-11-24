@@ -12,6 +12,11 @@ export function sample(name: string): string {
   return fixture(`samples/${name}`);
 }
 
+/** A file from before the loans: a vault that still carries borrow requests, or a request sent as a file. */
+export function old(name: string): string {
+  return fixture(`old/${name}`);
+}
+
 /** A book with every field at its default, except what is given. */
 export function book(fields: Partial<Book> & { title: string }): Book {
   return { ...bookCodec.read({ title: fields.title }), ...fields };

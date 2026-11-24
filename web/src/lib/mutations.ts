@@ -6,7 +6,7 @@
 // of book 5 to this text"), and adding something that is already there replaces it.
 // Ids and times are made before the change is built, never inside it.
 
-import type { Book, CustomTheme, Goal, LendRequest, Note, Ornament, OrnamentKind, Purchase, Quote, ReadingSession, ReadingStatus, Shelf, Vault, VaultPrefs } from "./model.ts";
+import type { Book, CustomTheme, Goal, Note, Ornament, OrnamentKind, Purchase, Quote, ReadingSession, ReadingStatus, Shelf, Vault, VaultPrefs } from "./model.ts";
 import { CUSTOM_THEME_PREFIX, THEME_SYSTEM, emptyVault, prefsOf } from "./model.ts";
 import type { ImportIds, ImportPlan } from "./csvImport.ts";
 import { applyImport } from "./csvImport.ts";
@@ -185,7 +185,9 @@ export function deleteGoal(id: number): Change {
 
 /**
  * Logs a reading session and moves the book along with it: the bookmark advances, an
- * unstarted book counts as being read, and reaching the last page finishes it.
+ * unstarted book counts as being read, and reaching the last page finishes it. A book
+ * whose status this website does not know keeps that status: a newer version of the
+ * app meant something by it, and only the reader's own choice replaces it.
  */
 export function logSession(session: ReadingSession, today: number, now: number): Change {
   return (vault) => {
@@ -194,7 +196,8 @@ export function logSession(session: ReadingSession, today: number, now: number):
     // Applied a second time (after somebody else saved in between) the session is already there.
     const repeated = vault.sessions.some((s) => s.id === session.id);
     let updated = book;
-    if (book.status !== "READING" && book.status !== "READ") updated = withStatus(updated, "READING", today);
+    const unstarted = book.status === "NONE" || book.status === "WISHLIST" || book.status === "ABANDONED";
+    if (unstarted) updated = withStatus(updated, "READING", today);
     updated = { ...updated, currentPage: Math.max(updated.currentPage, session.endPage) };
     if (updated.pageCount > 0 && session.endPage >= updated.pageCount && updated.status === "READING") {
       updated = withStatus(updated, "READ", today);
@@ -257,41 +260,12 @@ export function deleteCustomTheme(id: string): Change {
   };
 }
 
-// ---- borrow requests ----
-
-/** Records a request I am sending to a friend. */
-export function addRequest(request: LendRequest): Change {
-  return (vault) => (vault.requests.some((r) => r.id === request.id) ? vault : { ...vault, requests: [...vault.requests, request] });
-}
-
-export function deleteRequest(id: string): Change {
-  return (vault) => ({ ...vault, requests: vault.requests.filter((r) => r.id !== id) });
-}
-
-/** Answers a friend's request with yes or no. Saying yes also marks my copy as lent out. */
-export function answerRequest(requestId: string, accept: boolean, today: number, now: number): Change {
-  return (vault) => {
-    const request = vault.requests.find((r) => r.id === requestId && r.incoming);
-    if (!request) return vault;
-    const requests = vault.requests.map((r) => (r === request ? { ...r, status: accept ? ("ACCEPTED" as const) : ("DECLINED" as const), answeredAt: now } : r));
-    let books = vault.books;
-    if (accept) {
-      books = books.map((book) =>
-        book.id === request.bookRemoteId && book.ownership === "OWNED" && book.lentTo.trim() === ""
-          ? { ...book, lentTo: request.peerName, lentSince: today, updatedAt: now }
-          : book,
-      );
-    }
-    return { ...vault, requests, books };
-  };
-}
-
 // ---- backup ----
 
 /**
  * Replaces the library with a backup. Whatever points at a book or list that did not
- * come along is dropped, as the app does. A backup made by the app holds no settings and
- * no borrow requests, in that case the current ones stay.
+ * come along is dropped, as the app does. A backup made by the app holds no settings,
+ * in that case the current ones stay.
  */
 export function restoreBackup(backup: Vault): Change {
   return (vault) => {
@@ -314,7 +288,6 @@ export function restoreBackup(backup: Vault): Change {
         const id = listOf(o.shelfKey);
         return id === null || shelfIds.has(id);
       }),
-      requests: backup.requests.length > 0 ? backup.requests : vault.requests,
       prefs: backup.prefs ?? vault.prefs,
     };
   };

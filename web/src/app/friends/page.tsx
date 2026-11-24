@@ -10,6 +10,7 @@ import { useI18n } from "@/components/i18n";
 import { useLibrary } from "@/components/library";
 import { Button, Card, ConfirmDialog, Dialog, EmptyHint, Field, IconButton, NameDialog, PageHead, Switch } from "@/components/ui";
 import { formatMoment } from "@/lib/dates";
+import { waitingCount } from "@/lib/loans";
 import { setPrefs } from "@/lib/mutations";
 import type { ServerFriend } from "@/lib/social";
 import { displayCode } from "@/lib/social";
@@ -79,7 +80,7 @@ function AddFriendDialog({ onClose }: { onClose: () => void }) {
 
 export default function FriendsPage() {
   const { t, plural, locale } = useI18n();
-  const { vault, prefs, mutate, profile, setName, newCode, friends, libraries, friendsBusy, friendsProblem, lastSync, syncFriends, removeFriend, notify } = useLibrary();
+  const { prefs, mutate, profile, setName, newCode, friends, libraries, friendsBusy, friendsProblem, lastSync, syncFriends, removeFriend, loans, notify } = useLibrary();
   const [adding, setAdding] = useState(false);
   const [naming, setNaming] = useState<"name" | "before-adding" | null>(null);
   const [renewing, setRenewing] = useState(false);
@@ -87,7 +88,7 @@ export default function FriendsPage() {
   const [problem, setProblem] = useState<string | null>(null);
 
   const code = displayCode(profile?.code ?? "");
-  const waiting = vault.requests.filter((r) => r.incoming && r.status === "PENDING").length;
+  const waiting = waitingCount(loans);
   const shown = problem ?? (friendsProblem ? t(serverProblemKey(friendsProblem), friendsProblem) : null);
 
   const copy = async () => {
@@ -164,12 +165,12 @@ export default function FriendsPage() {
       </Card>
 
       <Card>
-        <Link href="/friends/requests" className="card-link" data-testid="open-requests">
+        <Link href="/friends/loans" className="card-link" data-testid="open-loans">
           <span>
-            <span style={{ display: "block" }}>{t("requests_title")}</span>
+            <span style={{ display: "block" }}>{t("loans_title")}</span>
             {waiting > 0 ? (
-              <span className="small accent" data-testid="requests-waiting">
-                {plural("web_requests_waiting", waiting)}
+              <span className="small accent" data-testid="loans-waiting">
+                {plural("web_loans_waiting", waiting)}
               </span>
             ) : null}
           </span>

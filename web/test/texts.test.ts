@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { PLURALS, STRINGS, format, langOf, localeOf, pluralise, translate } from "../src/i18n/index.ts";
+import { LOAN_SECTIONS, LOAN_STATES } from "../src/lib/loans.ts";
 // @ts-expect-error A plain script without types of its own.
 import { findProblems } from "../scripts/check-style.mjs";
 
@@ -41,11 +42,17 @@ test("every text a page asks for exists", () => {
     for (const match of code.matchAll(/\bt\(\s*"([a-z0-9_]+)"/g)) if (!(match[1] in STRINGS.en)) missing.push(`${path}: ${match[1]}`);
     for (const match of code.matchAll(/\bplural\(\s*"([a-z0-9_]+)"/g)) if (!(match[1] in PLURALS.en)) missing.push(`${path}: plural ${match[1]}`);
     // Keys named in a table or returned by a helper: any quoted word that looks like one.
-    for (const match of code.matchAll(/"((?:status|format|ownership|request|sort|view|goal_repeat|reader|time|milestone|server_error|account_error|theme|friend|web)_[a-z0-9_]+)"/g)) {
+    for (const match of code.matchAll(/"((?:status|format|ownership|sort|view|goal_repeat|reader|time|milestone|server_error|account_error|theme|friend|web|loan|loans|notify_loan|import)_[a-z0-9_]+)"/g)) {
       if (!(match[1] in STRINGS.en) && !(match[1] in PLURALS.en)) missing.push(`${path}: ${match[1]}`);
     }
   }
   assert.deepEqual(missing, []);
+  // How a loan stands is said by a text named after the side and the state.
+  for (const state of LOAN_STATES) {
+    for (const side of ["l", "b"]) assert.ok(`loan_${side}_${state}` in STRINGS.en, `loan_${side}_${state}`);
+  }
+  for (const side of ["l", "b"]) assert.ok(`loan_${side}_taken` in STRINGS.en, side);
+  for (const section of LOAN_SECTIONS) assert.ok(`loans_section_${section}` in STRINGS.en, section);
   // Keys that are put together from parts.
   for (const time of ["morning", "day", "evening", "night"]) {
     assert.ok(`greeting_${time}` in STRINGS.en && `greeting_${time}_name` in STRINGS.en, time);

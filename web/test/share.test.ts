@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { makeEnvelope, prefsOf, readEnvelope, readVault, requestCodec, writeEnvelope } from "../src/lib/model.ts";
-import { answerEnvelope, buildLibrary, libraryEnvelope, libraryFingerprint, requestEnvelope } from "../src/lib/share.ts";
+import { makeEnvelope, prefsOf, readVault, writeEnvelope } from "../src/lib/model.ts";
+import { buildLibrary, libraryEnvelope, libraryFingerprint } from "../src/lib/share.ts";
 import { sample } from "./helpers.ts";
 
 const ANNA = "11111111-1111-4111-8111-111111111111";
@@ -74,31 +74,19 @@ test("the fingerprint ignores when the library was built and nothing else", () =
   assert.equal(libraryFingerprint(libraryEnvelope(reviewed, ANNA, 1)), a);
 });
 
-test("a borrow request and its answer are the messages the app sends", () => {
-  const request = {
-    ...requestCodec.read({}),
-    id: "req-1",
-    incoming: false,
-    bookRemoteId: 3,
-    bookTitle: "Dune",
-    bookAuthors: "Frank Herbert",
-    peerId: ANNA,
-    peerName: "Anna",
-    note: "Für die Ferien?",
-    createdAt: MOMENT,
-  };
-  const sent = writeEnvelope(requestEnvelope(request, BEN, "Ben"));
-  assert.deepEqual(sent, JSON.parse(sample("lend-request.json")));
-  assert.equal(pretty(sent), sample("lend-request.json"));
-
-  // Anna holds the same request as an incoming one and says yes.
-  const incoming = { ...request, incoming: true, peerId: BEN, peerName: "Ben" };
-  const answer = writeEnvelope(answerEnvelope(incoming, true, ANNA, "Anna", MOMENT));
-  assert.deepEqual(answer, JSON.parse(sample("lend-answer.json")));
-  assert.equal(pretty(answer), sample("lend-answer.json"));
-
-  const read = readEnvelope(JSON.parse(sample("lend-request.json")))!;
-  assert.equal(read.request!.fromId, BEN);
-  assert.equal(read.request!.isbn, "");
-  assert.equal(read.library, null);
+test("a book that a loan has reserved or out cannot be asked for by anybody else", () => {
+  // Der Vorleser (book 1) is owned, may be lent and is at home: available.
+  const free = buildLibrary(ANNA, "Anna", vault.books, vault.shelves, vault.links, true, true, MOMENT);
+  assert.equal(free.books[0].available, true);
+  // A loan between friends holds it: reserved, handed over, on loan or on its way back.
+  const held = buildLibrary(ANNA, "Anna", vault.books, vault.shelves, vault.links, true, true, MOMENT, new Set([1]));
+  assert.equal(held.books[0].available, false);
+  // Nothing else about the shelf changes, and no other book is touched.
+  assert.deepEqual({ ...held.books[0], available: true }, free.books[0]);
+  assert.deepEqual(held.books.slice(1), free.books.slice(1));
+  // A book that was not available anyway stays that way.
+  assert.equal(buildLibrary(ANNA, "Anna", vault.books, vault.shelves, vault.links, true, true, MOMENT, new Set([2, 3])).books[1].available, false);
+  // The fingerprint tells the two apart, so the shelf is published again when a loan changes it.
+  assert.notEqual(libraryFingerprint(libraryEnvelope(vault, ANNA, 1, new Set([1]))), libraryFingerprint(libraryEnvelope(vault, ANNA, 1)));
+  assert.equal(libraryFingerprint(libraryEnvelope(vault, ANNA, 1, new Set([1]))), libraryFingerprint(libraryEnvelope(vault, ANNA, 2, new Set([1]))));
 });

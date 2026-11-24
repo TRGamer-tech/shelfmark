@@ -7,7 +7,6 @@
 export type ReadingStatus = "NONE" | "WISHLIST" | "READING" | "READ" | "ABANDONED";
 export type BookFormat = "UNKNOWN" | "HARDCOVER" | "PAPERBACK" | "EBOOK" | "AUDIOBOOK" | "OTHER";
 export type Ownership = "OWNED" | "BORROWED" | "NOT_OWNED";
-export type LendStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 export type GoalKind = "BOOKS" | "PAGES" | "MINUTES";
 export type GoalRepeat = "ONCE" | "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
 export type OrnamentKind =
@@ -78,6 +77,11 @@ export interface Book {
   lendable: boolean;
   lentTo: string;
   lentSince: number | null;
+  /**
+   * The loan between friends this book is out on or came in by (lib/loans.ts). Empty for
+   * a book that is at home, or lent and borrowed by hand.
+   */
+  loanId: string;
   /** 0 = unrated, otherwise 0.5 to 5 in half star steps. */
   rating: number;
   /** 0 = not set, 1 to 5 chillies. */
@@ -177,22 +181,6 @@ export interface Ornament {
   _extra?: Extra;
 }
 
-export interface LendRequest {
-  id: string;
-  incoming: boolean;
-  bookRemoteId: number;
-  bookTitle: string;
-  bookAuthors: string;
-  isbn: string;
-  peerId: string;
-  peerName: string;
-  note: string;
-  status: LendStatus;
-  createdAt: number;
-  answeredAt: number | null;
-  _extra?: Extra;
-}
-
 /** A theme made by the user. Colours are ARGB integers, signed as on Android. */
 export interface CustomTheme {
   id: string;
@@ -231,7 +219,6 @@ export interface Vault {
   goals: Goal[];
   purchases: Purchase[];
   ornaments: Ornament[];
-  requests: LendRequest[];
   /** Null in a document that was written before settings travelled with the library. */
   prefs: VaultPrefs | null;
   _extra?: Extra;
@@ -268,38 +255,11 @@ export interface SharedLibrary {
   _extra?: Extra;
 }
 
-export interface LendRequestMsg {
-  requestId: string;
-  bookId: number;
-  bookTitle: string;
-  bookAuthors: string;
-  isbn: string;
-  fromId: string;
-  fromName: string;
-  toId: string;
-  note: string;
-  createdAt: number;
-  _extra?: Extra;
-}
-
-export interface LendAnswerMsg {
-  requestId: string;
-  accepted: boolean;
-  bookTitle: string;
-  fromId: string;
-  fromName: string;
-  toId: string;
-  answeredAt: number;
-  _extra?: Extra;
-}
-
 export interface Envelope {
   app: string;
   v: number;
   type: string;
   library: SharedLibrary | null;
-  request: LendRequestMsg | null;
-  answer: LendAnswerMsg | null;
   backup: Vault | null;
   _extra?: Extra;
 }
@@ -307,9 +267,11 @@ export interface Envelope {
 export const ENVELOPE_APP = "shelfmark";
 export const ENVELOPE_VERSION = 1;
 export const TYPE_LIBRARY = "library";
-export const TYPE_REQUEST = "lend_request";
-export const TYPE_ANSWER = "lend_answer";
 export const TYPE_BACKUP = "backup";
+// Borrow requests used to travel as files and messages of these two types. They are
+// loans on the server now (lib/loans.ts). The names stay so that such a file can be told
+// what it is: from an older version.
+const OLD_REQUEST_TYPES = ["lend_request", "lend_answer"];
 
 export const DEFAULT_SPEED = 1.5;
 export const THEME_SYSTEM = "system";
@@ -337,6 +299,49 @@ export interface Codec<T> {
   fields: Field[];
   read(raw: unknown): T;
   write(value: T): Record<string, unknown>;
+}
+
+/**
+ * Where a document holds something that cannot be read without changing it, as a path
+ * like "books[2].pageCount", or null when all of it can.
+ *
+ * Reading is forgiving on purpose: a number where a text belongs is read as the default,
+ * a list that is no list as an empty one. That is right for what is only shown, a
+ * friend's shelf for instance. For a document that is written back it would be a quiet
+ * loss: the default would be saved over what was there. So the library is looked at with
+ * this before it is taken, and a document with a fault is not touched.
+ *
+ * Not a fault: a field this website does not know (it is carried along), a word it does
+ * not know where it has a fixed set (a status, a format, a kind of ornament a newer
+ * version invented: a text is written back as the text it was), and a null (nothing was
+ * there, and nothing is written).
+ */
+function faultIn(fields: Field[], raw: unknown, path: string): string | null {
+  if (!isObject(raw)) return path === "" ? "the document" : path;
+  for (const field of fields) {
+    const at = path === "" ? field.key : `${path}.${field.key}`;
+    const value = raw[field.key];
+    if (value === undefined || value === null) {
+      // The app has no default for these and refuses a document without them.
+      if (field.required) return at;
+      continue;
+    }
+    const type = field.type;
+    if (typeof type === "string") {
+      if (typeof value !== type || (type === "number" && !Number.isFinite(value))) return at;
+    } else if ("list" in type) {
+      if (!Array.isArray(value)) return at;
+      const inner = type.list;
+      for (let index = 0; index < value.length; index++) {
+        const fault = typeof inner === "string" ? (typeof value[index] === inner ? null : `${at}[${index}]`) : faultIn(inner.fields, value[index], `${at}[${index}]`);
+        if (fault) return fault;
+      }
+    } else {
+      const fault = faultIn(type.fields, value, at);
+      if (fault) return fault;
+    }
+  }
+  return null;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -376,8 +381,14 @@ function writeValue(type: Field["type"], value: unknown): unknown {
   return type.write(value);
 }
 
-function codec<T>(fields: Field[]): Codec<T> {
+/**
+ * [gone] names fields that used to be part of the document and are not any more. Unlike
+ * a field this website merely does not know, they are not carried along: what is read
+ * is read without them, and so written without them.
+ */
+function codec<T>(fields: Field[], gone: string[] = []): Codec<T> {
   const known = new Set(fields.map((f) => f.key));
+  const dropped = new Set(gone);
   return {
     fields,
     read(raw: unknown): T {
@@ -386,7 +397,7 @@ function codec<T>(fields: Field[]): Codec<T> {
       for (const field of fields) out[field.key] = readValue(field.type, source[field.key], field);
       let extra: Extra | undefined;
       for (const key of Object.keys(source)) {
-        if (!known.has(key)) (extra ??= {})[key] = source[key];
+        if (!known.has(key) && !dropped.has(key)) (extra ??= {})[key] = source[key];
       }
       if (extra) out._extra = extra;
       return out as T;
@@ -444,6 +455,7 @@ export const bookCodec = codec<Book>([
   opt("lendable", "boolean", true),
   opt("lentTo", "string", ""),
   maybe("lentSince", "number"),
+  opt("loanId", "string", ""),
   opt("rating", "number", 0),
   opt("spice", "number", 0),
   opt("review", "string", ""),
@@ -518,21 +530,6 @@ export const purchaseCodec = codec<Purchase>([
 
 export const ornamentCodec = codec<Ornament>([opt("id", "number", 0), req("shelfKey", "string"), req("kind", "string"), opt("position", "number", 0)]);
 
-export const requestCodec = codec<LendRequest>([
-  req("id", "string"),
-  req("incoming", "boolean"),
-  req("bookRemoteId", "number"),
-  req("bookTitle", "string"),
-  opt("bookAuthors", "string", ""),
-  opt("isbn", "string", ""),
-  req("peerId", "string"),
-  req("peerName", "string"),
-  opt("note", "string", ""),
-  opt("status", "string", "PENDING"),
-  opt("createdAt", "number", 0),
-  maybe("answeredAt", "number"),
-]);
-
 export const customThemeCodec = codec<CustomTheme>([
   req("id", "string"),
   req("name", "string"),
@@ -554,20 +551,23 @@ export const prefsCodec = codec<VaultPrefs>([
   opt("motion", "boolean", true),
 ]);
 
-export const vaultCodec = codec<Vault>([
-  req("exportedAt", "number"),
-  list("books", bookCodec, true),
-  list("shelves", shelfCodec, true),
-  list("links", linkCodec, true),
-  list("quotes", quoteCodec, true),
-  list("sessions", sessionCodec),
-  list("notes", noteCodec),
-  list("goals", goalCodec),
-  list("purchases", purchaseCodec),
-  list("ornaments", ornamentCodec),
-  list("requests", requestCodec),
-  maybe("prefs", prefsCodec as Codec<unknown>),
-]);
+export const vaultCodec = codec<Vault>(
+  [
+    req("exportedAt", "number"),
+    list("books", bookCodec, true),
+    list("shelves", shelfCodec, true),
+    list("links", linkCodec, true),
+    list("quotes", quoteCodec, true),
+    list("sessions", sessionCodec),
+    list("notes", noteCodec),
+    list("goals", goalCodec),
+    list("purchases", purchaseCodec),
+    list("ornaments", ornamentCodec),
+    maybe("prefs", prefsCodec as Codec<unknown>),
+  ],
+  // Borrow requests lived here before loans were kept on the server.
+  ["requests"],
+);
 
 export const sharedBookCodec = codec<SharedBook>([
   req("id", "number"),
@@ -598,39 +598,17 @@ export const sharedLibraryCodec = codec<SharedLibrary>([
   list("books", sharedBookCodec, true),
 ]);
 
-export const requestMsgCodec = codec<LendRequestMsg>([
-  req("requestId", "string"),
-  req("bookId", "number"),
-  req("bookTitle", "string"),
-  opt("bookAuthors", "string", ""),
-  opt("isbn", "string", ""),
-  req("fromId", "string"),
-  req("fromName", "string"),
-  req("toId", "string"),
-  opt("note", "string", ""),
-  req("createdAt", "number"),
-]);
-
-export const answerMsgCodec = codec<LendAnswerMsg>([
-  req("requestId", "string"),
-  req("accepted", "boolean"),
-  req("bookTitle", "string"),
-  req("fromId", "string"),
-  req("fromName", "string"),
-  req("toId", "string"),
-  req("answeredAt", "number"),
-]);
-
-export const envelopeCodec = codec<Envelope>([
-  // The app always writes these two, default or not.
-  req("app", "string"),
-  req("v", "number"),
-  req("type", "string"),
-  maybe("library", sharedLibraryCodec as Codec<unknown>),
-  maybe("request", requestMsgCodec as Codec<unknown>),
-  maybe("answer", answerMsgCodec as Codec<unknown>),
-  maybe("backup", vaultCodec as Codec<unknown>),
-]);
+export const envelopeCodec = codec<Envelope>(
+  [
+    // The app always writes these two, default or not.
+    req("app", "string"),
+    req("v", "number"),
+    req("type", "string"),
+    maybe("library", sharedLibraryCodec as Codec<unknown>),
+    maybe("backup", vaultCodec as Codec<unknown>),
+  ],
+  ["request", "answer"],
+);
 
 // ---------------------------------------------------------------------------------
 // Convenience
@@ -657,6 +635,35 @@ export function readVault(raw: unknown): Vault {
   return vaultCodec.read(raw);
 }
 
+/** The format of a library document that this website knows. A document that names none is format 1. */
+export const VAULT_FORMAT = 1;
+
+/**
+ * - "newer": the document names a format this website does not know yet. The site has
+ *   to be updated before it can open the library.
+ * - "unreadable": the document is damaged, or has a shape this website does not know.
+ */
+export type Unread = "newer" | "unreadable";
+
+export type VaultCheck = { ok: true; vault: Vault } | { ok: false; why: Unread; where: string };
+
+/**
+ * Reads the library of an account, or says why it cannot be read. A library that cannot
+ * be read is never replaced: not by an empty one, and not by what this website would
+ * make of it (supabase/README.md, "A library a client cannot read is never replaced").
+ */
+export function inspectVault(raw: unknown): VaultCheck {
+  if (!isObject(raw)) return { ok: false, why: "unreadable", where: "the document" };
+  const format = raw.format;
+  if (format !== undefined && format !== null) {
+    if (typeof format !== "number" || !Number.isFinite(format)) return { ok: false, why: "unreadable", where: "format" };
+    if (format > VAULT_FORMAT) return { ok: false, why: "newer", where: "format" };
+  }
+  const fault = faultIn(vaultCodec.fields, raw, "");
+  if (fault) return { ok: false, why: "unreadable", where: fault };
+  return { ok: true, vault: vaultCodec.read(raw) };
+}
+
 export function writeVault(vault: Vault): Record<string, unknown> {
   return vaultCodec.write(vault);
 }
@@ -666,8 +673,8 @@ export function looksLikeVault(raw: unknown): boolean {
   return isObject(raw) && Array.isArray(raw.books) && Array.isArray(raw.shelves) && Array.isArray(raw.links) && Array.isArray(raw.quotes);
 }
 
-export function makeEnvelope(type: string, part: Partial<Pick<Envelope, "library" | "request" | "answer" | "backup">>): Envelope {
-  return { app: ENVELOPE_APP, v: ENVELOPE_VERSION, type, library: null, request: null, answer: null, backup: null, ...part };
+export function makeEnvelope(type: string, part: Partial<Pick<Envelope, "library" | "backup">>): Envelope {
+  return { app: ENVELOPE_APP, v: ENVELOPE_VERSION, type, library: null, backup: null, ...part };
 }
 
 export function writeEnvelope(envelope: Envelope): Record<string, unknown> {
@@ -681,4 +688,12 @@ export function readEnvelope(raw: unknown): Envelope | null {
   if (raw.app !== ENVELOPE_APP) return null;
   if (typeof raw.type !== "string") return null;
   return envelopeCodec.read({ v: ENVELOPE_VERSION, ...raw });
+}
+
+/**
+ * True for a file from the time when a borrow request and its answer were sent as
+ * files. Nothing can be done with one any more, except saying where it comes from.
+ */
+export function isOldRequestFile(raw: unknown): boolean {
+  return isObject(raw) && raw.app === ENVELOPE_APP && typeof raw.type === "string" && OLD_REQUEST_TYPES.includes(raw.type);
 }

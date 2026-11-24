@@ -3,6 +3,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Loan, LoanAction, LoanBook } from "../loans.ts";
+import { readLoan } from "../loans.ts";
 import type { PullAnswer, VaultApi } from "../sync.ts";
 import { ServerError } from "../sync.ts";
 import type { ServerConfig } from "./config.ts";
@@ -51,6 +53,13 @@ export interface Profile {
   name: string;
 }
 
+/** The loan a call answered with. An answer that is none means the server speaks another language than this page. */
+function loanFrom(answer: Record<string, unknown>): Loan {
+  const loan = readLoan(answer);
+  if (!loan) throw new ServerError("setup");
+  return loan;
+}
+
 export function makeApi(client: SupabaseClient) {
   const vault: VaultApi = {
     async pull(known: number): Promise<PullAnswer> {
@@ -85,11 +94,26 @@ export function makeApi(client: SupabaseClient) {
     async publish(library: Record<string, unknown>): Promise<void> {
       await call(client, "shelfmark_publish", { p_library: library });
     },
-    async send(to: string, payload: Record<string, unknown>): Promise<void> {
-      await call(client, "shelfmark_send", { p_to: to, p_payload: payload });
+    async sync(known: Record<string, number>): Promise<Record<string, unknown>> {
+      return call(client, "shelfmark_sync", { p_known: known });
     },
-    async sync(known: Record<string, number>, ack: string[]): Promise<Record<string, unknown>> {
-      return call(client, "shelfmark_sync", { p_known: known, p_ack: ack });
+    /**
+     * Asks a friend for a book. [bookId] is the id of the book in the friend's library,
+     * [info] what the asker sees of it. Asking again for the same book gives back the
+     * question that is still open. Refused with "taken" when the book is reserved or out.
+     */
+    async loanAsk(friend: string, bookId: number, info: LoanBook, note: string): Promise<Loan> {
+      return loanFrom(await call(client, "shelfmark_loan_ask", { p_friend: friend, p_book: bookId, p_info: info, p_note: note }));
+    },
+    /**
+     * One step in the life of a loan. [due] counts for "agree" and "set_due" only: a day,
+     * or null for no fixed date. Refused with "not_allowed" when the loan has moved on.
+     */
+    async loanAct(loanId: string, action: LoanAction, due?: number | null, reason?: string): Promise<Loan> {
+      const args: Record<string, unknown> = { p_loan: loanId, p_action: action };
+      if (action === "agree" || action === "set_due") args.p_due = due ?? null;
+      if (reason !== undefined && reason.trim() !== "") args.p_reason = reason.trim();
+      return loanFrom(await call(client, "shelfmark_loan_act", args));
     },
     async deleteAccount(): Promise<{ loginKept: boolean }> {
       const answer = await call(client, "shelfmark_delete_account");

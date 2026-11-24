@@ -5,6 +5,8 @@ import { test } from "node:test";
 import {
   DEFAULT_PREFS,
   emptyVault,
+  inspectVault,
+  isOldRequestFile,
   looksLikeVault,
   makeEnvelope,
   prefsOf,
@@ -13,9 +15,9 @@ import {
   writeEnvelope,
   writeVault,
 } from "../src/lib/model.ts";
-import { sample } from "./helpers.ts";
+import { old, sample } from "./helpers.ts";
 
-const NAMES = ["vault.json", "library-everything.json", "library-owned-only.json", "lend-request.json", "lend-answer.json"];
+const NAMES = ["vault.json", "library-everything.json", "library-owned-only.json", "loan.json"];
 
 test("the copies of the contract samples are the samples", () => {
   // In the repository the samples live next to the server. The website keeps copies so
@@ -70,9 +72,9 @@ test("a vault is read with every default filled in", () => {
   assert.equal(vault.goals[0].name, "");
   assert.equal(vault.goals[0].archived, false);
   assert.equal(vault.purchases[0].note, "");
-  assert.equal(vault.requests[1].status, "PENDING");
-  assert.equal(vault.requests[1].answeredAt, null);
-  assert.equal(vault.requests[1].note, "");
+  // Dune is out on a loan between friends and says which. A book no loan has touched carries none.
+  assert.equal(dune.loanId, "3f2a9c1e-7b4d-4e8a-9c0d-112233445566");
+  assert.equal(vorleser.loanId, "");
 
   const prefs = prefsOf(vault);
   assert.equal(prefs.profileName, "Anna");
@@ -87,11 +89,44 @@ test("a vault is read with every default filled in", () => {
   assert.equal(prefs.motion, false);
 });
 
+const sampleVault = (): Record<string, unknown> => JSON.parse(sample("vault.json"));
+
 test("a vault that is read and written back is the same document", () => {
-  const original = JSON.parse(sample("vault.json"));
+  const original = sampleVault();
   assert.deepEqual(writeVault(readVault(original)), original);
   // The same holds a second time round, nothing creeps in.
   assert.deepEqual(writeVault(readVault(writeVault(readVault(original)))), original);
+});
+
+test("a vault that still carries borrow requests is read without them and written without them", () => {
+  // Borrow requests lived in the vault before loans were kept on the server. They are
+  // not a field this website merely does not know, which it would carry along: they are gone.
+  const before = JSON.parse(old("vault-with-requests.json"));
+  assert.equal(before.requests.length, 2, "the file is a vault from before the loans");
+  const vault = readVault(before);
+  assert.equal("requests" in vault, false);
+  assert.equal(vault._extra, undefined);
+  const written = writeVault(vault);
+  assert.equal("requests" in written, false);
+  const { requests, ...rest } = before;
+  assert.deepEqual(written, rest);
+  // Everything else of the old vault is there.
+  assert.equal(vault.books.length, 5);
+  assert.equal(vault.books[2].lentTo, "Ben");
+  // It is a library like any other: read as it is, not refused.
+  assert.equal(inspectVault(before).ok, true);
+  // In a backup file as well.
+  const backup = readEnvelope({ app: "shelfmark", v: 1, type: "backup", backup: before })!;
+  assert.equal("requests" in writeVault(backup.backup!), false);
+});
+
+test("the loan a book is out on or came in by travels in the vault, and is left out when there is none", () => {
+  const vault = readVault({ exportedAt: 1, books: [{ id: 7, title: "Emma", lentTo: "Ben", lentSince: 20800, loanId: "3f2a9c1e-7b4d-4e8a-9c0d-112233445566" }, { id: 8, title: "Persuasion" }], shelves: [], links: [], quotes: [] });
+  assert.equal(vault.books[0].loanId, "3f2a9c1e-7b4d-4e8a-9c0d-112233445566");
+  assert.equal(vault.books[1].loanId, "");
+  const written = writeVault(vault) as { books: Record<string, unknown>[] };
+  assert.equal(written.books[0].loanId, "3f2a9c1e-7b4d-4e8a-9c0d-112233445566");
+  assert.equal("loanId" in written.books[1], false);
 });
 
 test("fields this website does not know are kept at every level", () => {
@@ -106,7 +141,6 @@ test("fields this website does not know are kept at every level", () => {
     goals: [{ id: 7, target: 3, startDay: 0, endDay: 0, emoji: "x" }],
     purchases: [{ id: 8, bookId: 9, day: 100, gift: true }],
     ornaments: [{ id: 10, shelfKey: "READ", kind: "TEAPOT", tilt: 3 }],
-    requests: [{ id: "r", incoming: true, bookRemoteId: 9, bookTitle: "X", peerId: "p", peerName: "P", channel: "web" }],
     prefs: { theme: "ember", accentShape: "round", customThemes: [{ id: "a", name: "A", background: -1, card: -2, accent: -3, text: -4, font: "serif" }] },
     fromTheFuture: { a: 1 },
   };
@@ -159,9 +193,25 @@ test("a backup is the vault in the envelope of the app", () => {
   assert.equal(file.app, "shelfmark");
   assert.equal(file.v, 1);
   assert.equal(file.type, "backup");
-  assert.deepEqual(file.backup, JSON.parse(sample("vault.json")));
+  assert.deepEqual(file.backup, sampleVault());
   const back = readEnvelope(JSON.parse(JSON.stringify(file)));
-  assert.deepEqual(writeVault(back!.backup!), JSON.parse(sample("vault.json")));
+  assert.deepEqual(writeVault(back!.backup!), sampleVault());
+});
+
+test("a file with a borrow request or its answer is known for what it is: from an older version", () => {
+  // Such files were sent between friends before loans were kept on the server.
+  assert.equal(isOldRequestFile(JSON.parse(old("lend-request.json"))), true);
+  assert.equal(isOldRequestFile(JSON.parse(old("lend-answer.json"))), true);
+  assert.equal(isOldRequestFile(JSON.parse(sample("library-everything.json"))), false);
+  assert.equal(isOldRequestFile(JSON.parse(sample("vault.json"))), false);
+  assert.equal(isOldRequestFile({ app: "other", v: 1, type: "lend_request" }), false);
+  assert.equal(isOldRequestFile("lend_request"), false);
+  // Read as an envelope, nothing of the request is kept or written back.
+  const read = readEnvelope(JSON.parse(old("lend-request.json")))!;
+  assert.equal(read.type, "lend_request");
+  assert.equal(read.library, null);
+  assert.equal(read.backup, null);
+  assert.deepEqual(writeEnvelope(read), { app: "shelfmark", v: 1, type: "lend_request" });
 });
 
 test("only Shelfmark files are taken for envelopes", () => {

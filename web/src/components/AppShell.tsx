@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { waitingCount } from "@/lib/loans";
 import { serverProblemKey } from "@/lib/supabase/errors";
 import { useAuth } from "./auth";
 import { Icon } from "./icons";
@@ -90,17 +91,20 @@ function Welcome() {
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { signOut } = useAuth();
-  const { status, problem, retry, vault } = useLibrary();
+  const { status, problem, retry, loans } = useLibrary();
   const pathname = usePathname();
   const timed = useTimedBook() !== null;
 
   if (status === "loading") return <Splash text={t("web_loading")} />;
   if (status === "failed") {
+    // Fetched but not understood is another matter than not fetched: the library is not
+    // opened, and nothing is written over it until it can be read.
+    const unread = problem === "newer" || problem === "unreadable";
     return (
-      <main className="plain-page" data-testid="load-failed">
+      <main className="plain-page" data-testid="load-failed" data-problem={problem ?? ""}>
         <h1>Shelfmark</h1>
-        <h2>{t("web_load_failed")}</h2>
-        <p>{t(serverProblemKey(problem ?? ""), problem ?? "")}</p>
+        <h2>{t(unread ? "web_library_closed" : "web_load_failed")}</h2>
+        <p data-testid="load-problem">{t(serverProblemKey(problem ?? ""), problem ?? "")}</p>
         <div className="row">
           <Button onClick={retry}>{t("action_retry")}</Button>
           <Button variant="text" onClick={() => void signOut()}>
@@ -111,7 +115,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const waiting = vault.requests.filter((r) => r.incoming && r.status === "PENDING").length;
+  // Loans that wait for the reader's own word: a question to answer, a hand-over or a return to confirm.
+  const waiting = waitingCount(loans);
   const items: NavItem[] = [
     { href: "/", icon: "book", label: t("tab_library"), also: ["/book", "/add"] },
     { href: "/lists", icon: "bookmarks", label: t("tab_lists") },
@@ -130,7 +135,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {badge > 0 ? <span className="nav-badge">{badge}</span> : null}
         </span>
         <span className="nav-label">{item.label}</span>
-        {badge > 0 ? <span className="sr-only">{t("requests_waiting")}</span> : null}
+        {badge > 0 ? <span className="sr-only">{t("loans_waiting")}</span> : null}
       </Link>
     );
   };

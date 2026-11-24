@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { authProblem, rpcReason, serverProblemKey } from "../src/lib/supabase/errors.ts";
+import { authProblem, loanProblemKey, rpcReason, serverProblemKey } from "../src/lib/supabase/errors.ts";
 import { reasonOf, ServerError } from "../src/lib/sync.ts";
 
 test("a refusal of the server is told by its reason", () => {
@@ -46,4 +46,27 @@ test("reasons of the friend functions have the app's words", () => {
   assert.equal(serverProblemKey("network"), "server_error_network");
   assert.equal(serverProblemKey("setup"), "server_error_setup");
   assert.equal(serverProblemKey("something_new"), "server_error_other");
+});
+
+test("what the server says about a loan is told in the app's words", () => {
+  // The refusals of shelfmark_loan_ask and shelfmark_loan_act, as they come back.
+  assert.equal(rpcReason({ code: "P0001", message: "shelfmark:taken" }, 400), "taken");
+  assert.equal(rpcReason({ code: "P0001", message: "shelfmark:not_allowed" }, 400), "not_allowed");
+  assert.equal(serverProblemKey("taken"), "loan_error_taken");
+  // The loan has moved on. The page looks again and shows where it stands.
+  assert.equal(serverProblemKey("not_allowed"), "loan_error_not_allowed");
+  // A loan that is gone, with the account of the other side for instance.
+  assert.equal(loanProblemKey("unknown_loan"), "loan_error_gone");
+  // Two reasons mean something else with loans than with friends.
+  assert.equal(loanProblemKey("full"), "loan_error_full");
+  assert.equal(serverProblemKey("full"), "server_error_full");
+  assert.equal(loanProblemKey("not_friends"), "loan_error_not_friends");
+  // Everything else is said as anywhere.
+  for (const reason of ["taken", "not_allowed", "outdated", "setup", "network", "signed_out", "something_new"]) assert.equal(loanProblemKey(reason), serverProblemKey(reason), reason);
+  // A server from before the loans does not have the function at all.
+  assert.equal(rpcReason({ code: "PGRST202", message: "Could not find the function public.shelfmark_loan_ask(p_book, p_friend) in the schema cache" }, 404), "setup");
+  assert.equal(serverProblemKey("setup"), "server_error_setup");
+  // And a client from before the loans is told that it is too old.
+  assert.equal(rpcReason({ code: "P0001", message: "shelfmark:outdated" }, 400), "outdated");
+  assert.equal(serverProblemKey("outdated"), "server_error_outdated");
 });

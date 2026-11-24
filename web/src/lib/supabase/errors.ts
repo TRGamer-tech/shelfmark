@@ -57,6 +57,25 @@ export function authProblem(error: AuthFailure): { key: string; detail: string }
   return { key: "server_error_other", detail: code || String(error.status ?? "") || "unknown" };
 }
 
+/**
+ * The text for a reason the server gave when asked for a book or for a step in a loan.
+ * Two reasons mean something else there than with friends: "full" is too many open
+ * questions, not too many friends.
+ */
+export function loanProblemKey(reason: string): string {
+  switch (reason) {
+    case "full":
+      return "loan_error_full";
+    case "not_friends":
+      return "loan_error_not_friends";
+    // Gone with the account of the other side, or put away on another device.
+    case "unknown_loan":
+      return "loan_error_gone";
+    default:
+      return serverProblemKey(reason);
+  }
+}
+
 /** The text for a reason the server gave, as serverProblem in the app. */
 export function serverProblemKey(reason: string): string {
   switch (reason) {
@@ -72,8 +91,20 @@ export function serverProblemKey(reason: string): string {
       return "server_error_own_code";
     case "full":
       return "server_error_full";
+    case "taken":
+      return "loan_error_taken";
+    // The loan has moved on since the page last looked.
+    case "not_allowed":
+      return "loan_error_not_allowed";
+    case "outdated":
+      return "server_error_outdated";
     case "signed_out":
       return "account_error_signed_out";
+    // The library is there, but this website cannot read it (lib/model.ts, inspectVault).
+    case "newer":
+      return "web_library_newer";
+    case "unreadable":
+      return "web_library_unreadable";
     default:
       return "server_error_other";
   }

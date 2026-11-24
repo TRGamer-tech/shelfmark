@@ -10,7 +10,7 @@ export const LEGAL_PATHS: Record<Lang, Record<LegalKind, string>> = {
 };
 
 /** The day the privacy notice was last brought in line with what the code does, as year, month, day. */
-export const PRIVACY_AS_OF = "2026-11-23";
+export const PRIVACY_AS_OF = "2026-11-24";
 
 /** The language of one of these pages, told from its address. Null for every other address. */
 export function legalLangOf(pathname: string): Lang | null {

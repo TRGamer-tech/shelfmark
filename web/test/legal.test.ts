@@ -129,7 +129,49 @@ test("the privacy notice keeps to what was asked of it", () => {
     assert.ok(text.includes(lang === "de" ? "DSGVO" : "GDPR"));
   }
   assert.ok(textOf(LEGAL.en.privacy).includes("According to Google, ML Kit sends usage and diagnostic figures about itself to Google."));
-  assert.equal(PRIVACY_AS_OF, "2026-11-23");
+  assert.equal(PRIVACY_AS_OF, "2026-11-24");
+});
+
+test("the notice says what a loan between friends keeps, and nothing of the borrow requests that are gone", () => {
+  for (const lang of ["en", "de"] as const) {
+    const privacy = LEGAL[lang].privacy;
+    const loans = privacy.sections.find((section) => section.id === "loans");
+    assert.ok(loans, `${lang}: a section about loans`);
+    const said = strings(loans).map(([, text]) => text).join("\n");
+    // What the record on the server holds (the table shelfmark.loans), and how long.
+    for (const word of lang === "de" ? ["ISBN", "Cover-Adresse", "Nachricht", "Zeitpunkt jedes Schritts", "Grund", "weglegen", "eines der beiden Konten gelöscht"] : ["ISBN", "cover address", "note", "moment of each step", "reason", "put away", "one of the two accounts is deleted"]) {
+      assert.ok(said.includes(word), `${lang}: ${word}`);
+    }
+    // A book on loan appears in the borrower's library.
+    assert.ok(said.includes(lang === "de" ? "in der eigenen Bibliothek der Person, die es ausleiht" : "in the borrower's own library"), lang);
+    // Borrow requests were messages that were deleted once fetched. No sentence says that any more.
+    const whole = textOf(privacy);
+    assert.ok(!/borrow request|Ausleih-Anfrage|as soon as the receiving device|sobald das empfangende Gerät|90/.test(whole), `${lang}: a sentence about borrow requests`);
+  }
+});
+
+test("the notice says when an uploaded picture goes, and what the end of a friendship does to loans", () => {
+  const sentences = {
+    en: [
+      // Pictures go with their books (lib/supabase/covers.ts, droppedCoverFiles), and all of them with the account.
+      "A picture is removed when its book is deleted or gets another cover, unless another book of yours still shows it.",
+      "every cover photo you uploaded",
+      // A removal that fails is not reported to the reader, so the notice has to say that it can happen.
+      "Should a cover photo not let itself be removed, with its book or with the account, nothing tells you",
+      // shelfmark_remove_friend ends the open questions and deletes no record.
+      "Removing a friend deletes no loan: questions nobody answered yet end with it, and a book that is reserved or out stays a loan until it is back.",
+    ],
+    de: [
+      "Ein Bild wird entfernt, wenn sein Buch gelöscht wird oder ein anderes Cover bekommt, es sei denn, ein anderes deiner Bücher zeigt es noch.",
+      "alle Cover-Fotos, die du hochgeladen hast",
+      "Lässt sich ein Cover-Foto einmal nicht entfernen, mit seinem Buch oder mit dem Konto, sagt dir das niemand",
+      "Wer eine Freundschaft beendet, löscht damit keine Ausleihe: Fragen, auf die noch niemand geantwortet hat, enden damit, und ein Buch, das reserviert oder unterwegs ist, bleibt eine Ausleihe, bis es zurück ist.",
+    ],
+  };
+  for (const lang of ["en", "de"] as const) {
+    const whole = textOf(LEGAL[lang].privacy);
+    for (const sentence of sentences[lang]) assert.ok(whole.includes(sentence), `${lang}: ${sentence}`);
+  }
 });
 
 test("what the notice says about the browser is what the code keeps there", () => {
@@ -138,11 +180,15 @@ test("what the notice says about the browser is what the code keeps there", () =
   const keys = new Set<string>();
   for (const path of sources) for (const match of read(path).matchAll(/["`](shelfmark\.[a-z]+)/g)) keys.add(match[1]);
   // One entry of the notice for each of them. A new key means a new sentence there.
-  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.lang", "shelfmark.name", "shelfmark.notice", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
+  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.lang", "shelfmark.loans", "shelfmark.name", "shelfmark.notice", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
   const section = LEGAL.en.privacy.sections.find((s) => s.id === "browser");
   const list = section?.blocks.find((block): block is { list: string[] } => "list" in block);
-  // Language, daily check, sign-in, theme (two keys), timer, shared copy, name: seven entries, and the note for the next page as a sentence.
-  assert.equal(list?.list.length, 7);
+  // Language, daily check, sign-in, theme (two keys), timer, loans, shared copy, name: eight entries, and the note for the next page as a sentence.
+  assert.equal(list?.list.length, 8);
+  // What goes with the sign-in when the reader signs out is what the notice says goes.
+  const signOut = /const signOut = [\s\S]*?\}, \[client\]\);/.exec(read("../src/components/auth.tsx"))?.[0] ?? "";
+  for (const key of ["shelfmark.published", "shelfmark.timer", "shelfmark.loans"]) assert.ok(signOut.includes(key), `signing out removes ${key}`);
+  assert.equal(list?.list.filter((entry) => entry.includes("Signing out removes")).length, 4);
   // No cookie is set anywhere in the code of the website.
   for (const path of [...sources, "../src/lib/visitor.ts", "../src/app/layout.tsx", "../src/app/download/route.ts", "../src/app/api/keepalive/route.ts", "../src/app/api/books/search/route.ts"]) {
     assert.ok(!/cookie/i.test(read(path)), `${path} speaks of cookies`);

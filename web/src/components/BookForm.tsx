@@ -137,11 +137,38 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
   // Every way of giving the book another cover goes through here, so none forgets the photo on the phone.
   // That it happened is remembered apart from the fields: the library may change under an open form.
   const [coverTouched, setCoverTouched] = useState(false);
+  // A picture uploaded in this form that no saved book shows yet. Should the reader pick
+  // another cover after all, or leave without saving, nothing would ever show it, and it
+  // is taken off the server again. Once a book is saved with it, it goes with that book
+  // (components/library.tsx removes it when the book goes or gets another cover).
+  const unsaved = useRef<string | null>(null);
+  const takeOff = useRef<(file: string) => void>(() => undefined);
+  takeOff.current = (file) => {
+    if (!user) return;
+    void client.auth.getSession().then(
+      ({ data }) => {
+        if (data.session) void removeCover(config, data.session.access_token, user.id, file);
+      },
+      () => undefined,
+    );
+  };
   const setCover = (url: string) => {
+    const shown = user ? ownCoverFile(config, user.id, url.trim()) : null;
+    if (unsaved.current && unsaved.current !== shown) {
+      takeOff.current(unsaved.current);
+      unsaved.current = null;
+    }
     setBook((current) => withCover(current, url));
     setCoverTouched(true);
   };
   const cover = coverAddressOf(book);
+  // Leaving the form without saving.
+  useEffect(
+    () => () => {
+      if (unsaved.current) takeOff.current(unsaved.current);
+    },
+    [],
+  );
 
   const upload = async (file: File | undefined) => {
     if (!file || !user) return;
@@ -155,6 +182,7 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       const url = await uploadCover(config, token, user.id, picture);
       // Only the cover changes. Everything else in the form stays.
       setCover(url);
+      unsaved.current = ownCoverFile(config, user.id, url);
     } catch {
       setCoverProblem(t("web_cover_upload_failed"));
     } finally {
@@ -185,6 +213,8 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
     };
     const coverUrl = book.coverUrl.trim();
     const now = Date.now();
+    // What was uploaded here is saved with the book now, and goes with it from here on.
+    unsaved.current = null;
     if (isNew) {
       const id = newId(now);
       const added = withDefaultsFor(withCover({ ...book, ...fields, id }, coverUrl), status, today());
@@ -197,14 +227,9 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       }
       onSaved(id);
     } else {
+      // The picture the book showed before, if this account uploaded it, is taken off the
+      // server once the save went through and no other book shows it (components/library.tsx).
       void mutate(editBook(book.id, fields, coverTouched ? coverUrl : null, now));
-      // A picture this account uploaded and no longer uses is taken off the server again.
-      const old = user ? ownCoverFile(config, user.id, initial.coverUrl) : null;
-      if (coverTouched && old && user && coverUrl !== initial.coverUrl) {
-        void client.auth.getSession().then(({ data }) => {
-          if (data.session) void removeCover(config, data.session.access_token, user.id, old);
-        });
-      }
       onSaved(book.id);
     }
   };

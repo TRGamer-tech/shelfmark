@@ -1,6 +1,6 @@
 // The names of the texts for the values a book can have (ui/Common.kt in the app).
 
-import type { BookFormat, GoalKind, GoalRepeat, LendStatus, Ownership, ReadingStatus, SortOrder, ViewMode } from "@/lib/model";
+import type { BookFormat, GoalKind, GoalRepeat, Ownership, ReadingStatus, SortOrder, ViewMode } from "@/lib/model";
 
 export function statusKey(status: ReadingStatus | string): string {
   switch (status) {
@@ -42,17 +42,6 @@ export function ownershipKey(ownership: Ownership | string): string {
       return "ownership_not_owned";
     default:
       return "ownership_owned";
-  }
-}
-
-export function lendStatusKey(status: LendStatus | string): string {
-  switch (status) {
-    case "ACCEPTED":
-      return "request_accepted";
-    case "DECLINED":
-      return "request_declined";
-    default:
-      return "request_pending";
   }
 }
 

@@ -42,13 +42,40 @@ It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependen
 - `src/lib` holds the logic, free of React and tested by itself: the library document and
   its defaults (`model.ts`), every change a reader can make (`mutations.ts`), saving by
   revision with the conflict path (`sync.ts`), what friends get (`share.ts`, `social.ts`),
-  statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), themes (`theme.ts`),
+  loans between friends (`loans.ts`), statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), themes (`theme.ts`),
   the seven book catalogues (`catalogue/`), lists of books from other apps
   (`csvImport.ts`) and the reading timer (`timer.ts`). Most of it is a port of the Kotlin
   code of the app, file by file, and says so at the top.
 - `src/components/library.tsx` keeps the library in memory. Every change goes through
   its `mutate`: shown at once, saved right after, applied again to the fresh document
   when another device saved in between.
+- A library the website cannot read is never replaced (`../supabase/README.md`, the
+  paragraph of that name). `inspectVault` in `model.ts` reads strictly what the server
+  holds: a document that is no object, misses a field the app has no default for, holds
+  a value of the wrong kind, or names a `format` higher than `VAULT_FORMAT` is not
+  opened. The store (`sync.ts`) then stops, on the first fetch, on a later look and in
+  the middle of a save alike: the page says that the website needs an update or that
+  the library is damaged, and nothing is written until the document can be read again.
+  An account that never saved anything (revision 0) is the one case in which the
+  website writes without having read. A word the website does not know where the app
+  has a fixed set (a status, an ownership, a format, an ornament, the kind or the
+  rhythm of a goal, a view, an order, a theme) does not stop anything: it is kept as
+  the text it is and written back unchanged, like a field the website does not know.
+  Where such a word is shown, the page falls back to the usual picture without
+  touching the word. A backup file is read by the same rules.
+- A loan between friends is one record on the server that lender and borrower both read
+  (`../supabase/README.md`, "Loans"). The website keeps no copy of it: what it shows is
+  what the last look at the server said. After every such look `followLoans` brings the
+  books in line with the loans, through `mutate` like any edit: a book that is out
+  carries who has it, and a book that came in stands on the borrower's shelf. The Android
+  app does exactly the same, and tests on both sides use the same values. Which books
+  can be asked for is published again whenever a loan changes it. The one piece
+  (`src/components/Loans.tsx`) that shows how a loan stands, with exactly the steps the
+  server allows from there, is used on the page of the loans, on the page of a book and
+  on a friend's shelf. Three edges, as the contract has them: a friend without a name
+  stands on a book as `?` (an empty name would mean that the book is at home), whatever
+  ends a loan by hand on a book whose loan the server no longer tells of empties
+  `loanId` too, and a book that is part of a loan which is not over cannot be deleted.
 - `src/i18n/app-en.ts` and `app-de.ts` are the texts of the Android app, converted once
   with `node scripts/convert-strings.mjs`. `web-en.ts` and `web-de.ts` add what only the
   website needs. Run the script again when the app's `strings.xml` changed.
@@ -103,8 +130,12 @@ npm run e2e      # the built site in a real browser
 originals when those are there), `buildLibrary` against the two library samples to the
 byte, the status rules, statistics, calendar, recap and milestones (the cases of the
 app's Kotlin tests), ISBNs, the catalogue parsers against recorded answers, saving with
-conflicts against a server in memory, what another cover does to a book and the requests
-for uploaded pictures, what the address says after every kind of mail link and where
+conflicts against a server in memory, a library that cannot be read (what stops the
+sync, what passes through untouched, and that nothing is written over it), what another
+cover does to a book, which pictures a save leaves without a book and the requests for
+uploaded pictures, loans between friends (who may take which step, what is news,
+what waits and what is due, how the books follow the loans, with the values the app is
+tested with as well), what the address says after every kind of mail link and where
 each kind leads, the script that decides between front page and shelf, picking the newest
 release of the app, the words, numbers and colours of the front page, the imprint and the
 privacy notice (who is named on them, and what they say about the code), the reading
@@ -113,6 +144,9 @@ importer of lists from other apps is tested with the cases of
 the app's Kotlin test on the same two files (`test/fixtures/goodreads_export.csv` and
 `storygraph_export.csv`, copies of the app's test fixtures that are compared with the
 originals when those are there), so that the phone and the website read a list alike.
+`test/fixtures/old` holds files as they were written before loans were kept on the
+server (a borrow request, its answer, a library that carries requests): the contract
+no longer has samples of them, and the website still has to read them for what they are.
 
 `npm run e2e` needs Playwright with Chromium installed once for the machine (not as a
 dependency of this project: `npm install -g playwright`, with `NODE_PATH` pointing at the
@@ -176,8 +210,10 @@ The website does what the app does, with these exceptions:
   backup as one `.json` file, which the phone reads as well, and imports a list as one
   `.csv` file. It says so when it is given a zip.
 - The library file of the desktop Shelfmark, which the phone accepts as a backup.
-- Telling the reader that a friend wrote while the site is closed. The phone shows a
-  notification, the website shows the news the next time it is open.
+- Telling the reader what happened in a loan while the site is closed, and reminding
+  them on the day a book is due back. The phone shows a notification for both. The
+  website says what is new the next time it is open, in a line that passes, and shows
+  what is due on the page of the loans and on the book.
 
 ## Notes
 
@@ -194,11 +230,27 @@ The website does what the app does, with these exceptions:
   were understood. The import is one change to the library and so one save. "Find
   missing covers" then asks the catalogues for every book without a cover and saves what
   it finds ten books at a time.
+- Loans (`/friends/loans`; the old address `/friends/requests` leads there): what waits
+  for the reader's word, what is on its way, what is lent out, what is borrowed, and
+  what is over. The Friends item of the navigation counts what waits. A yes comes with
+  the day the book is wanted back by, or with no fixed date. A page that asks for a step
+  the loan has moved past says so and shows where the loan stands. What a browser last
+  saw of each loan is kept in its storage (`shelfmark.loans.<user id>`), so that it can
+  tell what is new, and goes when the reader signs out. Borrow requests as they were
+  before, kept in the library and sent as messages or files, are gone: a library that
+  still carries them is read and written without them, and such a file is told that it
+  comes from an older version.
 - The book search routes need no sign-in. They can only ask the seven catalogues the
   questions the app asks, so they are of little use to anybody else, but they are open.
 - Pictures of covers are loaded by the browser straight from wherever the catalogue
   keeps them, without a referrer.
 - A cover that is uploaded goes to the storage of the Supabase project, below a folder
   named after the account (`src/lib/supabase/covers.ts`). Giving a book another cover
-  clears the name of the photo a phone may have taken of it (`coverPath`), and deleting
-  the account removes the uploaded pictures of its books first.
+  clears the name of the photo a phone may have taken of it (`coverPath`). A picture
+  goes with its book: after every save the pictures of this account that some book
+  showed before and no book shows now are removed from the storage, which is what
+  happens when a book is deleted or gets another cover. A picture another book still
+  shows stays. A picture uploaded in the form of a book and then not saved is removed
+  when the form is left. Before an account is deleted its folder is listed, page by
+  page, and everything in it is removed, also what no book names any more. A removal
+  that fails is never a reason not to delete the book or the account.

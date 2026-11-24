@@ -10,7 +10,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { emptyVault, prefsOf, readVault, writeVault } from "../src/lib/model.ts";
-import { addBook, addOrnament, addRequest, answerRequest, createShelf, logSession, saveCustomTheme, saveGoal, saveNote, savePurchase, saveQuote, setOnShelf, setPrefs, setStatus } from "../src/lib/mutations.ts";
+import { utcZone } from "../src/lib/dates.ts";
+import type { Loan } from "../src/lib/loans.ts";
+import { followLoans, loanBookId, readLoan } from "../src/lib/loans.ts";
+import { addBook, addOrnament, createShelf, logSession, saveCustomTheme, saveGoal, saveNote, savePurchase, saveQuote, setOnShelf, setPrefs, setStatus } from "../src/lib/mutations.ts";
 import { scaledSize } from "../src/lib/picture.ts";
 import { book, goal, purchase, session } from "./helpers.ts";
 
@@ -27,7 +30,7 @@ const BOOK: Shape = {
   publisher: ["string", false], publishedYear: ["string", false], language: ["string", false], pageCount: ["int", false],
   format: [FORMAT, false], description: ["string", false], coverUrl: ["string", false], coverPath: ["string", false],
   status: [STATUS, false], ownership: [["OWNED", "BORROWED", "NOT_OWNED"], false], borrowedFrom: ["string", false],
-  lendable: ["boolean", false], lentTo: ["string", false], lentSince: ["long", false], rating: ["float", false], spice: ["int", false],
+  lendable: ["boolean", false], lentTo: ["string", false], lentSince: ["long", false], loanId: ["string", false], rating: ["float", false], spice: ["int", false],
   review: ["string", false], startedOn: ["long", false], finishedOn: ["long", false], currentPage: ["int", false],
   readCount: ["int", false], favorite: ["boolean", false], genres: ["string", false], tags: ["string", false],
   series: ["string", false], seriesPosition: ["float", false], addedAt: ["long", false], updatedAt: ["long", false],
@@ -44,7 +47,6 @@ const VAULT: Shape = {
   goals: [{ list: { id: ["long", false], name: ["string", false], kind: [["BOOKS", "PAGES", "MINUTES"], false], target: ["int", true], startDay: ["long", true], endDay: ["long", true], repeat: [["ONCE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"], false], archived: ["boolean", false], createdAt: ["long", false] } }, false],
   purchases: [{ list: { id: ["long", false], bookId: ["long", true], day: ["long", true], price: ["float", false], currency: ["string", false], store: ["string", false], note: ["string", false] } }, false],
   ornaments: [{ list: { id: ["long", false], shelfKey: ["string", true], kind: [ORNAMENTS, true], position: ["int", false] } }, false],
-  requests: [{ list: { id: ["string", true], incoming: ["boolean", true], bookRemoteId: ["long", true], bookTitle: ["string", true], bookAuthors: ["string", false], isbn: ["string", false], peerId: ["string", true], peerName: ["string", true], note: ["string", false], status: [["PENDING", "ACCEPTED", "DECLINED"], false], createdAt: ["long", false], answeredAt: ["long", false] } }, false],
   prefs: [{ object: { profileName: ["string", false], shareStatus: ["boolean", false], shareRatings: ["boolean", false], minutesPerPage: ["float", false], theme: ["string", false], customThemes: [{ list: THEME }, false], viewMode: ["string", false], sort: ["string", false], motion: ["boolean", false] } }, false],
 };
 
@@ -93,11 +95,16 @@ test("the checker itself knows what the app would refuse", () => {
   bad.books[1].status = "PAUSED";
   bad.books[2].pageCount = 12.5;
   delete bad.goals[0].startDay;
-  bad.requests[0].incoming = "yes";
+  bad.books[3].loanId = 7;
   bad.prefs.customThemes[0].card = "#fff";
   const found = problemsOf(bad, VAULT, "vault");
   assert.equal(found.length, 6, found.join("\n"));
 });
+
+const loan = (fields: Record<string, unknown>): Loan => readLoan({ peer: "22222222-2222-4222-8222-222222222222", book: {}, state: "on_loan", askedAt: 1, updatedAt: 2, byMe: false, ...fields })!;
+// 1795608000000 is noon of day 20782 in UTC.
+const lent = loan({ id: "0b0e1c1e-5d6f-4a7b-8c9d-0e1f2a3b4c5d", role: "lender", peerName: "Ben", bookId: 1795400000000001, receivedAt: 1795608000000 });
+const borrowed = loan({ id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", role: "borrower", peerName: "Cleo", bookId: 12, book: { title: "Persuasion", authors: "Jane Austen", isbn: "9780141439686", pageCount: 249, format: "PAPERBACK" }, receivedAt: 1795608000000 });
 
 test("whatever the website does to a library, the app can read the result", () => {
   // A session as busy as a person can make it, on an account that starts with nothing.
@@ -117,8 +124,8 @@ test("whatever the website does to a library, the app can read the result", () =
     savePurchase(purchase({ id: 1795400000000008, bookId: novel.id, day: 20770, price: 9.95, currency: "GBP", store: "Shop" })),
     addOrnament(1795400000000009, "list_1795400000000002", "CAT", 2),
     addOrnament(1795400000000010, "READ", "CANDLE", 0),
-    addRequest({ id: "0b0e1c1e-5d6f-4a7b-8c9d-0e1f2a3b4c5d", incoming: true, bookRemoteId: novel.id, bookTitle: "Emma", bookAuthors: "Jane Austen", isbn: "9780141439587", peerId: "22222222-2222-4222-8222-222222222222", peerName: "Ben", note: "", status: "PENDING", createdAt: 1795400000008, answeredAt: null }),
-    answerRequest("0b0e1c1e-5d6f-4a7b-8c9d-0e1f2a3b4c5d", true, 20782, 1795400000009),
+    // Ben has Emma on loan, and a book of Cleo's is here on loan: what the loans do to the library.
+    followLoans([lent, borrowed], () => undefined, utcZone, 1795400000009),
   ];
   const vault = changes.reduce((doc, change) => change(doc), emptyVault());
   const written = JSON.parse(JSON.stringify(writeVault({ ...vault, exportedAt: 1795400000010 })));
@@ -128,6 +135,11 @@ test("whatever the website does to a library, the app can read the result", () =
   assert.equal(back.books[0].status, "READ");
   assert.equal(back.books[0].lentTo, "Ben");
   assert.equal(back.books[0].lentSince, 20782);
+  assert.equal(back.books[0].loanId, lent.id);
+  const copy = back.books.find((b) => b.id === loanBookId(borrowed.id))!;
+  assert.equal(copy.ownership, "BORROWED");
+  assert.equal(copy.borrowedFrom, "Cleo");
+  assert.equal(copy.loanId, borrowed.id);
   assert.equal(back.sessions[0].minutes, 312.5);
   assert.equal(prefsOf(back).sort, "RATING");
   assert.equal(prefsOf(back).motion, false);
@@ -149,7 +161,10 @@ test("the vault a real session of the website left on the server is one the app 
   assert.ok(vault.books.length >= 2);
   assert.ok(vault.books.some((b: Record<string, unknown>) => b.rating && b.review && b.startedOn && b.finishedOn));
   assert.ok(vault.shelves.length >= 1 && vault.links.length >= 1);
-  for (const part of ["quotes", "sessions", "notes", "purchases", "goals", "ornaments", "requests"]) assert.ok(vault[part].length >= 1, part);
+  for (const part of ["quotes", "sessions", "notes", "purchases", "goals", "ornaments"]) assert.ok(vault[part].length >= 1, part);
+  // Borrow requests are gone from the vault, and a book that was on a loan between friends says which.
+  assert.equal("requests" in vault, false);
+  assert.ok(vault.books.some((b: Record<string, unknown>) => typeof b.loanId === "string" && b.loanId !== ""), "a book with a loan");
   assert.equal(typeof vault.prefs.profileName, "string");
   // Reading it here and writing it back changes nothing.
   assert.deepEqual(writeVault(readVault(vault)), vault);

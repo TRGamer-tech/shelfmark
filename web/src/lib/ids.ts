@@ -11,7 +11,3 @@ export function newId(now: number = Date.now()): number {
   last = id;
   return id;
 }
-
-export function newRequestId(): string {
-  return crypto.randomUUID();
-}

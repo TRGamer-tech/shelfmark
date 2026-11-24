@@ -6,7 +6,7 @@
 // are applied to it again, and the save is tried once more.
 
 import type { Vault } from "./model.ts";
-import { emptyVault, looksLikeVault, readVault, writeVault } from "./model.ts";
+import { emptyVault, inspectVault, writeVault } from "./model.ts";
 import type { Change } from "./mutations.ts";
 
 export interface PullAnswer {
@@ -44,8 +44,11 @@ export interface VaultState {
 }
 
 interface Options {
-  /** Called after every save that went through, with the document the server now holds. */
-  onSaved?: (vault: Vault) => void;
+  /**
+   * Called after every save that went through, with the document the server now holds
+   * and the one it held before, which is what the save was built on.
+   */
+  onSaved?: (vault: Vault, before: Vault) => void;
   /** How often a save is tried again right away when somebody else keeps saving in between. */
   maxConflicts?: number;
   now?: () => number;
@@ -93,26 +96,55 @@ export class VaultStore {
     for (const listener of Array.from(this.listeners)) listener();
   }
 
-  private take(answer: PullAnswer): void {
+  /**
+   * Takes what the server answered as the new ground. False when the document cannot be
+   * read: then nothing is taken, and from here on nothing is written either. A library
+   * this website cannot read is never replaced, not by an empty one and not by what a
+   * forgiving reader would make of it. Only reading it again, and understanding it,
+   * opens it.
+   */
+  private take(answer: PullAnswer): boolean {
     if (answer.payload !== null && answer.payload !== undefined) {
-      this.base = looksLikeVault(answer.payload) ? readVault(answer.payload) : emptyVault();
+      const read = inspectVault(answer.payload);
+      if (!read.ok) {
+        this.status = "failed";
+        this.problem = read.why;
+        return false;
+      }
+      this.base = read.vault;
       this.revision = answer.revision;
     } else if (answer.revision === 0) {
-      // An account that never saved anything starts with an empty library.
+      // An account that never saved anything starts with an empty library. This is the
+      // one case in which the website writes without having read.
       this.base = emptyVault();
       this.revision = 0;
+    } else if (answer.revision !== this.revision) {
+      // The server holds a library and did not hand it over. What was not read is not
+      // written over either.
+      this.status = "failed";
+      this.problem = "unreadable";
+      return false;
     }
-    // A revision without its document is no news: there is nothing to go with the number.
+    // The revision this tab knows already, without its document, is no news.
+    return true;
   }
 
-  /** The first fetch after signing in. */
-  async load(): Promise<void> {
-    this.status = "loading";
-    this.problem = null;
-    this.publish();
+  /**
+   * The first fetch after signing in, and every later try to read a library that was
+   * not opened. [quietly] leaves the page as it is while the answer is on its way: the
+   * look that is taken every minute must not make the message blink.
+   */
+  async load(quietly = false): Promise<void> {
+    if (!quietly || this.status !== "failed") {
+      this.status = "loading";
+      this.problem = null;
+      this.publish();
+    }
     try {
-      this.take(await this.api.pull(0));
-      this.status = "idle";
+      if (this.take(await this.api.pull(0))) {
+        this.status = "idle";
+        this.problem = null;
+      }
     } catch (error) {
       this.status = "failed";
       this.problem = reasonOf(error);
@@ -132,8 +164,10 @@ export class VaultStore {
       // A save that started or finished meanwhile knows more than this answer does.
       if (this.flushing || this.revision !== asked) return;
       if (answer.revision !== asked) {
-        this.take(answer);
+        const understood = this.take(answer);
         this.publish();
+        // Another device left something this website cannot read. Nothing goes over it.
+        if (!understood) return;
       }
       if (this.pending.length > 0) void this.flush();
     } catch {
@@ -152,6 +186,8 @@ export class VaultStore {
 
   /** Saves whatever waits. Runs once at a time, further changes join the running save. */
   flush(): Promise<void> {
+    // Not before the library was read, and not while what the server holds cannot be read.
+    if (this.status === "loading" || this.status === "failed") return Promise.resolve();
     if (!this.flushing) {
       this.flushing = this.run().finally(() => {
         this.flushing = null;
@@ -176,6 +212,7 @@ export class VaultStore {
       const count = this.pending.length;
       const document: Vault = { ...this.pending.slice(0, count).reduce((doc, change) => change(doc), this.base), exportedAt: (this.options.now ?? Date.now)() };
       try {
+        const before = this.base;
         const answer = await this.api.push(writeVault(document), this.revision);
         this.base = document;
         this.revision = answer.revision;
@@ -183,15 +220,17 @@ export class VaultStore {
         conflicts = 0;
         this.status = this.pending.length > 0 ? "saving" : "saved";
         this.publish();
-        this.options.onSaved?.(document);
+        this.options.onSaved?.(document, before);
       } catch (error) {
         const reason = reasonOf(error);
         if (reason === "conflict" && conflicts < maxConflicts) {
           conflicts++;
           try {
             // Somebody else saved first. Their document is the new ground the changes are applied to.
-            this.take(await this.api.pull(0));
+            const understood = this.take(await this.api.pull(0));
             this.publish();
+            // Unless it cannot be read: then the changes stay here and nothing is written over it.
+            if (!understood) return;
             continue;
           } catch (pullError) {
             this.status = "error";

@@ -1,24 +1,27 @@
 {
   "books": [
     {
-      "id": 1795456528562279,
+      "id": 1795534668853904,
       "spice": 5,
       "title": "Dracula",
       "format": "HARDCOVER",
       "genres": "Horror, Classics",
+      "lentTo": "Carl",
+      "loanId": "09de8242-11fd-4bc1-80c1-451df81a6e5e",
       "rating": 4,
       "review": "Fangs. Written on a train, in a tunnel.",
       "series": "Gothic",
-      "addedAt": 1795456528562,
+      "addedAt": 1795534668853,
       "authors": "Bram Stoker",
-      "coverUrl": "http://127.0.0.1:54340/storage/v1/object/public/shelfmark-covers/844a8b94-5964-418e-821e-25d7b5457a90/307ef31a-ac7d-4bae-b8ff-5b8ded7f49ff.jpg",
+      "coverUrl": "http://127.0.0.1:54340/storage/v1/object/public/shelfmark-covers/b9b17746-71e7-427e-94ef-eafd245dc554/9ad74dc8-7c3a-4204-a2bc-11b787480e13.jpg",
+      "lentSince": 20781,
       "pageCount": 418,
-      "updatedAt": 1795456576913,
+      "updatedAt": 1795534752883,
       "publishedYear": "1897",
       "seriesPosition": 1.5
     },
     {
-      "id": 1795456530096058,
+      "id": 1795534670436031,
       "isbn": "9783257229530",
       "spice": 2,
       "title": "Der Vorleser",
@@ -26,7 +29,7 @@
       "rating": 4.5,
       "review": "Quiet and hard at once.",
       "status": "READ",
-      "addedAt": 1795456530096,
+      "addedAt": 1795534670436,
       "authors": "Bernhard Schlink",
       "coverUrl": "https://covers.openlibrary.org/b/id/8782586-L.jpg",
       "favorite": true,
@@ -36,55 +39,55 @@
       "publisher": "Diogenes",
       "readCount": 1,
       "startedOn": 20759,
-      "updatedAt": 1795456532363,
-      "finishedOn": 20780,
+      "updatedAt": 1795534673556,
+      "finishedOn": 20781,
       "currentPage": 206,
       "description": "Sie ist reizbar, rätselhaft und viel älter als er.\n\nEin Roman über Schuld & Scham.",
       "publishedYear": "1997"
     },
     {
-      "id": 1795456537930112,
+      "id": 1795534681655926,
       "title": "Faust",
-      "addedAt": 1795456537930,
+      "addedAt": 1795534681655,
       "authors": "Johann Wolfgang von Goethe",
       "coverUrl": "https://example.org/faust.jpg",
       "pageCount": 320,
-      "updatedAt": 1795456545146
+      "updatedAt": 1795534690996
     },
     {
-      "id": 1795456538532993,
+      "id": 1795534682369208,
       "title": "Emma",
-      "addedAt": 1795456538532,
+      "addedAt": 1795534682369,
       "authors": "Jane Austen",
       "coverPath": "cover_emma.jpg",
       "pageCount": 474,
       "publisher": "John Murray",
-      "updatedAt": 1795456545873
+      "updatedAt": 1795534691967
     }
   ],
   "goals": [
     {
-      "id": 1795456536169386,
+      "id": 1795534678937882,
       "endDay": 20818,
       "repeat": "YEARLY",
       "target": 12,
       "startDay": 20454,
-      "createdAt": 1795456536169
+      "createdAt": 1795534678937
     }
   ],
   "links": [
     {
-      "bookId": 1795456528562279,
-      "shelfId": 1795456532716811
+      "bookId": 1795534668853904,
+      "shelfId": 1795534674358374
     }
   ],
   "notes": [
     {
-      "id": 1795456535762980,
+      "id": 1795534678215748,
       "text": "Hanna keeps the secret to the end.",
       "title": "People",
-      "bookId": 1795456530096058,
-      "createdAt": 1795456535763
+      "bookId": 1795534670436031,
+      "createdAt": 1795534678215
     }
   ],
   "prefs": {
@@ -93,7 +96,7 @@
     "profileName": "Anna",
     "customThemes": [
       {
-        "id": "6a1e6728-6842-4cec-a430-42f84f0c0b3a",
+        "id": "9397e3d1-b44f-4401-849f-4bd177f0ce8d",
         "card": -14932964,
         "name": "Moor",
         "text": -1511192,
@@ -105,72 +108,45 @@
   },
   "quotes": [
     {
-      "id": 1795456534346537,
+      "id": 1795534676908540,
       "page": 129,
       "text": "I revealed nothing that I should have kept silent about.",
-      "bookId": 1795456530096058,
-      "createdAt": 1795456534346
+      "bookId": 1795534670436031,
+      "createdAt": 1795534676908
     }
   ],
   "shelves": [
     {
-      "id": 1795456532716811,
+      "id": 1795534674358374,
       "name": "Holiday",
-      "createdAt": 1795456532716
-    }
-  ],
-  "requests": [
-    {
-      "id": "2cdc9d81-a1ff-4b43-b7da-e69fbe86d12b",
-      "note": "For the holidays?",
-      "peerId": "378f723d-9b2e-4aa3-a33a-ff378c8ebcea",
-      "status": "ACCEPTED",
-      "incoming": false,
-      "peerName": "Ben",
-      "bookTitle": "Momo",
-      "createdAt": 1795456555829,
-      "answeredAt": 1795456557197,
-      "bookAuthors": "Michael Ende",
-      "bookRemoteId": 1795456552997312
-    },
-    {
-      "id": "carl-1",
-      "peerId": "e280ff55-a1a6-4459-9d28-ef8117df786b",
-      "status": "DECLINED",
-      "incoming": true,
-      "peerName": "Carl",
-      "bookTitle": "Dracula",
-      "createdAt": 1795456560151,
-      "answeredAt": 1795456560865,
-      "bookAuthors": "Bram Stoker",
-      "bookRemoteId": 1795456528562279
+      "createdAt": 1795534674358
     }
   ],
   "sessions": [
     {
-      "id": 1795456532179800,
-      "bookId": 1795456530096058,
+      "id": 1795534673301466,
+      "bookId": 1795534670436031,
       "endPage": 100,
       "minutes": 50,
-      "startedAt": 1795453532179
+      "startedAt": 1795531673301
     },
     {
-      "id": 1795456532363802,
-      "bookId": 1795456530096058,
+      "id": 1795534673556602,
+      "bookId": 1795534670436031,
       "endPage": 206,
       "minutes": 95,
       "startPage": 120,
-      "startedAt": 1795450832363
+      "startedAt": 1795528973556
     }
   ],
   "ornaments": [
     {
-      "id": 1795456540432739,
+      "id": 1795534684614240,
       "kind": "CANDLE",
       "shelfKey": "READ"
     },
     {
-      "id": 1795456540533591,
+      "id": 1795534684776754,
       "kind": "CAT",
       "position": 1,
       "shelfKey": "READ"
@@ -178,13 +154,13 @@
   ],
   "purchases": [
     {
-      "id": 1795456535948970,
-      "day": 20780,
+      "id": 1795534678468843,
+      "day": 20781,
       "price": 14.9,
       "store": "Orell",
-      "bookId": 1795456530096058,
+      "bookId": 1795534670436031,
       "currency": "CHF"
     }
   ],
-  "exportedAt": 1795456576913
+  "exportedAt": 1795534752883
 }

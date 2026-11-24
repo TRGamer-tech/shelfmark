@@ -11,11 +11,13 @@ import { LogSessionDialog, NoteDialog, PurchaseDialog, QuoteDialog } from "@/com
 import { useDuration, useI18n } from "@/components/i18n";
 import { formatKey, ownershipKey, statusKey } from "@/components/labels";
 import { useLibrary } from "@/components/library";
+import { LoanView } from "@/components/Loans";
 import { RatingBar, SpiceBar } from "@/components/Ratings";
-import { Button, Card, Chip, ConfirmDialog, EmptyHint, Field, IconButton, IconLink, NameDialog, ProgressBar, Stat, Switch, Tabs, digits } from "@/components/ui";
+import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyHint, Field, IconButton, IconLink, NameDialog, ProgressBar, Stat, Switch, Tabs, digits } from "@/components/ui";
 import { formatDay, formatMoment, fromIsoDate, toIsoDate, today } from "@/lib/dates";
 import { newId } from "@/lib/ids";
 import { formatPrice, formatRating } from "@/lib/libraryLogic";
+import { backByHand, isOut, lentByHand, loanOf, loansAbout, ownedByHand, tyingLoan } from "@/lib/loans";
 import type { Book, Note, Purchase, Quote, ReadingSession, ReadingStatus } from "@/lib/model";
 import { OWNERSHIPS } from "@/lib/model";
 import { createShelf, deleteBook, deleteSession, modifyBook, setOnShelf, setStatus } from "@/lib/mutations";
@@ -38,9 +40,15 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 function Overview({ book, sessions, purchases, onLog }: { book: Book; sessions: ReadingSession[]; purchases: Purchase[]; onLog: () => void }) {
   const { t, plural, locale } = useI18n();
   const duration = useDuration();
-  const { vault, prefs, mutate } = useLibrary();
+  const { vault, prefs, mutate, loans } = useLibrary();
   const [page, setPage] = useState("");
   const [lending, setLending] = useState(false);
+  // The loans between friends this book is part of. The one it carries decides who has
+  // it: while the server tells of that loan, lending and borrowing by hand step aside.
+  const about = loansAbout(book, loans);
+  const carried = loanOf(book, loans);
+  const lentByLoan = carried?.role === "lender";
+  const borrowedByLoan = carried?.role === "borrower";
   const [newList, setNewList] = useState(false);
   const [purchase, setPurchase] = useState<Purchase | "new" | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -133,21 +141,31 @@ function Overview({ book, sessions, purchases, onLog }: { book: Book; sessions: 
       <Card title={t("book_section_ownership")}>
         <div className="chips">
           {OWNERSHIPS.map((ownership) => (
-            <Chip key={ownership} selected={book.ownership === ownership} onClick={() => change((b) => ({ ...b, ownership }))} data-testid={`own-${ownership}`}>
+            // While the book is with me on a loan, the loan says whose it is: the next look at the server would put it back.
+            <Chip key={ownership} selected={book.ownership === ownership} disabled={borrowedByLoan && carried !== undefined && isOut(carried)} onClick={() => change((b) => ownedByHand(b, ownership, carried !== undefined))} data-testid={`own-${ownership}`}>
               {t(ownershipKey(ownership))}
             </Chip>
           ))}
         </div>
-        {book.ownership === "BORROWED" ? (
+        {about.length > 0 ? (
+          <div data-testid="book-loans">
+            {about.map((loan) => (
+              <div key={loan.id} className="loan-box">
+                <LoanView loan={loan} />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {book.ownership === "BORROWED" && !borrowedByLoan ? (
           <div style={{ marginTop: 10 }}>
             <AutoSaveField key={book.id} value={book.borrowedFrom} label={t("book_borrowed_from")} onSave={(text) => change((b) => ({ ...b, borrowedFrom: text }))} testId="borrowed-from" />
           </div>
         ) : null}
-        {book.ownership === "OWNED" ? (
+        {book.ownership === "OWNED" && !lentByLoan ? (
           book.lentTo.trim() !== "" ? (
             <div style={{ marginTop: 8 }}>
               <p data-testid="lent-to">{t("book_lent_to", book.lentTo, formatDay(book.lentSince, locale))}</p>
-              <Button variant="text" onClick={() => change((b) => ({ ...b, lentTo: "", lentSince: null }))} data-testid="returned">
+              <Button variant="text" onClick={() => change(backByHand)} data-testid="returned">
                 {t("book_returned")}
               </Button>
             </div>
@@ -228,7 +246,7 @@ function Overview({ book, sessions, purchases, onLog }: { book: Book; sessions: 
           onSave={(name) => {
             setLending(false);
             const day = today();
-            change((b) => ({ ...b, lentTo: name, lentSince: day }));
+            change((b) => lentByHand(b, name, day));
           }}
         />
       ) : null}
@@ -363,7 +381,7 @@ function Notes({ book, notes }: { book: Book; notes: Note[] }) {
 
 export default function BookPage() {
   const { t, locale } = useI18n();
-  const { vault, mutate } = useLibrary();
+  const { vault, mutate, loans } = useLibrary();
   const router = useRouter();
   const params = useSearchParams();
   const id = Number(params.get("id"));
@@ -391,6 +409,8 @@ export default function BookPage() {
   const purchases = vault.purchases.filter((p) => p.bookId === book.id);
   const count = (n: number) => (n > 0 ? ` (${n})` : "");
   const favourite = book.favorite;
+  // The loan that ties this book down, if there is one. It has to end before the book can go.
+  const tied = tyingLoan(book, loans);
 
   return (
     <div className="page" data-testid="book-page">
@@ -438,7 +458,26 @@ export default function BookPage() {
       </div>
 
       {logging ? <LogSessionDialog book={book} onClose={() => setLogging(false)} /> : null}
-      {confirmDelete ? (
+      {confirmDelete && tied ? (
+        // A book that is part of a loan stays: as the borrower's copy the next look at the
+        // server would bring it back, and as the lender's book the loan would point at nothing.
+        <Dialog
+          title={t("book_delete_title")}
+          onClose={() => setConfirmDelete(false)}
+          testId="book-in-loan"
+          actions={
+            <>
+              <Link href="/friends/loans" className="btn btn-text" data-testid="to-loans">
+                {t("loans_title")}
+              </Link>
+              <Button onClick={() => setConfirmDelete(false)}>{t("action_ok")}</Button>
+            </>
+          }
+        >
+          <p>{t("web_book_in_loan")}</p>
+        </Dialog>
+      ) : null}
+      {confirmDelete && !tied ? (
         <ConfirmDialog
           title={t("book_delete_title")}
           text={t("book_delete_text", book.title)}

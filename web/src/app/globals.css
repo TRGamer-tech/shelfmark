@@ -2299,6 +2299,83 @@ img {
   font-weight: 700;
 }
 
+/* ---- loans between friends ---- */
+
+.loan {
+  display: grid;
+  gap: 6px;
+}
+
+/* Which book and who, with the cover as small as on a list. */
+.loan-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.loan-head .cover {
+  flex: none;
+  width: 34px;
+}
+
+/* The day has come, or has passed. */
+.loan-late {
+  color: var(--danger-text);
+  font-weight: 700;
+}
+
+/* What the borrower wrote when asking. */
+.loan-note {
+  padding-left: 12px;
+  border-left: 3px solid var(--outline-variant);
+  white-space: pre-line;
+}
+
+.loan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+
+/* A loan inside another card: on the page of a book, or on a friend's shelf. */
+.loan-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-low);
+}
+
+.loan-box .btn-text {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* A choice between two things, one of which may come with a field. */
+.choice {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.choice-row input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--primary);
+}
+
 /* ---- settings ---- */
 
 .theme-grid {

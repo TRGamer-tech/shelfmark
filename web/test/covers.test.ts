@@ -7,7 +7,7 @@ import type { Vault } from "../src/lib/model.ts";
 import { emptyVault, readVault, writeVault } from "../src/lib/model.ts";
 import type { BookFields } from "../src/lib/mutations.ts";
 import { editBook, fillCover, modifyBook, withCover } from "../src/lib/mutations.ts";
-import { coverAddress, ownCoverFile, ownCoverFiles, removeCovers, uploadCover } from "../src/lib/supabase/covers.ts";
+import { coverAddress, droppedCoverFiles, listCoverFiles, ownCoverFile, ownCoverFiles, removeAllCovers, removeCoverFiles, uploadCover } from "../src/lib/supabase/covers.ts";
 import { ServerError } from "../src/lib/sync.ts";
 import { book as makeBook } from "./helpers.ts";
 
@@ -149,41 +149,166 @@ function playServer(answer: (request: Seen) => Response | Promise<Response>): Se
   return seen;
 }
 
-test("before an account is deleted its own pictures are removed, and only those", async () => {
-  const seen = playServer(() => new Response('{"message":"Successfully deleted"}', { status: 200 }));
-  await removeCovers(config, "token-1", ME, [
-    { coverUrl: mine("a.jpg") },
+/** A server that keeps a folder of pictures: it lists it a page at a time and removes what it is asked to. */
+function playFolder(files: string[], options: { refuse?: (file: string) => boolean; noList?: boolean } = {}) {
+  const kept = new Set(files);
+  const seen = playServer((request) => {
+    if (request.method === "POST" && request.url === `${config.url}/storage/v1/object/list/shelfmark-covers`) {
+      if (options.noList) return new Response('{"message":"not here"}', { status: 400 });
+      const asked = JSON.parse(String(request.body)) as { prefix: string; limit: number; offset: number };
+      const names = asked.prefix === ME ? [...kept].sort() : [];
+      return Response.json(names.slice(asked.offset, asked.offset + asked.limit).map((name) => ({ name, id: `id-${name}`, metadata: { size: 4 } })));
+    }
+    if (request.method === "DELETE") {
+      const file = request.url.split("/").pop() ?? "";
+      if (options.refuse?.(file)) return new Response('{"statusCode":"403"}', { status: 400 });
+      kept.delete(file);
+      return new Response('{"message":"Successfully deleted"}', { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  return { kept, seen };
+}
+
+test("a picture goes when the save leaves it without a book: its book is deleted, or shows another cover", () => {
+  const before = [{ coverUrl: mine("emma.jpg") }, { coverUrl: mine("dune.jpg") }, { coverUrl: "https://covers.openlibrary.org/b/id/5-L.jpg" }, { coverUrl: "" }];
+  // The book with emma.jpg is deleted.
+  assert.deepEqual(droppedCoverFiles(config, ME, before, before.slice(1)), ["emma.jpg"]);
+  // It gets another cover: from a catalogue, another upload, or none at all.
+  assert.deepEqual(droppedCoverFiles(config, ME, before, [{ coverUrl: "https://example.org/x.jpg" }, ...before.slice(1)]), ["emma.jpg"]);
+  assert.deepEqual(droppedCoverFiles(config, ME, before, [{ coverUrl: mine("emma-2.jpg") }, ...before.slice(1)]), ["emma.jpg"]);
+  assert.deepEqual(droppedCoverFiles(config, ME, before, [{ coverUrl: "" }, ...before.slice(1)]), ["emma.jpg"]);
+  // Nothing happened to a cover: nothing goes.
+  assert.deepEqual(droppedCoverFiles(config, ME, before, [...before, { coverUrl: mine("new.jpg") }]), []);
+  assert.deepEqual(droppedCoverFiles(config, ME, before, before.slice().reverse()), []);
+  // Everything is replaced, as when a backup is restored.
+  assert.deepEqual(droppedCoverFiles(config, ME, before, []).sort(), ["dune.jpg", "emma.jpg"]);
+  assert.deepEqual(droppedCoverFiles(config, ME, [], before), []);
+});
+
+test("a picture that another book of the library still shows stays", () => {
+  const twice = [{ coverUrl: mine("emma.jpg") }, { coverUrl: mine("emma.jpg") }, { coverUrl: mine("dune.jpg") }];
+  // One of the two books with the same picture is deleted, the other still shows it.
+  assert.deepEqual(droppedCoverFiles(config, ME, twice, twice.slice(1)), []);
+  // Both are gone: now it goes.
+  assert.deepEqual(droppedCoverFiles(config, ME, twice, twice.slice(2)), ["emma.jpg"]);
+});
+
+test("only a picture in the account's own folder is ever removed", () => {
+  const before = [
     { coverUrl: "https://covers.openlibrary.org/b/id/5-L.jpg" },
-    { coverUrl: `${config.url}/storage/v1/object/public/shelfmark-covers/${OTHER}/c.jpg` },
-    { coverUrl: mine("b.jpg") },
-  ]);
+    { coverUrl: `${config.url}/storage/v1/object/public/shelfmark-covers/${OTHER}/theirs.jpg` },
+    { coverUrl: `${config.url}/storage/v1/object/public/another-bucket/${ME}/x.jpg` },
+    { coverUrl: `https://elsewhere.example/storage/v1/object/public/shelfmark-covers/${ME}/x.jpg` },
+    { coverUrl: mine("../escape.jpg") },
+  ];
+  assert.deepEqual(droppedCoverFiles(config, ME, before, []), []);
+});
+
+test("the pictures a save dropped are removed, each with the sign-in of the account", async () => {
+  const { kept, seen } = playFolder(["a.jpg", "b.jpg", "c.jpg"]);
+  await removeCoverFiles(config, "token-1", ME, ["a.jpg", "c.jpg"]);
+  assert.deepEqual([...kept], ["b.jpg"]);
   assert.deepEqual(seen.map((r) => `${r.method} ${r.url}`).sort(), [
     `DELETE ${config.url}/storage/v1/object/shelfmark-covers/${ME}/a.jpg`,
-    `DELETE ${config.url}/storage/v1/object/shelfmark-covers/${ME}/b.jpg`,
+    `DELETE ${config.url}/storage/v1/object/shelfmark-covers/${ME}/c.jpg`,
   ]);
   for (const request of seen) {
     assert.equal(request.headers.apikey, "sb_publishable_test");
     assert.equal(request.headers.Authorization, "Bearer token-1");
   }
+  // Nothing to remove asks the server for nothing.
+  const quiet = playFolder([]);
+  await removeCoverFiles(config, "token-1", ME, []);
+  assert.equal(quiet.seen.length, 0);
 });
 
-test("a picture that cannot be removed does not stop the others, or the deletion", async () => {
+test("a picture that cannot be removed stops nothing: not the others, and not whoever asked", async () => {
   const seen = playServer((request) => {
     if (request.url.endsWith("/a.jpg")) throw new TypeError("fetch failed");
     if (request.url.endsWith("/b.jpg")) return new Response('{"statusCode":"403"}', { status: 400 });
     return new Response("{}", { status: 200 });
   });
   // Twenty pictures, more than go out at once.
-  const books = ["a", "b", ..."cdefghijklmnopqrst"].map((name) => ({ coverUrl: mine(`${name}.jpg`) }));
-  await removeCovers(config, "token-1", ME, books);
+  const files = ["a", "b", ..."cdefghijklmnopqrst"].map((name) => `${name}.jpg`);
+  await removeCoverFiles(config, "token-1", ME, files);
   assert.equal(seen.length, 20);
   assert.equal(new Set(seen.map((r) => r.url)).size, 20);
 });
 
-test("a library without own pictures asks the server for nothing", async () => {
-  const seen = playServer(() => new Response("{}", { status: 200 }));
-  await removeCovers(config, "token-1", ME, [{ coverUrl: "" }, { coverUrl: "https://example.org/x.jpg" }]);
-  assert.equal(seen.length, 0);
+test("the folder of an account is listed a page at a time, until it has told everything", async () => {
+  // 230 pictures: three answers, the last of them short.
+  const files = Array.from({ length: 230 }, (_, index) => `p${String(index).padStart(3, "0")}.jpg`);
+  const { seen } = playFolder(files);
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), files);
+  const asked = seen.map((r) => JSON.parse(String(r.body)));
+  assert.deepEqual(asked, [
+    { prefix: ME, limit: 100, offset: 0 },
+    { prefix: ME, limit: 100, offset: 100 },
+    { prefix: ME, limit: 100, offset: 200 },
+  ]);
+  for (const request of seen) {
+    assert.equal(request.method, "POST");
+    assert.equal(request.url, `${config.url}/storage/v1/object/list/shelfmark-covers`);
+    assert.equal(request.headers.Authorization, "Bearer token-1");
+    assert.equal(request.headers["Content-Type"], "application/json");
+  }
+  // Exactly one full page: a second question finds out that there is no more.
+  const full = playFolder(files.slice(0, 100));
+  assert.equal((await listCoverFiles(config, "token-1", ME)).length, 100);
+  assert.equal(full.seen.length, 2);
+  // An empty folder is one question.
+  const empty = playFolder([]);
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), []);
+  assert.equal(empty.seen.length, 1);
+});
+
+test("a listing that fails, or says something odd, ends with what was found, and never throws", async () => {
+  playServer(() => {
+    throw new TypeError("fetch failed");
+  });
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), []);
+  playServer(() => new Response('{"message":"no"}', { status: 403 }));
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), []);
+  playServer(() => Response.json({ error: "not a list" }));
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), []);
+  // Names that could not be files of this folder (a folder inside it, a path) are not taken.
+  playServer(() => Response.json([{ name: "ok.jpg" }, { name: "sub/dir.jpg" }, { name: "../up.jpg" }, { name: 7 }, "text", null, { name: "ok.jpg" }]));
+  assert.deepEqual(await listCoverFiles(config, "token-1", ME), ["ok.jpg"]);
+});
+
+test("before an account is deleted everything in its folder is removed, also the pictures of books that are long gone", async () => {
+  // Two pictures belong to books of the library. "orphan.jpg" was left behind: its book was
+  // deleted on a day the picture could not be removed.
+  const { kept, seen } = playFolder(["emma.jpg", "dune.jpg", "orphan.jpg"]);
+  await removeAllCovers(config, "token-1", ME, [{ coverUrl: mine("emma.jpg") }, { coverUrl: mine("dune.jpg") }, { coverUrl: "https://covers.openlibrary.org/b/id/5-L.jpg" }, { coverUrl: `${config.url}/storage/v1/object/public/shelfmark-covers/${OTHER}/theirs.jpg` }]);
+  assert.deepEqual([...kept], []);
+  assert.deepEqual(
+    seen.filter((r) => r.method === "DELETE").map((r) => r.url).sort(),
+    ["dune.jpg", "emma.jpg", "orphan.jpg"].map((file) => `${config.url}/storage/v1/object/shelfmark-covers/${ME}/${file}`),
+  );
+  // Nothing of anybody else's folder is touched.
+  assert.ok(seen.every((r) => !r.url.includes(OTHER)));
+});
+
+test("an account can be deleted when the folder cannot be listed or a picture cannot be removed", async () => {
+  // No listing: what the books name is removed all the same.
+  const blind = playFolder(["emma.jpg", "orphan.jpg"], { noList: true });
+  await removeAllCovers(config, "token-1", ME, [{ coverUrl: mine("emma.jpg") }]);
+  assert.deepEqual([...blind.kept], ["orphan.jpg"]);
+  // A picture the server will not remove: the others go, and nothing is thrown.
+  const stubborn = playFolder(["a.jpg", "b.jpg", "c.jpg"], { refuse: (file) => file === "b.jpg" });
+  await removeAllCovers(config, "token-1", ME, []);
+  assert.deepEqual([...stubborn.kept], ["b.jpg"]);
+  // No connection at all.
+  playServer(() => {
+    throw new TypeError("fetch failed");
+  });
+  await removeAllCovers(config, "token-1", ME, [{ coverUrl: mine("emma.jpg") }]);
+  // An account without pictures: one question, no removal.
+  const none = playFolder([]);
+  await removeAllCovers(config, "token-1", ME, [{ coverUrl: "" }, { coverUrl: "https://example.org/x.jpg" }]);
+  assert.deepEqual(none.seen.map((r) => r.method), ["POST"]);
 });
 
 test("a picture is uploaded as the plain body, below the folder of the account", async () => {
