@@ -9,7 +9,7 @@ the Android app (`app/`) and the website (`web/`) are written against.
 Supabase Auth with e-mail and password. Every request carries the project's publishable
 key in the header `apikey`. A signed-in caller adds `Authorization: Bearer <access token>`.
 The user id of the account (`auth.uid()`) is the person's id everywhere: in the library
-shared with friends, in borrow requests, in the list of friends.
+shared with friends, in loans, in the list of friends.
 
 ## Functions
 
@@ -25,8 +25,10 @@ caller only. A refusal is HTTP 400 with `{"code": "P0001", "message": "shelfmark
 | `shelfmark_add_friend` | `p_code` | `{id, name}` | `unknown_code`, `own_code`, `full` |
 | `shelfmark_remove_friend` | `p_friend` | `{ok}` | |
 | `shelfmark_publish` | `p_library` | `{at}` | `bad_request`, `too_large` |
-| `shelfmark_send` | `p_to`, `p_payload` | `{id}` | `not_friends`, `too_large`, `full` |
-| `shelfmark_sync` | `p_known?`, `p_ack?` | `{id, code, name, time, friends, libraries, messages}` | |
+| `shelfmark_loan_ask` | `p_friend`, `p_book`, `p_info?`, `p_note?` | a loan | `not_friends`, `invalid`, `taken`, `full` |
+| `shelfmark_loan_act` | `p_loan`, `p_action`, `p_due?`, `p_reason?` | a loan | `unknown_loan`, `not_allowed`, `taken`, `invalid` |
+| `shelfmark_sync` | `p_known?` | `{id, code, name, time, friends, libraries, loans, messages}` | |
+| `shelfmark_send` | | | always `outdated` |
 | `shelfmark_vault_pull` | `p_known?` | `{revision, at, payload}` | |
 | `shelfmark_vault_push` | `p_payload`, `p_expected?` | `{revision, at}` | `conflict`, `bad_request`, `too_large` |
 | `shelfmark_delete_account` | none | `{ok, login_kept}` | |
@@ -44,8 +46,11 @@ is accepted in any case and with any punctuation.
 - `libraries`: `[{owner, at, payload}]`, the shared libraries of friends that are newer
   than the caller has. `p_known` maps a friend's id to the `at` of the copy the caller
   holds. A caller that keeps nothing passes `{}` and gets all of them.
-- `messages`: `[{id, from, at, payload}]`, borrow requests and answers waiting for the
-  caller. They stay until their ids are passed as `p_ack` in a later call.
+- `loans`: every loan the caller is part of and has not put away, the newest question
+  first. See [Loans](#loans).
+- `messages`: always `[]`. A leftover of the mailbox that borrow requests used to travel
+  through, like `p_ack`, which is ignored, and `shelfmark_send`, which only says `outdated`
+  so that a version of the app from before explains itself.
 
 ## The vault: one library on every device
 
@@ -53,7 +58,7 @@ is accepted in any case and with any punctuation.
 same document as a backup of the app, the class `BackupPayload` in
 `app/src/main/java/ch/schmidtbit/shelfmark/data/share/SharePayloads.kt`, whose parts are
 the classes in `data/model/Models.kt`: `books`, `shelves`, `links`, `quotes`, `sessions`,
-`notes`, `goals`, `purchases`, `ornaments`, `requests`, and `prefs`. Fields that have their
+`notes`, `goals`, `purchases`, `ornaments` and `prefs`. Fields that have their
 default value are left out by the app, so a reader fills in the defaults. The website keeps
 fields it does not know when it writes a document back. The app does not, so a new field
 is taught to the app first.
@@ -115,11 +120,96 @@ The name friends see lives in two places, the profile on the server and
 `prefs.profileName` in the vault. The vault is the one that counts: a client that sees them
 differ calls `shelfmark_hello(p_name)` with the name from the vault.
 
-Borrow requests and answers are envelopes of type `lend_request` and `lend_answer`
-(`LendRequestMsg`, `LendAnswerMsg`), sent with `shelfmark_send`. A client ignores a message
-whose `fromId` is not the friend the server says it came from, and an answer that does not
-come from the friend the request went to. The requests themselves
-are kept in the vault (`requests`), so that every device of an account shows them.
+A book is `available` to friends when it is owned, may be lent (`lendable`), is not lent
+by hand (`lentTo` is empty), and no loan of it is `agreed`, `handed`, `on_loan` or
+`given_back`. A client publishes again when a loan changes that.
+
+## Loans
+
+A loan is one record on the server that lender and borrower both read. Neither keeps a
+copy that could differ: what a client shows is what the last `shelfmark_sync` said.
+`shelfmark_ping` answers `schema: 3` on a server that has loans.
+
+```json
+{ "id": "uuid", "role": "lender | borrower", "peer": "uuid", "peerName": "Anna",
+  "bookId": 1795439271489008,
+  "book": { "title": "", "authors": "", "isbn": "", "coverUrl": "", "pageCount": 0, "format": "UNKNOWN" },
+  "note": "", "state": "asked", "reason": "", "dueOn": null,
+  "askedAt": 0, "agreedAt": null, "handedAt": null, "receivedAt": null, "givenBackAt": null,
+  "closedAt": null, "updatedAt": 0, "byMe": true }
+```
+
+- `bookId` is the id of the book in the **lender's** library, `book` what the borrower saw
+  of it when asking. `peer` and `peerName` are the other person.
+- Moments are milliseconds since 1970. `dueOn` is a day, counted like `startedOn` in the
+  vault (days since 1 January 1970), or `null` for "no fixed date".
+- `byMe` says whether the last step was the caller's own.
+
+**The life of a loan.** `shelfmark_loan_ask(p_friend, p_book, p_info, p_note)` starts one
+in `asked` (asking again for the same book returns the open one; `taken` when the book is
+reserved or out). Every further step is `shelfmark_loan_act(p_loan, p_action, ...)`:
+
+| Who | `p_action` | From | To | |
+| --- | --- | --- | --- | --- |
+| lender | `agree` | `asked` | `agreed` | `p_due`: back by this day, `null` for no fixed date. Others who asked for the book are `declined` with reason `taken` |
+| lender | `decline` | `asked` | `declined` | `p_reason`, optional |
+| lender | `cancel` | `agreed`, `handed` | `cancelled` | the yes taken back, `p_reason` optional |
+| lender | `hand` | `agreed` | `handed` | "I handed it over" |
+| lender | `undo_hand` | `handed` | `agreed` | |
+| borrower | `receive` | `handed` | `on_loan` | "I have it" |
+| borrower | `not_received` | `handed` | `agreed` | "I did not get it" |
+| borrower | `give_back` | `on_loan` | `given_back` | "I gave it back" |
+| borrower | `undo_give_back` | `given_back` | `on_loan` | |
+| lender | `take_back` | `given_back` | `returned` | "I have it back" |
+| lender | `not_returned` | `given_back` | `on_loan` | "I did not get it back" |
+| lender | `close` | `on_loan` | `returned` | the book is back and the borrower never said so |
+| lender | `set_due` | `agreed`, `handed`, `on_loan`, `given_back` | same | `p_due`: another day, or `null` |
+| borrower | `withdraw` | `asked`, `agreed` | `withdrawn` | |
+| either | `hide` | a loan that is over | same | put away, for the caller only |
+
+Handing over takes the lender first and then the borrower; giving back the borrower first
+and then the lender. Everything else is refused with `not_allowed`: the loan has moved on,
+and the client syncs to show where it stands. `returned`, `declined`, `withdrawn` and
+`cancelled` are the end of a loan.
+
+**The books follow the loans.** After every sync a client brings the library (the vault)
+in line with the loans. Both clients do exactly this, and doing it twice changes nothing:
+
+- *I am the lender* and the loan is `on_loan` or `given_back`: my book `bookId`, unless its
+  `loanId` is this loan already, gets `lentTo = peerName`, `lentSince = the day of
+  receivedAt`, `loanId = loan.id`.
+- *I am the lender* and the loan is in any other state: my book whose `loanId` is this
+  loan gets `lentTo = ""`, `lentSince = null`, `loanId = ""`.
+- *I am the borrower* and the loan is `on_loan` or `given_back`: my copy of the book has
+  `ownership = BORROWED`, `borrowedFrom = peerName`, `loanId = loan.id`. My copy is, in
+  this order: the book whose `loanId` is this loan; the book with the id `loanBookId(loan.id)`;
+  a book of mine that is the same book (same ISBN, or same title and first author) and
+  `NOT_OWNED`, a wish for instance. If there is none, the client adds one with the id
+  `loanBookId(loan.id)`, the fields of `loan.book` (and whatever more the friend's shared
+  library says about `bookId`), `status = NONE`, `addedAt = receivedAt`.
+- *I am the borrower* and the loan is `returned`: the book whose `loanId` is this loan and
+  which is still `BORROWED` becomes `NOT_OWNED`. It keeps `loanId` and `borrowedFrom`,
+  with everything the reader noted in it: read, not mine.
+- `loanBookId(id)`: the first 13 hexadecimal digits of the loan's id, dashes left out,
+  read as a number (0 becomes 1). Two devices of one account that both see the loan make
+  the same book, and the vault knows it is one.
+
+`loanId` is a field of a book in the vault, empty by default. A book with a `loanId`
+whose loan the client knows shows that loan and its steps. With no such loan (the other
+account is gone, or the loan was put away) it is a book lent or borrowed by hand again,
+as for somebody without Shelfmark: `lentTo` and `borrowedFrom` are still typed freely.
+
+**News and reminders.** A loan whose `updatedAt` is newer than what this device last saw
+and whose `byMe` is `false` is news: the other side did something. Waiting for the reader's
+own tap are, as lender, `asked` and `given_back`, and as borrower, `handed`. A loan that
+is `on_loan` or `given_back` with a `dueOn` that is today or past is due: both clients
+show it, and the phone says so once per loan and day it was due on.
+
+**What is gone.** Borrow requests used to be envelopes of type `lend_request` and
+`lend_answer`, passed through `shelfmark_send` and kept in the vault as `requests`. A
+client no longer writes or reads any of it. A vault that still carries `requests` is
+read without them, and a file of one of those two types is answered with "from an older
+version". Showing a shelf as a file still works; borrowing needs both sides signed in.
 
 ## Trying it without Supabase
 

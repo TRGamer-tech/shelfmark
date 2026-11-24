@@ -27,7 +27,8 @@ declare
     r jsonb;
     anna_code text;
     old_code text;
-    message_id uuid;
+    loan uuid;
+    other uuid;
     failed boolean;
 begin
     -- The tables themselves are out of reach.
@@ -42,7 +43,7 @@ begin
     -- Without signing in there is the daily check and nothing else.
     perform pg_temp.sign_in(null);
     r := public.shelfmark_ping();
-    assert (r ->> 'ok')::boolean and (r ->> 'schema')::int = 2, 'ping';
+    assert (r ->> 'ok')::boolean and (r ->> 'schema')::int = 3, 'ping';
     failed := false;
     begin
         perform public.shelfmark_hello('Nobody');
@@ -161,40 +162,213 @@ begin
     r := public.shelfmark_sync(jsonb_build_object(anna::text, (r ->> 'time')::bigint - 60000));
     assert jsonb_array_length(r -> 'libraries') = 1, 'changed library is sent';
 
-    -- Cleo is nobody's friend: she sees nothing and cannot write to anyone.
+    -- Cleo is nobody's friend: she sees nothing and cannot ask anyone for a book.
     perform pg_temp.sign_in(cleo);
     r := public.shelfmark_sync();
-    assert jsonb_array_length(r -> 'friends') = 0 and jsonb_array_length(r -> 'libraries') = 0, 'stranger sees nothing';
+    assert jsonb_array_length(r -> 'friends') = 0 and jsonb_array_length(r -> 'libraries') = 0 and jsonb_array_length(r -> 'loans') = 0, 'stranger sees nothing';
+    failed := false;
+    begin
+        perform public.shelfmark_loan_ask(anna, 7, '{"title":"Emma"}');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_friends';
+    end;
+    assert failed, 'a stranger cannot ask';
+    -- A version of the app from before the loans is told that it is too old.
+    perform pg_temp.sign_in(ben);
     failed := false;
     begin
         perform public.shelfmark_send(anna, '{"type":"lend_request"}');
     exception when others then
-        failed := sqlerrm = 'shelfmark:not_friends';
+        failed := sqlerrm = 'shelfmark:outdated';
     end;
-    assert failed, 'stranger cannot send';
+    assert failed, 'the mailbox is closed';
 
-    -- A borrow request travels from Ben to Anna and is gone once she has it.
-    perform pg_temp.sign_in(ben);
-    r := public.shelfmark_send(anna, '{"type":"lend_request","request":{"requestId":"r1","bookTitle":"Emma"}}');
-    message_id := (r ->> 'id')::uuid;
-    -- The sender cannot acknowledge it away.
-    perform public.shelfmark_sync('{}', array[message_id]);
+    -- A loan, from the question to the day the book is back. Ben asks Anna for book 7.
+    r := public.shelfmark_loan_ask(anna, 7, '{"title":"  Emma ","authors":"Jane Austen","isbn":"9780141439587","coverUrl":"https://example.org/emma.jpg","pageCount":"474","format":"PAPERBACK","rating":5}', ' Over the holidays? ');
+    loan := (r ->> 'id')::uuid;
+    assert r ->> 'state' = 'asked' and r ->> 'role' = 'borrower' and r ->> 'peer' = anna::text and r ->> 'peerName' = 'Anna B.', 'the asker sees the question';
+    assert r -> 'book' ->> 'title' = 'Emma' and (r -> 'book' ->> 'pageCount')::int = 474 and not (r -> 'book' ? 'rating'), 'only what a book needs is kept';
+    assert r ->> 'note' = 'Over the holidays?' and (r ->> 'byMe')::boolean and r ->> 'dueOn' is null, 'note and who did it';
+    -- Asking again gives the same question back, not a second one.
+    assert (public.shelfmark_loan_ask(anna, 7, '{"title":"Emma"}') ->> 'id')::uuid = loan, 'asking twice';
+    -- A question needs a book with a title, and nobody asks themselves.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_ask(anna, 8, '{"title":" "}');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:invalid';
+    end;
+    assert failed, 'a book without a title';
+    -- The asker cannot answer for the lender, and nothing can be handed over before the yes.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'agree');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'the borrower cannot say yes';
+    -- Cleo has nothing to do with this loan: for her it does not exist.
+    perform pg_temp.sign_in(cleo);
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'withdraw');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:unknown_loan';
+    end;
+    assert failed, 'a third person cannot touch a loan';
+
+    -- Cleo becomes Anna's friend and asks for the same book.
+    perform public.shelfmark_add_friend(anna_code);
+    other := (public.shelfmark_loan_ask(anna, 7, '{"title":"Emma"}') ->> 'id')::uuid;
+    assert other <> loan, 'two people can ask for one book';
+
+    -- Anna sees both questions and says yes to Ben, back by day 20800.
     perform pg_temp.sign_in(anna);
     r := public.shelfmark_sync();
-    assert jsonb_array_length(r -> 'messages') = 1, 'message arrives, and only the receiver can acknowledge';
-    assert r -> 'messages' -> 0 ->> 'from' = ben::text, 'sender is named';
-    assert r -> 'messages' -> 0 -> 'payload' -> 'request' ->> 'bookTitle' = 'Emma', 'payload intact';
-    r := public.shelfmark_sync('{}', array[message_id]);
-    assert jsonb_array_length(r -> 'messages') = 0, 'acknowledged message is deleted';
+    assert jsonb_array_length(r -> 'loans') = 2 and r -> 'loans' -> 0 ->> 'role' = 'lender', 'the lender sees who asked';
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'hand');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'nothing is handed over before the yes';
+    r := public.shelfmark_loan_act(loan, 'agree', 20800);
+    assert r ->> 'state' = 'agreed' and (r ->> 'dueOn')::bigint = 20800 and (r ->> 'agreedAt') is not null, 'yes, with a day';
+    -- Cleo is told that the book went to somebody else, and asking again says the same.
+    perform pg_temp.sign_in(cleo);
+    r := public.shelfmark_sync();
+    assert r -> 'loans' -> 0 ->> 'state' = 'declined' and r -> 'loans' -> 0 ->> 'reason' = 'taken' and not (r -> 'loans' -> 0 ->> 'byMe')::boolean, 'the other asker is told';
+    failed := false;
+    begin
+        perform public.shelfmark_loan_ask(anna, 7, '{"title":"Emma"}');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:taken';
+    end;
+    assert failed, 'a reserved book cannot be asked for';
+    -- She puts the answer away. It is gone for her and still there for Anna.
+    perform public.shelfmark_loan_act(other, 'hide');
+    assert jsonb_array_length(public.shelfmark_sync() -> 'loans') = 0, 'put away';
+    perform public.shelfmark_remove_friend(anna);
 
+    -- Handing over: the lender first, then the borrower.
     perform pg_temp.sign_in(ben);
     failed := false;
     begin
-        perform public.shelfmark_send(anna, to_jsonb(repeat('x', 70000)));
+        perform public.shelfmark_loan_act(loan, 'receive');
     exception when others then
-        failed := sqlerrm = 'shelfmark:too_large';
+        failed := sqlerrm = 'shelfmark:not_allowed';
     end;
-    assert failed, 'oversized message';
+    assert failed, 'the borrower cannot have it before the lender gave it';
+    perform pg_temp.sign_in(anna);
+    r := public.shelfmark_loan_act(loan, 'hand');
+    assert r ->> 'state' = 'handed' and (r ->> 'handedAt') is not null, 'handed over, says the lender';
+    -- Ben did not get it: back to reserved. Then for real.
+    perform pg_temp.sign_in(ben);
+    r := public.shelfmark_loan_act(loan, 'not_received');
+    assert r ->> 'state' = 'agreed' and (r ->> 'handedAt') is null, 'not received';
+    perform pg_temp.sign_in(anna);
+    perform public.shelfmark_loan_act(loan, 'hand');
+    -- The lender cannot confirm for the borrower.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'receive');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'the lender cannot receive';
+    perform pg_temp.sign_in(ben);
+    r := public.shelfmark_loan_act(loan, 'receive');
+    assert r ->> 'state' = 'on_loan' and (r ->> 'receivedAt') is not null, 'on loan once both said so';
+    -- No way out of a loan except giving the book back.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'withdraw');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'a book in hand cannot be withdrawn';
+
+    -- Anna gives him more time, and then no fixed day at all.
+    perform pg_temp.sign_in(anna);
+    assert (public.shelfmark_loan_act(loan, 'set_due', 20830) ->> 'dueOn')::bigint = 20830, 'another day';
+    assert public.shelfmark_loan_act(loan, 'set_due') ->> 'dueOn' is null, 'no fixed day';
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'set_due', -5);
+    exception when others then
+        failed := sqlerrm = 'shelfmark:invalid';
+    end;
+    assert failed, 'a day that is none';
+    -- She cannot take it back before he says he gave it back.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'take_back');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'giving back takes the borrower first';
+
+    -- Giving back: the borrower first, then the lender.
+    perform pg_temp.sign_in(ben);
+    r := public.shelfmark_loan_act(loan, 'give_back');
+    assert r ->> 'state' = 'given_back' and (r ->> 'givenBackAt') is not null, 'given back, says the borrower';
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'take_back');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'the borrower cannot confirm the return';
+    -- It is not back, says Anna. He gives it back again, and now it is.
+    perform pg_temp.sign_in(anna);
+    r := public.shelfmark_loan_act(loan, 'not_returned');
+    assert r ->> 'state' = 'on_loan' and (r ->> 'givenBackAt') is null, 'not returned';
+    perform pg_temp.sign_in(ben);
+    perform public.shelfmark_loan_act(loan, 'give_back');
+    perform pg_temp.sign_in(anna);
+    r := public.shelfmark_loan_act(loan, 'take_back');
+    assert r ->> 'state' = 'returned' and (r ->> 'closedAt') is not null and (r ->> 'byMe')::boolean, 'returned once both said so';
+    -- What is over stays over.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_act(loan, 'hand');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_allowed';
+    end;
+    assert failed, 'a loan that is over does not start again';
+    -- The book is free again: Ben can ask once more, and take the question back.
+    perform pg_temp.sign_in(ben);
+    r := public.shelfmark_sync();
+    assert r -> 'loans' -> 0 ->> 'state' = 'returned' and not (r -> 'loans' -> 0 ->> 'byMe')::boolean, 'the borrower hears that it is back';
+    other := (public.shelfmark_loan_ask(anna, 7, '{"title":"Emma"}') ->> 'id')::uuid;
+    assert other <> loan, 'asking again after a return';
+    assert public.shelfmark_loan_act(other, 'withdraw') ->> 'state' = 'withdrawn', 'withdrawn';
+    -- The lender who has the book back before the borrower said a word can close the loan herself.
+    other := (public.shelfmark_loan_ask(anna, 9, '{"title":"Persuasion"}') ->> 'id')::uuid;
+    perform pg_temp.sign_in(anna);
+    perform public.shelfmark_loan_act(other, 'agree');
+    perform public.shelfmark_loan_act(other, 'hand');
+    perform pg_temp.sign_in(ben);
+    perform public.shelfmark_loan_act(other, 'receive');
+    perform pg_temp.sign_in(anna);
+    assert public.shelfmark_loan_act(other, 'close') ->> 'state' = 'returned', 'closed by the lender';
+    -- A yes can be taken back as long as the book has not changed hands, and a no can carry a reason.
+    perform pg_temp.sign_in(ben);
+    other := (public.shelfmark_loan_ask(anna, 10, '{"title":"Sanditon"}') ->> 'id')::uuid;
+    loan := (public.shelfmark_loan_ask(anna, 11, '{"title":"Lady Susan"}') ->> 'id')::uuid;
+    perform pg_temp.sign_in(anna);
+    perform public.shelfmark_loan_act(other, 'agree');
+    r := public.shelfmark_loan_act(other, 'cancel', null, 'I need it myself after all');
+    assert r ->> 'state' = 'cancelled' and r ->> 'reason' = 'I need it myself after all', 'the yes taken back';
+    r := public.shelfmark_loan_act(loan, 'decline', null, 'Not this one');
+    assert r ->> 'state' = 'declined' and r ->> 'reason' = 'Not this one', 'no, with a reason';
+    -- A question nobody answered ends with the friendship. A book on loan stays a loan.
+    perform pg_temp.sign_in(ben);
+    other := (public.shelfmark_loan_ask(anna, 12, '{"title":"Mansfield Park"}') ->> 'id')::uuid;
+    loan := (public.shelfmark_loan_ask(anna, 13, '{"title":"Northanger Abbey"}') ->> 'id')::uuid;
+    perform pg_temp.sign_in(anna);
+    perform public.shelfmark_loan_act(loan, 'agree');
 
     -- A new code makes the old one useless.
     perform pg_temp.sign_in(anna);
@@ -210,13 +384,22 @@ begin
     end;
     assert failed, 'old code is dead';
 
-    -- Ending a friendship ends it for both and drops what was on its way.
+    -- Ending a friendship ends it for both.
     perform pg_temp.sign_in(anna);
-    perform public.shelfmark_send(ben, '{"type":"lend_answer"}');
     perform public.shelfmark_remove_friend(ben);
     perform pg_temp.sign_in(ben);
     r := public.shelfmark_sync();
     assert jsonb_array_length(r -> 'friends') = 0 and jsonb_array_length(r -> 'messages') = 0 and jsonb_array_length(r -> 'libraries') = 0, 'unfriended';
+    assert (select l ->> 'state' from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = other::text) = 'withdrawn', 'an open question ends with the friendship';
+    assert (select l ->> 'state' from jsonb_array_elements(r -> 'loans') l where l ->> 'id' = loan::text) = 'agreed', 'a reserved book stays reserved';
+    -- Without the friendship there is no new question.
+    failed := false;
+    begin
+        perform public.shelfmark_loan_ask(anna, 14, '{"title":"Love and Freindship"}');
+    exception when others then
+        failed := sqlerrm = 'shelfmark:not_friends';
+    end;
+    assert failed, 'no question without a friendship';
 
     -- Deleting the account removes every trace, the sign-in included.
     perform pg_temp.sign_in(cleo);
@@ -244,7 +427,7 @@ do $$
 begin
     assert (select count(*) from shelfmark.profiles) = 0, 'profiles left';
     assert (select count(*) from shelfmark.vaults) = 0, 'vaults left';
-    assert (select count(*) from shelfmark.messages) = 0, 'messages left';
+    assert (select count(*) from shelfmark.loans) = 0, 'loans left';
     assert (select count(*) from auth.users where email like '%@example.org') = 0, 'sign-ins left';
 end
 $$;

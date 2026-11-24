@@ -17,7 +17,8 @@
 --     signed-in caller and for nobody else. There is no way to name another user.
 --   * Per account the server keeps: the whole library, so that phone and website show the
 --     same shelf (the "vault"), the part of it the person chose to share with friends,
---     and borrow requests on their way to a friend.
+--     and the loans between friends: one record per loan that both sides read, so that
+--     lender and borrower always see the same state of it.
 
 create schema if not exists shelfmark;
 
@@ -46,6 +47,10 @@ drop function if exists public.shelfmark_sync(uuid, text, jsonb, uuid[]);
 drop function if exists public.shelfmark_delete_account(uuid, text);
 drop function if exists shelfmark.check_caller(uuid, text);
 drop function if exists shelfmark.hash_secret(text);
+
+-- The second version passed borrow requests as messages, one private note on each side.
+-- Loans replaced them. A request that was still on its way is dropped with the mailbox.
+drop table if exists shelfmark.messages;
 
 -- ---------------------------------------------------------------------------------
 -- Tables
@@ -76,15 +81,50 @@ create table if not exists shelfmark.libraries (
     updated_at timestamptz not null default now()
 );
 
-create table if not exists shelfmark.messages (
+-- A loan of one book between two friends, from the first question to the day the book is
+-- back. One row that both of them read, changed only through shelfmark_loan_act, which
+-- knows who may do what and when:
+--
+--   asked       the borrower asked
+--   agreed      the lender said yes: the book is reserved
+--   handed      the lender says the book was handed over
+--   on_loan     the borrower confirmed having it
+--   given_back  the borrower says the book was given back
+--   returned    the lender confirmed having it back          (the end)
+--   declined    the lender said no                           (the end)
+--   withdrawn   the borrower took the question back          (the end)
+--   cancelled   the lender took the yes back                 (the end)
+create table if not exists shelfmark.loans (
     id uuid primary key default gen_random_uuid(),
-    to_id uuid not null references shelfmark.profiles (id) on delete cascade,
-    from_id uuid not null references shelfmark.profiles (id) on delete cascade,
-    payload jsonb not null,
-    created_at timestamptz not null default now()
+    lender_id uuid not null references shelfmark.profiles (id) on delete cascade,
+    borrower_id uuid not null references shelfmark.profiles (id) on delete cascade,
+    -- The id of the book in the lender's own library.
+    book_id bigint not null,
+    -- What the borrower saw when asking: title, authors, isbn, coverUrl, pageCount, format.
+    book jsonb not null default '{}'::jsonb,
+    note text not null default '',
+    state text not null default 'asked'
+        check (state in ('asked', 'agreed', 'handed', 'on_loan', 'given_back', 'returned', 'declined', 'withdrawn', 'cancelled')),
+    -- Why it was declined or cancelled, in the lender's words. 'taken' when somebody else got the book.
+    reason text not null default '',
+    -- Back by this day, counted in days since 1 January 1970. Null: no fixed day.
+    due_on bigint,
+    -- Moments, in milliseconds since 1970 like everywhere else.
+    asked_at bigint not null,
+    agreed_at bigint,
+    handed_at bigint,
+    received_at bigint,
+    given_back_at bigint,
+    closed_at bigint,
+    updated_at bigint not null,
+    updated_by uuid,
+    -- A loan that is over can be put away by each side for itself.
+    hidden_by_lender boolean not null default false,
+    hidden_by_borrower boolean not null default false
 );
 
-create index if not exists messages_to_id on shelfmark.messages (to_id, created_at);
+create index if not exists loans_lender on shelfmark.loans (lender_id, book_id);
+create index if not exists loans_borrower on shelfmark.loans (borrower_id);
 
 -- The whole library of an account, as one document. Only its owner ever sees it.
 -- The revision goes up by one with every save, which is how a phone notices that the
@@ -109,7 +149,7 @@ insert into shelfmark.heartbeat (id) values (1) on conflict (id) do nothing;
 alter table shelfmark.profiles enable row level security;
 alter table shelfmark.friendships enable row level security;
 alter table shelfmark.libraries enable row level security;
-alter table shelfmark.messages enable row level security;
+alter table shelfmark.loans enable row level security;
 alter table shelfmark.vaults enable row level security;
 alter table shelfmark.heartbeat enable row level security;
 
@@ -203,9 +243,9 @@ set search_path = ''
 as $$
 begin
     update shelfmark.heartbeat set pinged_at = now(), pings = pings + 1 where id = 1;
-    -- Housekeeping on the way: messages nobody fetched in three months.
-    delete from shelfmark.messages where created_at < now() - interval '90 days';
-    return jsonb_build_object('ok', true, 'schema', 2, 'time', shelfmark.millis(now()));
+    -- Housekeeping on the way: loans that are over and that both sides have put away.
+    delete from shelfmark.loans where hidden_by_lender and hidden_by_borrower;
+    return jsonb_build_object('ok', true, 'schema', 3, 'time', shelfmark.millis(now()));
 end
 $$;
 
@@ -271,7 +311,8 @@ begin
 end
 $$;
 
--- Ends a friendship for both sides and drops what was still on its way between them.
+-- Ends a friendship for both sides. Questions nobody answered yet end with it. A book that
+-- is reserved or on loan stays a loan: it is still in somebody else's hands.
 create or replace function public.shelfmark_remove_friend(p_friend uuid)
 returns jsonb
 language plpgsql
@@ -283,8 +324,10 @@ declare
 begin
     delete from shelfmark.friendships
     where (user_id = me and friend_id = p_friend) or (user_id = p_friend and friend_id = me);
-    delete from shelfmark.messages
-    where (to_id = me and from_id = p_friend) or (to_id = p_friend and from_id = me);
+    update shelfmark.loans
+    set state = 'withdrawn', closed_at = shelfmark.millis(now()), updated_at = shelfmark.millis(now()), updated_by = me
+    where state = 'asked'
+      and ((lender_id = me and borrower_id = p_friend) or (lender_id = p_friend and borrower_id = me));
     return jsonb_build_object('ok', true);
 end
 $$;
@@ -312,8 +355,59 @@ begin
 end
 $$;
 
--- Leaves a message (a borrow request or its answer) for a friend.
+-- Borrow requests used to travel as messages. They are loans now (see below). The
+-- function stays so that a version of the app from before says why nothing happens,
+-- instead of leaving a request that nobody will ever read.
 create or replace function public.shelfmark_send(p_to uuid, p_payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+    perform shelfmark.me();
+    raise exception 'shelfmark:outdated';
+end
+$$;
+
+-- A loan as one of its two sides sees it.
+create or replace function shelfmark.loan_json(p_loan shelfmark.loans, p_me uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+    select jsonb_build_object(
+        'id', p_loan.id,
+        'role', case when p_loan.lender_id = p_me then 'lender' else 'borrower' end,
+        'peer', case when p_loan.lender_id = p_me then p_loan.borrower_id else p_loan.lender_id end,
+        'peerName', coalesce((
+            select name from shelfmark.profiles
+            where id = case when p_loan.lender_id = p_me then p_loan.borrower_id else p_loan.lender_id end
+        ), ''),
+        'bookId', p_loan.book_id,
+        'book', p_loan.book,
+        'note', p_loan.note,
+        'state', p_loan.state,
+        'reason', p_loan.reason,
+        'dueOn', p_loan.due_on,
+        'askedAt', p_loan.asked_at,
+        'agreedAt', p_loan.agreed_at,
+        'handedAt', p_loan.handed_at,
+        'receivedAt', p_loan.received_at,
+        'givenBackAt', p_loan.given_back_at,
+        'closedAt', p_loan.closed_at,
+        'updatedAt', p_loan.updated_at,
+        -- Whether the last step was the caller's own. News is what the other side did.
+        'byMe', p_loan.updated_by is not distinct from p_me
+    )
+$$;
+
+-- Asks a friend for a book. p_book is the id of the book in the friend's library, p_info
+-- what the asker sees of it (title, authors, isbn, coverUrl, pageCount, format).
+-- Asking twice for the same book gives back the question that is still open.
+create or replace function public.shelfmark_loan_ask(p_friend uuid, p_book bigint, p_info jsonb default '{}'::jsonb, p_note text default '')
 returns jsonb
 language plpgsql
 security definer
@@ -321,25 +415,167 @@ set search_path = ''
 as $$
 declare
     me uuid := shelfmark.me();
-    fresh uuid;
+    info jsonb := coalesce(p_info, '{}'::jsonb);
+    pages int;
+    loan shelfmark.loans;
+    moment bigint := shelfmark.millis(now());
 begin
-    if not exists (select 1 from shelfmark.friendships where user_id = me and friend_id = p_to) then
+    if p_friend is null or p_book is null or p_friend = me then
+        raise exception 'shelfmark:invalid';
+    end if;
+    if not exists (select 1 from shelfmark.friendships where user_id = me and friend_id = p_friend) then
         raise exception 'shelfmark:not_friends';
     end if;
-    if p_payload is null or octet_length(p_payload::text) > 64000 then
-        raise exception 'shelfmark:too_large';
+    if btrim(coalesce(info ->> 'title', '')) = '' then
+        raise exception 'shelfmark:invalid';
     end if;
-    if (select count(*) from shelfmark.messages where to_id = p_to and from_id = me) >= 200 then
+    select * into loan from shelfmark.loans
+    where lender_id = p_friend and borrower_id = me and book_id = p_book
+      and state in ('asked', 'agreed', 'handed', 'on_loan', 'given_back')
+    limit 1;
+    if found then
+        return shelfmark.loan_json(loan, me);
+    end if;
+    -- Reserved for somebody, or in somebody's hands.
+    if exists (
+        select 1 from shelfmark.loans
+        where lender_id = p_friend and book_id = p_book and state in ('agreed', 'handed', 'on_loan', 'given_back')
+    ) then
+        raise exception 'shelfmark:taken';
+    end if;
+    if (select count(*) from shelfmark.loans where borrower_id = me and state = 'asked') >= 50 then
         raise exception 'shelfmark:full';
     end if;
-    insert into shelfmark.messages (to_id, from_id, payload) values (p_to, me, p_payload) returning id into fresh;
-    return jsonb_build_object('id', fresh);
+    begin
+        pages := greatest(0, least(100000, (info ->> 'pageCount')::int));
+    exception when others then
+        pages := 0;
+    end;
+    insert into shelfmark.loans (lender_id, borrower_id, book_id, book, note, asked_at, updated_at, updated_by)
+    values (
+        p_friend, me, p_book,
+        -- Only what is known to be there, and no longer than a book needs.
+        jsonb_build_object(
+            'title', left(btrim(info ->> 'title'), 300),
+            'authors', left(coalesce(info ->> 'authors', ''), 300),
+            'isbn', left(coalesce(info ->> 'isbn', ''), 20),
+            'coverUrl', left(coalesce(info ->> 'coverUrl', ''), 600),
+            'pageCount', coalesce(pages, 0),
+            'format', left(coalesce(info ->> 'format', 'UNKNOWN'), 20)
+        ),
+        left(btrim(coalesce(p_note, '')), 300), moment, moment, me
+    )
+    returning * into loan;
+    return shelfmark.loan_json(loan, me);
+end
+$$;
+
+-- One step in the life of a loan. Who may take which step, and from where:
+--
+--   the lender     agree        asked -> agreed        p_due: back by this day, null for no fixed day
+--                  decline      asked -> declined      p_reason: why, optional
+--                  cancel       agreed, handed -> cancelled
+--                  hand         agreed -> handed       "I handed it over"
+--                  undo_hand    handed -> agreed
+--                  take_back    given_back -> returned "I have it back"
+--                  not_returned given_back -> on_loan  "I did not get it back"
+--                  close        on_loan -> returned    the book is back and the borrower never said so
+--                  set_due      agreed, handed, on_loan, given_back: another day, or none
+--   the borrower   withdraw     asked, agreed -> withdrawn
+--                  receive      handed -> on_loan      "I have it"
+--                  not_received handed -> agreed       "I did not get it"
+--                  give_back    on_loan -> given_back  "I gave it back"
+--                  undo_give_back given_back -> on_loan
+--   either         hide         a loan that is over, put away for the caller only
+--
+-- Handing over takes the lender first and then the borrower, giving back the borrower
+-- first and then the lender. Anything else is refused with shelfmark:not_allowed.
+create or replace function public.shelfmark_loan_act(p_loan uuid, p_action text, p_due bigint default null, p_reason text default '')
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+    me uuid := shelfmark.me();
+    loan shelfmark.loans;
+    lender boolean;
+    moment bigint := shelfmark.millis(now());
+    over constant text[] := array['returned', 'declined', 'withdrawn', 'cancelled'];
+begin
+    select * into loan from shelfmark.loans
+    where id = p_loan and (lender_id = me or borrower_id = me)
+    for update;
+    if not found then
+        raise exception 'shelfmark:unknown_loan';
+    end if;
+    lender := loan.lender_id = me;
+    if p_due is not null and (p_due < 0 or p_due > 100000) then
+        raise exception 'shelfmark:invalid';
+    end if;
+
+    if p_action = 'hide' and loan.state = any (over) then
+        if lender then
+            update shelfmark.loans set hidden_by_lender = true where id = loan.id returning * into loan;
+        else
+            update shelfmark.loans set hidden_by_borrower = true where id = loan.id returning * into loan;
+        end if;
+        return shelfmark.loan_json(loan, me);
+    end if;
+
+    if lender and p_action = 'agree' and loan.state = 'asked' then
+        -- A book can be promised to one person at a time.
+        if exists (
+            select 1 from shelfmark.loans
+            where lender_id = me and book_id = loan.book_id and id <> loan.id
+              and state in ('agreed', 'handed', 'on_loan', 'given_back')
+        ) then
+            raise exception 'shelfmark:taken';
+        end if;
+        update shelfmark.loans set state = 'agreed', agreed_at = moment, due_on = p_due where id = loan.id;
+        -- Whoever else asked for it is told that it went to somebody else.
+        update shelfmark.loans
+        set state = 'declined', reason = 'taken', closed_at = moment, updated_at = moment, updated_by = me
+        where lender_id = me and book_id = loan.book_id and id <> loan.id and state = 'asked';
+    elsif lender and p_action = 'decline' and loan.state = 'asked' then
+        update shelfmark.loans set state = 'declined', reason = left(btrim(coalesce(p_reason, '')), 200), closed_at = moment where id = loan.id;
+    elsif lender and p_action = 'cancel' and loan.state in ('agreed', 'handed') then
+        update shelfmark.loans set state = 'cancelled', reason = left(btrim(coalesce(p_reason, '')), 200), closed_at = moment where id = loan.id;
+    elsif lender and p_action = 'hand' and loan.state = 'agreed' then
+        update shelfmark.loans set state = 'handed', handed_at = moment where id = loan.id;
+    elsif lender and p_action = 'undo_hand' and loan.state = 'handed' then
+        update shelfmark.loans set state = 'agreed', handed_at = null where id = loan.id;
+    elsif lender and p_action = 'take_back' and loan.state = 'given_back' then
+        update shelfmark.loans set state = 'returned', closed_at = moment where id = loan.id;
+    elsif lender and p_action = 'not_returned' and loan.state = 'given_back' then
+        update shelfmark.loans set state = 'on_loan', given_back_at = null where id = loan.id;
+    elsif lender and p_action = 'close' and loan.state = 'on_loan' then
+        update shelfmark.loans set state = 'returned', closed_at = moment where id = loan.id;
+    elsif lender and p_action = 'set_due' and loan.state in ('agreed', 'handed', 'on_loan', 'given_back') then
+        update shelfmark.loans set due_on = p_due where id = loan.id;
+    elsif not lender and p_action = 'withdraw' and loan.state in ('asked', 'agreed') then
+        update shelfmark.loans set state = 'withdrawn', closed_at = moment where id = loan.id;
+    elsif not lender and p_action = 'receive' and loan.state = 'handed' then
+        update shelfmark.loans set state = 'on_loan', received_at = moment where id = loan.id;
+    elsif not lender and p_action = 'not_received' and loan.state = 'handed' then
+        update shelfmark.loans set state = 'agreed', handed_at = null where id = loan.id;
+    elsif not lender and p_action = 'give_back' and loan.state = 'on_loan' then
+        update shelfmark.loans set state = 'given_back', given_back_at = moment where id = loan.id;
+    elsif not lender and p_action = 'undo_give_back' and loan.state = 'given_back' then
+        update shelfmark.loans set state = 'on_loan', given_back_at = null where id = loan.id;
+    else
+        raise exception 'shelfmark:not_allowed';
+    end if;
+
+    update shelfmark.loans set updated_at = moment, updated_by = me where id = loan.id returning * into loan;
+    return shelfmark.loan_json(loan, me);
 end
 $$;
 
 -- Everything about friends in one call: who they are, their libraries that changed since
--- the versions the caller already has (p_known maps friend id to a timestamp), and the
--- messages waiting. Messages named in p_ack were handled and are deleted.
+-- the versions the caller already has (p_known maps friend id to a timestamp), and every
+-- loan the caller is part of and has not put away. p_ack and "messages" are leftovers of
+-- the mailbox: the first is ignored, the second is always empty.
 create or replace function public.shelfmark_sync(p_known jsonb default '{}'::jsonb, p_ack uuid[] default '{}'::uuid[])
 returns jsonb
 language plpgsql
@@ -351,9 +587,6 @@ declare
     mine shelfmark.profiles%rowtype;
     known jsonb := coalesce(p_known, '{}'::jsonb);
 begin
-    if p_ack is not null and array_length(p_ack, 1) > 0 then
-        delete from shelfmark.messages where to_id = me and id = any (p_ack);
-    end if;
     select * into mine from shelfmark.profiles where id = me;
     return jsonb_build_object(
         'id', me,
@@ -373,11 +606,12 @@ begin
             where f.user_id = me
               and shelfmark.millis(l.updated_at) > coalesce((known ->> l.owner_id::text)::bigint, 0)
         ), '[]'::jsonb),
-        'messages', coalesce((
-            select jsonb_agg(jsonb_build_object('id', m.id, 'from', m.from_id, 'at', shelfmark.millis(m.created_at), 'payload', m.payload) order by m.created_at, m.id)
-            from shelfmark.messages m
-            where m.to_id = me
-        ), '[]'::jsonb)
+        'loans', coalesce((
+            select jsonb_agg(shelfmark.loan_json(l, me) order by l.asked_at desc, l.id)
+            from shelfmark.loans l
+            where (l.lender_id = me and not l.hidden_by_lender) or (l.borrower_id = me and not l.hidden_by_borrower)
+        ), '[]'::jsonb),
+        'messages', '[]'::jsonb
     );
 end
 $$;
@@ -450,7 +684,7 @@ end
 $$;
 
 -- Deletes the caller's account and everything that belongs to it: library, shared
--- snapshot, friendships, messages, and the sign-in itself.
+-- snapshot, friendships, loans, and the sign-in itself.
 create or replace function public.shelfmark_delete_account()
 returns jsonb
 language plpgsql
