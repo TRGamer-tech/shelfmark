@@ -35,7 +35,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,10 +68,11 @@ import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.theme.ThemePreset
 import ch.schmidtbit.shelfmark.ui.theme.ThemePresets
 import ch.schmidtbit.shelfmark.ui.theme.toPreset
-import kotlinx.coroutines.Dispatchers
+import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
+import java.text.DateFormat
 import java.time.LocalDate
+import java.util.Date
 import kotlin.math.abs
 
 /** Reading speeds on offer, in pages per hour. Stored as minutes per page. */
@@ -81,16 +84,16 @@ fun SettingsScreen(onBack: () -> Unit) {
     val importer = LocalImporter.current
     val context = LocalContext.current
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = Settings())
-    var exported by remember { mutableStateOf(false) }
+    // Null until a backup was tried, then whether it was written.
+    var exported by remember { mutableStateOf<Boolean?>(null) }
     var themeEditorOpen by remember { mutableStateOf(false) }
     var editingTheme by remember { mutableStateOf<CustomTheme?>(null) }
     val coverJob by container.coverJob.collectAsStateWithLifecycle()
 
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        if (uri != null) container.launch {
-            withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.use { container.backup.export(it) } }
-            exported = true
-        }
+        // The place the reader picked may be a drive that is gone or an app that gives no way in:
+        // "saved" is only said when the backup was written to the end.
+        if (uri != null) container.launch { exported = container.backup.exportTo { context.contentResolver.openOutputStream(uri) } }
     }
     val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) importer.open(uri) }
 
@@ -132,17 +135,36 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             AccountSection(settings)
             SectionCard(stringResource(R.string.settings_backup)) {
-                Text(stringResource(R.string.settings_backup_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(if (settings.signedIn) R.string.settings_backup_text_account else R.string.settings_backup_text),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("backupText"),
+                )
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = { exported = false; saveBackup.launch("shelfmark-backup-${LocalDate.now()}.zip") }, modifier = Modifier.fillMaxWidth().testTag("exportBackup")) {
+                Button(onClick = { exported = null; saveBackup.launch("shelfmark-backup-${LocalDate.now()}.zip") }, modifier = Modifier.fillMaxWidth().testTag("exportBackup")) {
                     Text(stringResource(R.string.settings_backup_export))
                 }
-                if (exported) Text(stringResource(R.string.settings_backup_done), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+                when (exported) {
+                    true -> Text(stringResource(R.string.settings_backup_done), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+                    false -> Text(stringResource(R.string.settings_backup_failed), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp).testTag("backupFailed"))
+                    null -> Unit
+                }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = { openBackup.launch("*/*") }, modifier = Modifier.fillMaxWidth().testTag("importBackup")) {
                     Text(stringResource(R.string.settings_backup_import))
                 }
                 Text(stringResource(R.string.settings_backup_import_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                // Libraries that the choice between account and device replaced. Looked for again whenever a sync has run.
+                val replaced = remember(settings.vaultRevision, settings.lastSyncAt) { container.backup.replaced(container.replacedDir) }
+                if (replaced.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(stringResource(R.string.settings_replaced_text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    replaced.forEach { file ->
+                        val day = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(BackupManager.replacedAt(file)))
+                        TextButton(onClick = { importer.open(file) }, modifier = Modifier.testTag("replacedLibrary")) { Text(stringResource(R.string.settings_replaced_item, day)) }
+                    }
+                }
             }
             SectionCard(stringResource(R.string.settings_import)) {
                 Text(stringResource(R.string.settings_import_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -274,11 +296,15 @@ private fun Swatch(preset: ThemePreset?, name: String, selected: Boolean, onClic
     }
 }
 
-/** A single-line text field that stores its value shortly after typing stops. */
+/** A single-line text field that stores its value shortly after typing stops, and when the page is left before that. */
 @Composable
 private fun SavedField(value: String, label: String, hint: String, tag: String, onSave: suspend (String) -> Unit) {
+    val container = LocalContainer.current
     var text by remember { mutableStateOf(value) }
     var touched by remember { mutableStateOf(false) }
+    val latest by rememberUpdatedState(text)
+    val stored by rememberUpdatedState(value)
+    val typed by rememberUpdatedState(touched)
     // The stored value arrives a moment after the screen opens.
     LaunchedEffect(value) { if (!touched) text = value }
     LaunchedEffect(text) {
@@ -286,6 +312,10 @@ private fun SavedField(value: String, label: String, hint: String, tag: String, 
             delay(500)
             onSave(text)
         }
+    }
+    // Whoever types and leaves within that half second has typed all the same.
+    DisposableEffect(Unit) {
+        onDispose { if (typed && latest != stored) container.launch { onSave(latest) } }
     }
     OutlinedTextField(
         value = text,

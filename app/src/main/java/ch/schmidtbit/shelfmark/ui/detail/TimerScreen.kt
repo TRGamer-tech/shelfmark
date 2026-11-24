@@ -46,6 +46,7 @@ import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.repo.TimerState
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.components.BackButton
+import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -58,6 +59,10 @@ fun TimerScreen(bookId: Long, onBack: () -> Unit) {
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
     val book by remember(bookId) { container.library.book(bookId) }.collectAsStateWithLifecycle(initialValue = null)
     val timer = settings?.timer?.takeIf { it.bookId == bookId }
+    // There is one timer. While it holds time for another book, starting it here would drop that time.
+    val other = settings?.timer?.takeIf { it.bookId != bookId }
+    val otherBook by remember(other?.bookId) { container.library.book(other?.bookId ?: 0) }.collectAsStateWithLifecycle(initialValue = null)
+    var askOther by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var logging by remember { mutableStateOf(false) }
 
@@ -69,14 +74,34 @@ fun TimerScreen(bookId: Long, onBack: () -> Unit) {
     }
     val elapsed = timer?.elapsedSeconds(now) ?: 0
 
-    fun toggle() = container.launch {
-        val current = System.currentTimeMillis()
-        val next = when {
-            timer == null -> TimerState(bookId, runningSince = current, accumulatedSeconds = 0, startedAt = current, startPage = book?.currentPage ?: 0)
-            timer.running -> timer.copy(runningSince = null, accumulatedSeconds = timer.elapsedSeconds(current))
-            else -> timer.copy(runningSince = current)
+    fun start() {
+        container.launch {
+            val current = System.currentTimeMillis()
+            container.settings.setTimer(TimerState(bookId, runningSince = current, accumulatedSeconds = 0, startedAt = current, startPage = book?.currentPage ?: 0))
         }
-        container.settings.setTimer(next)
+    }
+
+    fun toggle() {
+        when {
+            timer == null && other != null -> askOther = true
+            timer == null -> start()
+            else -> container.launch {
+                val current = System.currentTimeMillis()
+                container.settings.setTimer(if (timer.running) timer.copy(runningSince = null, accumulatedSeconds = timer.elapsedSeconds(current)) else timer.copy(runningSince = current))
+            }
+        }
+    }
+
+    if (askOther && other != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.timer_other_title),
+            text = stringResource(R.string.timer_other_text, otherBook?.title.orEmpty(), formatClock(other.elapsedSeconds(System.currentTimeMillis()))),
+            confirm = stringResource(R.string.timer_other_confirm),
+            onDismiss = { askOther = false },
+        ) {
+            askOther = false
+            start()
+        }
     }
 
     Scaffold(

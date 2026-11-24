@@ -63,16 +63,9 @@ fun SortOrder.labelRes(): Int = when (this) {
 @Composable
 fun ReadingStatus.label(): String = stringResource(labelRes())
 
-/** What Coil should load for a book: the user's own photo wins over the catalogue cover. */
+/** What Coil should load for a book: the user's own photo, where this phone has it, wins over the catalogue cover. */
 @Composable
-fun Book.coverModel(): Any? {
-    val covers = LocalContainer.current.covers
-    return when {
-        coverPath.isNotBlank() -> covers.file(coverPath)
-        coverUrl.isNotBlank() -> coverUrl
-        else -> null
-    }
-}
+fun Book.coverModel(): Any? = coverModelOf(LocalContainer.current.covers.dir, this)
 
 /**
  * What to show as the cover. A photo taken on this phone is a file here. On every other
@@ -84,5 +77,9 @@ fun coverModelOf(coverDir: File, book: Book): Any? {
 }
 
 /** 4.5 is shown as "4.5", 4.0 as "4". */
-fun formatRating(rating: Float): String =
-    if (rating % 1f == 0f) rating.toInt().toString() else String.format(java.util.Locale.getDefault(), "%.1f", rating)
+fun formatRating(rating: Float): String = when {
+    // What is no number is shown as what it is stored as: nothing.
+    !rating.isFinite() -> "0"
+    rating % 1f == 0f -> rating.toInt().toString()
+    else -> String.format(java.util.Locale.getDefault(), "%.1f", rating)
+}

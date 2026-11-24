@@ -95,7 +95,9 @@ fun LibraryScreen(
     onOpenBook: (Long) -> Unit,
     onAdd: () -> Unit,
     onSettings: () -> Unit,
+    onSignIn: () -> Unit = {},
 ) {
+    val container = LocalContainer.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     var searching by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -161,6 +163,9 @@ fun LibraryScreen(
             Box(Modifier.fillMaxSize().padding(padding)) {
                 LampLight(Modifier.matchParentSize())
                 Column(Modifier.fillMaxSize()) {
+                    if (state.settings.signedOutNotice && container.server.available) {
+                        SignedOutNotice(onSignIn = onSignIn, onClose = { container.launch { container.settings.setSignedOutNotice(false) } })
+                    }
                     FilterRow(state, viewModel::setFilter)
                     when {
                         state.loading -> Unit
@@ -171,6 +176,27 @@ fun LibraryScreen(
                 }
                 // In front of the books, where dust is. It is only drawn, so every tap goes through to the shelf.
                 DustMotes(Modifier.matchParentSize())
+            }
+        }
+    }
+}
+
+/**
+ * The sign-in ended without the reader doing anything (the password was changed elsewhere,
+ * say). The shelf looks the same as before, so it says so, until this is put away or
+ * somebody signs in again: changes made from here on wait on this device.
+ */
+@Composable
+private fun SignedOutNotice(onSignIn: () -> Unit, onClose: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).testTag("signedOutNotice"),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
+            Text(stringResource(R.string.signed_out_notice), style = MaterialTheme.typography.bodyMedium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onClose, modifier = Modifier.testTag("signedOutClose")) { Text(stringResource(R.string.action_close)) }
+                TextButton(onClick = onSignIn, modifier = Modifier.testTag("signedOutSignIn")) { Text(stringResource(R.string.account_sign_in)) }
             }
         }
     }

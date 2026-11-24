@@ -1,6 +1,8 @@
 package ch.schmidtbit.shelfmark
 
 import android.content.Intent
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -12,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -36,11 +39,13 @@ import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
+import ch.schmidtbit.shelfmark.data.model.withStatus
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
 import ch.schmidtbit.shelfmark.data.remote.BookSource
 import ch.schmidtbit.shelfmark.data.remote.ImageProbe
 import ch.schmidtbit.shelfmark.data.remote.RemoteBook
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
+import ch.schmidtbit.shelfmark.data.repo.TimerState
 import ch.schmidtbit.shelfmark.data.server.ServerApi
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.work.Notifier
@@ -61,6 +66,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -372,7 +378,9 @@ class AppFlowTest {
         waitFor { book("Die Wand").review == "Still und stark." }
         shot("12_book_rated")
 
-        // Ownership: borrowed from someone.
+        // Ownership: borrowed from someone. The offer to take the move to "read" back lies over
+        // the bottom of the page for a few seconds, and a tap there would land on it.
+        waitFor { !hasText("Rückgängig") }
         scrollListTo("bookOverview", "own_BORROWED")
         tap("own_BORROWED")
         scrollListTo("bookOverview", "borrowedFrom")
@@ -1035,6 +1043,440 @@ class AppFlowTest {
         } finally {
             anna.close()
         }
+    }
+
+    @Test fun theLibraryThatLostTheChoiceCanBeHadBack() {
+        useServer()
+        val anna = Phone(app, folder, "Anna", fakeServer, serverConfig)
+        runBlocking {
+            SampleBooks.create(Dates.today()).forEach { container.library.addBook(it) }
+            anna.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            anna.join()
+        }
+        try {
+            start()
+            tap("tabFriends")
+            type("accountEmail", anna.email)
+            type("accountPassword", anna.password)
+            tap("signIn")
+            waitForTag("chooseLibrary")
+            // The dialog no longer claims to know that the two were never the same, and it says what happens to the loser.
+            assertFalse(hasText("Es war nie dieselbe Bibliothek"))
+            waitForText("Vorher wird sie auf diesem Gerät als Backup beiseitegelegt, und du findest sie in den Einstellungen unter «Backup».")
+            tap("chooseAccount")
+            waitFor { books().size == 1 }
+
+            // The ten books that were here are in the settings, as a backup to bring back.
+            tap("tabLibrary")
+            tap("openSettings")
+            scrollTo("replacedLibrary")
+            waitForText("Als du gewählt hast, welche Bibliothek zählt, wurde die andere hier beiseitegelegt.")
+            shot("87_replaced_library")
+            tap("replacedLibrary")
+            waitForTag("restoreConfirm")
+            tap("restoreConfirm")
+            waitFor { books().size == 10 }
+            assertTrue(books().any { it.title == "Der Prozess" })
+        } finally {
+            anna.close()
+        }
+    }
+
+    @Test fun theShelfSaysWhenTheSignInEndedByItself() {
+        useServer()
+        runBlocking { container.library.addBook(Book(title = "Emma", authors = "Jane Austen")) }
+        signUpWithFriends("Ich")
+        start()
+        waitForTag("coverShelf")
+        assertFalse(hasTag("signedOutNotice"))
+        // Signed in, the backup is not the only place the library lives in, and the settings say so.
+        tap("openSettings")
+        scrollTo("backupText")
+        waitForText("Deine Bibliothek liegt auch auf deinem Konto.")
+        assertFalse(hasText("nur auf diesem Gerät"))
+        back()
+
+        // The password was changed somewhere else: every sign-in of the account is over.
+        fakeServer.revokeAll()
+        lookAtServer()
+        waitForTag("signedOutNotice")
+        waitForText("Du wurdest auf diesem Gerät abgemeldet. Deine Änderungen bleiben hier, bis du dich wieder anmeldest.")
+        shot("88_signed_out_notice")
+        // It is still there after a look elsewhere, and the settings now speak of this device only.
+        tap("openSettings")
+        scrollTo("backupText")
+        waitForText("Ohne Konto liegt deine Bibliothek nur auf diesem Gerät.")
+        back()
+        waitForTag("signedOutNotice")
+
+        // "Sign in" leads to the form, and signing in takes the notice away.
+        tap("signedOutSignIn")
+        type("accountEmail", myEmail)
+        type("accountPassword", myPassword)
+        tap("signIn")
+        waitFor { runBlocking { container.settings.current() }.let { it.signedIn && !it.signedOutNotice } }
+        tap("tabLibrary")
+        waitForTag("coverShelf")
+        assertFalse(hasTag("signedOutNotice"))
+
+        // The next time the reader puts it away, and goes on without an account.
+        fakeServer.revokeAll()
+        lookAtServer()
+        waitForTag("signedOutNotice")
+        tap("signedOutClose")
+        waitFor { !hasTag("signedOutNotice") }
+        val settings = runBlocking { container.settings.current() }
+        assertFalse(settings.signedOutNotice)
+        assertFalse(settings.signedIn)
+        assertEquals(listOf("Emma"), books().map { it.title })
+    }
+
+    @Test fun whatASyncBringsIsShownOnTheOpenPageAndNotWrittenBackOver() {
+        runBlocking { container.library.addBook(Book(title = "Emma", authors = "Jane Austen", review = "Erster Eindruck.")) }
+        start()
+        openBook("Emma")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "review")
+        waitForText("Erster Eindruck.")
+        val id = book("Emma").id
+
+        // While the page is open, a sync brings the review as it was rewritten on another device.
+        appDoes { container.library.modify(id) { it.copy(review = "Auf dem Tablet neu geschrieben.") } }
+        // Nobody typed here, so the field shows what is stored now.
+        waitForText("Auf dem Tablet neu geschrieben.")
+        assertFalse(hasText("Erster Eindruck."))
+        // And leaving the page writes nothing back.
+        back()
+        waitForTag("coverShelf")
+        settle()
+        assertEquals("Auf dem Tablet neu geschrieben.", book("Emma").review)
+
+        // What the reader types is saved, also when they leave before the field has saved by itself.
+        openBook("Emma")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "review")
+        retype("review", "Und jetzt in meinen Worten.")
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        waitFor { book("Emma").review == "Und jetzt in meinen Worten." }
+
+        // Typed here and changed elsewhere at the same time: what was typed counts, it is the reader's latest word.
+        openBook("Emma")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "review")
+        retype("review", "Getippt.")
+        appDoes { container.library.modify(id) { it.copy(review = "Von anderswo.") } }
+        waitFor { book("Emma").review == "Getippt." }
+        waitForText("Getippt.")
+    }
+
+    @Test fun theEditFormOnlySavesWhatWasChangedInItAndAsksBeforeItThrowsAnythingAway() {
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", pageCount = 600, series = "Dune")) }
+        start()
+        openBook("Dune")
+        tap("editBook")
+        waitForTag("fieldTitle")
+        val id = book("Dune").id
+
+        // Nothing typed: Back simply goes back.
+        back()
+        waitForTag("bookOverview")
+        assertFalse(hasTag("discardDialog"))
+
+        // Something typed: Back asks first, and "keep editing" keeps every letter.
+        tap("editBook")
+        retype("fieldTitle", "Dune, verbessert")
+        back()
+        waitForTag("discardDialog")
+        waitForText("Änderungen verwerfen?")
+        shot("14_discard_changes")
+        tap("discardNo")
+        waitFor { !hasTag("discardDialog") }
+        waitForText("Dune, verbessert")
+        // Discarding leaves the book as it was.
+        back()
+        tap("discardYes")
+        waitForTag("bookOverview")
+        assertEquals("Dune", book("Dune").title)
+
+        // The form is open while the book changes behind it: stars and a review from the book
+        // page, a cover and a publisher from a sync, and the book is moved to "read".
+        tap("editBook")
+        waitForTag("fieldTitle")
+        appDoes {
+            container.library.modify(id) {
+                it.copy(rating = 5f, review = "Sand.", coverUrl = "https://catalogue.example/dune.jpg", publisher = "Ace").withStatus(ReadingStatus.READ, Dates.today())
+            }
+        }
+        retype("fieldTitle", "Dune Messiah")
+        // A place in the series is a plain number. What Kotlin would read as infinity does not get into the field.
+        scrollTo("fieldSeriesPosition")
+        type("fieldSeriesPosition", "1e39")
+        assertFalse(hasText("1e39"))
+        type("fieldSeriesPosition", "2,5")
+        tap("saveBook")
+        waitFor { books().single().title == "Dune Messiah" }
+        val saved = books().single()
+        // What the reader changed in the form is saved, and nothing else of the book is touched.
+        assertEquals(2.5f, saved.seriesPosition)
+        assertEquals(5f, saved.rating)
+        assertEquals("Sand.", saved.review)
+        assertEquals(ReadingStatus.READ, saved.status)
+        assertEquals(1, saved.readCount)
+        assertEquals("https://catalogue.example/dune.jpg", saved.coverUrl)
+        assertEquals("Ace", saved.publisher)
+        assertEquals("Frank Herbert", saved.authors)
+        assertEquals(600, saved.pageCount)
+    }
+
+    @Test fun aMoveToAnotherListCanBeTakenBack() {
+        val before = Book(title = "Dune", authors = "Frank Herbert", pageCount = 600, status = ReadingStatus.READ, startedOn = 19_000, finishedOn = 19_020, currentPage = 600, readCount = 2, rating = 4f)
+        runBlocking { container.library.addBook(before) }
+        start()
+        openBook("Dune")
+        waitForTag("bookOverview")
+        val stored = book("Dune")
+
+        // One tap on "reading" starts the book over: the bookmark and the day it was finished are gone.
+        tap("status_READING")
+        waitFor { book("Dune").status == ReadingStatus.READING }
+        assertEquals(0, book("Dune").currentPage)
+        assertNull(book("Dune").finishedOn)
+        // For a few seconds that can be taken back, and the book is exactly what it was.
+        waitForText("Nach «Am Lesen» verschoben.")
+        shot("15_undo_status")
+        tapText("Rückgängig")
+        waitFor { book("Dune").status == ReadingStatus.READ }
+        assertEquals(stored, book("Dune").copy(updatedAt = stored.updatedAt))
+
+        // Left alone, the offer goes away by itself and the move stays.
+        tap("status_ABANDONED")
+        waitForText("Rückgängig")
+        waitFor(20_000) { !hasText("Rückgängig") }
+        assertEquals(ReadingStatus.ABANDONED, book("Dune").status)
+    }
+
+    @Test fun whatOneTapWouldDeleteAsksFirst() {
+        runBlocking {
+            val id = container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", pageCount = 600))
+            container.library.logSession(ReadingSession(bookId = id, startPage = 0, endPage = 40, minutes = 30f))
+            container.library.saveQuote(Quote(bookId = id, text = "Fear is the mind-killer.", page = 12))
+            container.library.saveNote(ch.schmidtbit.shelfmark.data.model.Note(bookId = id, text = "Wer ist Duncan?"))
+            container.library.saveGoal(Goal(kind = GoalKind.BOOKS, target = 12, startDay = 0, endDay = 0, repeat = GoalRepeat.YEARLY))
+        }
+        fun sessions() = runBlocking { container.library.sessions.first() }
+        fun quotes() = runBlocking { container.library.quotes.first() }
+        fun notes() = runBlocking { container.library.notesOf(book("Dune").id).first() }
+        fun goals() = runBlocking { container.library.goals.first() }
+        start()
+
+        // A reading session, by the bin beside it.
+        openBook("Dune")
+        waitForTag("bookOverview")
+        tapText("Lesen")
+        tap("deleteSession")
+        waitForTag("confirmDelete")
+        waitForText("Diese Lesesitzung löschen?")
+        shot("16_confirm_delete")
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(1, sessions().size)
+        tap("deleteSession")
+        tap("confirmDeleteYes")
+        waitFor { sessions().isEmpty() }
+
+        // A note, from the dialog it is edited in.
+        tapText("Notizen")
+        tapText("Wer ist Duncan?")
+        // The dialog with its text fields takes a frame more to stand than a look at it right away allows.
+        settle()
+        tap("deleteNote")
+        waitForText("Diese Notiz löschen?")
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(1, notes().size)
+        tap("deleteNote")
+        tap("confirmDeleteYes")
+        waitFor { notes().isEmpty() }
+        back()
+
+        // A quote, by the bin at the top of its page.
+        tap("tabQuotes")
+        tapText("Fear is the mind-killer.")
+        waitForTag("quoteText")
+        tap("deleteQuote")
+        waitForText("Dieses Zitat löschen?")
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(1, quotes().size)
+        assertTrue(hasTag("quoteText"))
+        tap("deleteQuote")
+        tap("confirmDeleteYes")
+        waitFor { quotes().isEmpty() }
+
+        // A goal.
+        tap("tabStats")
+        tap("openGoals")
+        tap("deleteGoal")
+        waitForText("Dieses Ziel löschen?")
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(1, goals().size)
+        tap("deleteGoal")
+        tap("confirmDeleteYes")
+        waitFor { goals().isEmpty() }
+    }
+
+    @Test fun whatWasTypedIsNotLostWithoutAQuestion() {
+        runBlocking {
+            val dune = container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", pageCount = 600))
+            container.library.addBook(Book(title = "Emma", authors = "Jane Austen", pageCount = 474))
+            container.library.saveQuote(Quote(bookId = dune, text = "Fear is the mind-killer.", page = 12))
+            // The timer holds twelve and a half minutes for Dune, and is paused.
+            container.settings.setTimer(TimerState(dune, runningSince = null, accumulatedSeconds = 754, startedAt = System.currentTimeMillis() - 900_000, startPage = 0))
+        }
+        start()
+
+        // A quote that was changed: Back asks, and discarding leaves it as it was.
+        tap("tabQuotes")
+        tapText("Fear is the mind-killer.")
+        waitForTag("quoteText")
+        back()
+        waitForText("Fear is the mind-killer.")
+        assertFalse(hasTag("discardDialog"))
+        tapText("Fear is the mind-killer.")
+        retype("quoteText", "Fear is the little-death.")
+        back()
+        waitForTag("discardDialog")
+        tap("discardNo")
+        waitForText("Fear is the little-death.")
+        back()
+        tap("discardYes")
+        waitFor { !hasTag("quoteText") }
+        assertEquals("Fear is the mind-killer.", runBlocking { container.library.quotes.first() }.single().quote.text)
+
+        tap("tabLibrary")
+        settle()
+
+        // The timer already holds time for Dune. Starting it for Emma asks before that time is dropped.
+        openBook("Emma")
+        waitForTag("bookOverview")
+        tapText("Lesen")
+        tap("openTimer")
+        tap("timerToggle")
+        waitForTag("confirmDelete")
+        waitForText("Neuen Timer starten?")
+        waitForText("Der Timer steht bei 00:12:34 für «Dune».")
+        shot("52_timer_other_book")
+        tap("confirmDeleteNo")
+        waitFor { !hasTag("confirmDelete") }
+        assertEquals(book("Dune").id, runBlocking { container.settings.current() }.timer?.bookId)
+        assertEquals(754L, runBlocking { container.settings.current() }.timer?.accumulatedSeconds)
+        tap("timerToggle")
+        tap("confirmDeleteYes")
+        waitFor { runBlocking { container.settings.current() }.timer?.bookId == book("Emma").id }
+        back()
+        back()
+
+        // A name typed in the settings and left at once is saved all the same.
+        tap("openSettings")
+        scrollTo("profileName")
+        retype("profileName", "Anna")
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        waitFor { runBlocking { container.settings.current() }.profileName == "Anna" }
+    }
+
+    @Test fun aNoteHalfWrittenIsNotClosedByAFingerThatMissed() {
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        start()
+        openBook("Dune")
+        waitForTag("bookOverview")
+        tapText("Notizen")
+        settle()
+        fun dialog() = org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog
+        // A tap beside a dialog and Back come to the same: the dialog is asked to go.
+        fun askToGo() {
+            pause()
+            dialog().onBackPressedDispatcher.onBackPressed()
+            pause()
+        }
+
+        // With nothing typed it goes, as it always did.
+        tap("addNote")
+        settle()
+        assertTrue(hasTag("noteText"))
+        askToGo()
+        settle()
+        assertFalse(dialog().isShowing)
+        assertFalse(hasTag("noteText"))
+
+        // With something typed it stays, however often it is asked.
+        tap("addNote")
+        settle()
+        compose.onNodeWithTag("noteText").performSemanticsAction(SemanticsActions.SetText) { it(androidx.compose.ui.text.AnnotatedString("Wer ist Duncan?")) }
+        // From here on the test looks at the window and not at what is drawn in it: in this test
+        // environment a dialog that got text after standing for a moment never reads as "at rest".
+        askToGo()
+        assertTrue(dialog().isShowing)
+        askToGo()
+        assertTrue(dialog().isShowing)
+    }
+
+    @Test fun starsAndChilliesCanBeReadAndSetWithoutSeeingThem() {
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert")) }
+        start()
+        openBook("Dune")
+        waitForTag("bookOverview")
+        scrollListTo("bookOverview", "ratingBar")
+        fun config(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().config
+        fun says(tag: String) = config(tag)[SemanticsProperties.ContentDescription].single()
+        fun stars(value: Float) = app.getString(R.string.rating_description, ch.schmidtbit.shelfmark.ui.formatRating(value))
+
+        // The bar is one control with a name, a value that is read out, and a way to set it.
+        assertEquals("Bewertung", says("ratingBar"))
+        assertEquals(stars(0f), config("ratingBar")[SemanticsProperties.StateDescription])
+        assertEquals(0f..5f, config("ratingBar")[SemanticsProperties.ProgressBarRangeInfo].range)
+        assertEquals(9, config("ratingBar")[SemanticsProperties.ProgressBarRangeInfo].steps)
+        compose.onNodeWithTag("ratingBar").performSemanticsAction(SemanticsActions.SetProgress) { it(3.3f) }
+        waitFor { book("Dune").rating == 3.5f }
+        waitFor { config("ratingBar")[SemanticsProperties.StateDescription] == stars(3.5f) }
+        assertEquals(3.5f, config("ratingBar")[SemanticsProperties.ProgressBarRangeInfo].current)
+
+        // Each star is a button that says what a tap on it gives: the whole star, then the half one, then none.
+        assertEquals(Role.Button, config("star2")[SemanticsProperties.Role])
+        assertEquals("Mit 2 von 5 Sternen bewerten", says("star2"))
+        // Three and a half is the half of the fourth star, so one more tap on that one takes the rating away.
+        assertEquals("Bewertung entfernen", says("star4"))
+        tap("star5")
+        waitFor { book("Dune").rating == 5f }
+        waitFor { says("star5") == app.getString(R.string.rating_set, ch.schmidtbit.shelfmark.ui.formatRating(4.5f)) }
+        tap("star5")
+        waitFor { book("Dune").rating == 4.5f }
+        waitFor { says("star5") == "Bewertung entfernen" }
+        tap("star5")
+        waitFor { book("Dune").rating == 0f }
+
+        // The chillies the same.
+        assertEquals("Spice", says("spiceBar"))
+        assertEquals("Spice-Level 0 von 5", config("spiceBar")[SemanticsProperties.StateDescription])
+        assertEquals(4, config("spiceBar")[SemanticsProperties.ProgressBarRangeInfo].steps)
+        compose.onNodeWithTag("spiceBar").performSemanticsAction(SemanticsActions.SetProgress) { it(2.6f) }
+        waitFor { book("Dune").spice == 3 }
+        waitFor { config("spiceBar")[SemanticsProperties.StateDescription] == "Spice-Level 3 von 5" }
+        assertEquals("Spice-Level 5 von 5 setzen", says("spice5"))
+        assertEquals("Spice-Level entfernen", says("spice3"))
+        tap("spice3")
+        waitFor { book("Dune").spice == 0 }
+    }
+
+    @Test fun theSettingsNameEveryCatalogueThatIsAsked() {
+        // Seven are built into the app (see AppContainer.lookup), and the text about it names them all.
+        val about = app.getString(R.string.settings_about_text)
+        for (name in listOf("Open Library", "Google Books", "Apple Books", "lobid", "Deutschen Nationalbibliothek", "K10plus", "swisscovery")) assertTrue(name, name in about)
+        start()
+        tap("openSettings")
+        scrollTo("backupText")
+        // Without an account in the build or in use, the phone is the only place, and that is what it says.
+        waitForText("Ohne Konto liegt deine Bibliothek nur auf diesem Gerät.")
     }
 
     @Test fun theFirstStartAsksForAnAccountAndANewOneGoesOnToTheRest() {

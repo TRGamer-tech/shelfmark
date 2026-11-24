@@ -85,6 +85,8 @@ fun serverProblemRes(reason: String): Int = when (reason) {
     "outdated" -> R.string.server_error_outdated
     // The library on the account was saved by a newer version, or is damaged. It is left alone.
     "unreadable" -> R.string.server_error_unreadable
+    // Nobody foresaw this one. The sync gave up, the app and the library are as they were.
+    "unexpected" -> R.string.server_error_unexpected
     "key" -> R.string.server_error_key
     "unknown_code" -> R.string.server_error_unknown_code
     "own_code" -> R.string.server_error_own_code

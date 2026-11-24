@@ -9,6 +9,7 @@ import ch.schmidtbit.shelfmark.data.remote.extractYear
 import ch.schmidtbit.shelfmark.data.remote.parseFormat
 import ch.schmidtbit.shelfmark.data.remote.stripHtml
 import ch.schmidtbit.shelfmark.util.Isbn
+import ch.schmidtbit.shelfmark.util.Numbers
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -169,7 +170,7 @@ object CsvImporter {
                 spice = t.get(row, "spice", "spice_level").toIntOrNull()?.coerceIn(0, 5) ?: 0,
                 review = stripHtml(t.get(row, "latest_review", "review", "my review", "rezension")),
                 series = t.get(row, "series", "series_name", "reihe", "serie"),
-                seriesPosition = t.get(row, "series_position", "series_index", "series_number", "volume", "series_order", "band").replace(',', '.').toFloatOrNull() ?: 0f,
+                seriesPosition = t.get(row, "series_position", "series_index", "series_number", "volume", "series_order", "band").let(Numbers::seriesPosition),
                 genres = t.get(row, "genres", "genre"),
                 tags = t.get(row, "tags"),
                 favorite = t.get(row, "favorite", "favourite", "is_favorite").lowercase() in setOf("true", "yes", "1", "y"),
@@ -207,7 +208,7 @@ object CsvImporter {
     internal fun splitSeries(raw: String): Triple<String, String, Float> {
         val match = seriesInTitle.matchEntire(raw.trim()) ?: return Triple(raw.trim(), "", 0f)
         val (title, series, position) = match.destructured
-        return Triple(title.trim(), series.trim(), position.replace(',', '.').toFloatOrNull() ?: 0f)
+        return Triple(title.trim(), series.trim(), Numbers.seriesPosition(position))
     }
 
     private fun people(text: String): List<String> = text.split(',', ';', '&').map { it.trim() }.filter { it.isNotEmpty() }
@@ -216,7 +217,7 @@ object CsvImporter {
     private fun isbn(vararg candidates: String): String =
         candidates.firstNotNullOfOrNull { Isbn.to13(it.removePrefix("=").trim('"')) }.orEmpty()
 
-    private fun rating(text: String): Float = (text.replace(',', '.').toFloatOrNull() ?: 0f).coerceIn(0f, 5f)
+    private fun rating(text: String): Float = (Numbers.decimal(text)?.toFloat() ?: 0f).coerceIn(0f, 5f)
 
     private val dateFormats = listOf("yyyy/MM/dd", "yyyy-MM-dd", "dd.MM.yyyy", "d.M.yyyy", "MM/dd/yyyy", "yyyy/M/d").map(DateTimeFormatter::ofPattern)
 
@@ -234,6 +235,57 @@ object CsvImporter {
         (a.isbn.isNotBlank() && a.isbn == b.isbn) ||
             (RemoteBook.normalise(a.title) == RemoteBook.normalise(b.title) &&
                 RemoteBook.normalise(a.authors.substringBefore(',')) == RemoteBook.normalise(b.authors.substringBefore(',')))
+
+    /**
+     * A list of books in which the first one that is the same as a given book ([sameBook]) is
+     * found at once, by its ISBN and by its title with the first author. A file with a few
+     * thousand rows, held against a library of a few thousand books row by row, is millions
+     * of comparisons, and the phone stands still for them.
+     */
+    class Index(books: List<Book>) {
+        private val all = books.toMutableList()
+        private val byIsbn = HashMap<String, Int>()
+        private val byName = HashMap<String, Int>()
+
+        init {
+            all.forEachIndexed { at, book -> note(book, at) }
+        }
+
+        val size: Int get() = all.size
+
+        operator fun get(at: Int): Book = all[at]
+
+        /** Where the first book stands that is the same as [book], or -1. */
+        fun find(book: Book): Int {
+            val isbnAt = if (book.isbn.isBlank()) null else byIsbn[book.isbn]
+            val nameAt = byName[nameOf(book)]
+            return when {
+                isbnAt == null -> nameAt ?: -1
+                nameAt == null -> isbnAt
+                else -> minOf(isbnAt, nameAt)
+            }
+        }
+
+        fun add(book: Book) {
+            all += book
+            note(book, all.lastIndex)
+        }
+
+        /** Puts [book] in the place of the one at [at]. It may have gained an ISBN, by which a later row finds it. */
+        fun replace(at: Int, book: Book) {
+            all[at] = book
+            note(book, at)
+        }
+
+        private fun nameOf(book: Book): String = RemoteBook.normalise(book.title) + "|" + RemoteBook.normalise(book.authors.substringBefore(','))
+
+        // Each key keeps the earliest book it was given: that is the one "the first that matches" means.
+        private fun note(book: Book, at: Int) {
+            if (book.isbn.isNotBlank()) byIsbn[book.isbn] = minOf(byIsbn[book.isbn] ?: at, at)
+            val name = nameOf(book)
+            byName[name] = minOf(byName[name] ?: at, at)
+        }
+    }
 
     /** Adds what [incoming] knows and [existing] lacks. Nothing the user already entered is overwritten. */
     fun fillGaps(existing: Book, incoming: Book): Book = existing.copy(

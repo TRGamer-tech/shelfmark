@@ -57,14 +57,17 @@ import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.isAudio
 import ch.schmidtbit.shelfmark.data.model.withDefaultsFor
+import ch.schmidtbit.shelfmark.data.model.withFormOf
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.camera.PhotoCapture
 import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.BookCover
+import ch.schmidtbit.shelfmark.ui.components.DiscardDialog
 import ch.schmidtbit.shelfmark.ui.coverModel
 import ch.schmidtbit.shelfmark.ui.labelRes
 import ch.schmidtbit.shelfmark.util.Dates
 import ch.schmidtbit.shelfmark.util.Isbn
+import ch.schmidtbit.shelfmark.util.Numbers
 import kotlinx.serialization.json.Json
 
 private val BookSaver = Saver<Book?, String>(
@@ -80,8 +83,12 @@ private val BookSaver = Saver<Book?, String>(
 fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
     val container = LocalContainer.current
     var book by rememberSaveable(stateSaver = BookSaver) { mutableStateOf(null) }
+    // The book as the form found it. What differs from it when the form is saved is what the reader did here.
+    var opened by rememberSaveable(stateSaver = BookSaver) { mutableStateOf(null) }
     var status by rememberSaveable { mutableStateOf(ReadingStatus.NONE) }
     var seriesPosition by rememberSaveable { mutableStateOf("") }
+    var openedPosition by rememberSaveable { mutableStateOf("") }
+    var askDiscard by remember { mutableStateOf(false) }
     var takingPhoto by remember { mutableStateOf(false) }
     var searchingCover by remember { mutableStateOf(false) }
     val isNew = bookId == 0L
@@ -92,12 +99,18 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
             container.draft = null
             if (loaded == null) onBack() else {
                 book = loaded
+                opened = loaded
                 status = loaded.status
-                seriesPosition = loaded.seriesPosition.takeIf { it > 0f }?.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }.orEmpty()
+                seriesPosition = loaded.seriesPosition.takeIf { it.isFinite() && it > 0f }?.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }.orEmpty()
+                openedPosition = seriesPosition
             }
         }
     }
     val current = book ?: return
+    val found = opened ?: current
+    // Something was typed, picked or photographed here that is not saved yet.
+    val changed = current != found || seriesPosition != openedPosition || (isNew && status != found.status)
+    val leave = { if (changed) askDiscard = true else onBack() }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) container.launch {
@@ -124,18 +137,25 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
             title = current.title.trim(),
             authors = current.authors.trim(),
             isbn = cleanedIsbn,
-            seriesPosition = seriesPosition.replace(',', '.').toFloatOrNull() ?: 0f,
+            // A position the reader did not touch stays what it is, also one this field cannot write.
+            seriesPosition = if (seriesPosition == openedPosition) found.seriesPosition else Numbers.seriesPosition(seriesPosition),
         )
         container.launch {
             val id = if (isNew) {
                 container.library.addBook(toSave.withDefaultsFor(status, Dates.today())).also { container.findCoverLater(it) }
             } else {
-                container.library.updateBook(toSave)
+                // Onto the book as it is stored now, not as it was when the form was opened: stars
+                // given on the book page behind this form, or a change a sync brought, are not written over.
+                container.library.modify(toSave.id) { stored -> stored.withFormOf(found, toSave) }
                 toSave.id
             }
             onSaved(id)
         }
     }
+
+    // Back with something typed asks first. With nothing typed it just goes back.
+    BackHandler(enabled = changed) { askDiscard = true }
+    if (askDiscard) DiscardDialog(onKeep = { askDiscard = false }) { askDiscard = false; onBack() }
 
     if (searchingCover) {
         CoverPickerDialog(current.title, current.authors, Isbn.to13(current.isbn).orEmpty(), onDismiss = { searchingCover = false }) { url ->
@@ -148,7 +168,7 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(if (isNew) R.string.edit_title_new else R.string.edit_title)) },
-                navigationIcon = { BackButton(onBack) },
+                navigationIcon = { BackButton(leave) },
                 actions = {
                     TextButton(onClick = ::save, enabled = current.title.isNotBlank(), modifier = Modifier.testTag("saveBook")) {
                         Text(stringResource(R.string.action_save))
@@ -227,7 +247,8 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
             Field(current.language, { book = current.copy(language = it) }, R.string.field_language)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Field(current.series, { book = current.copy(series = it) }, R.string.field_series, Modifier.weight(2f), words = true)
-                Field(seriesPosition, { seriesPosition = it.take(5) }, R.string.field_series_position, Modifier.weight(1f), number = true)
+                // Only what can become a plain number gets in: digits and one comma or point.
+                Field(seriesPosition, { if (Numbers.typable(it) || it.length < seriesPosition.length) seriesPosition = it.take(7) }, R.string.field_series_position, Modifier.weight(1f), number = true, tag = "fieldSeriesPosition")
             }
             Field(current.genres, { book = current.copy(genres = it) }, R.string.field_genres, supporting = R.string.field_comma_hint, words = true)
             Field(current.tags, { book = current.copy(tags = it) }, R.string.field_tags, supporting = R.string.field_comma_hint)

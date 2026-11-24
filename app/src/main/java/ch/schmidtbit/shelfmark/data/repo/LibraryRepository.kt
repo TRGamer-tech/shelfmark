@@ -19,7 +19,9 @@ import ch.schmidtbit.shelfmark.data.model.Shelf
 import ch.schmidtbit.shelfmark.data.model.withStatus
 import ch.schmidtbit.shelfmark.util.Dates
 import ch.schmidtbit.shelfmark.util.Ids
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 /** Everything about the user's own books, custom lists and quotes. */
 class LibraryRepository(private val db: AppDatabase, private val covers: CoverStore) {
@@ -143,16 +145,20 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
 
     /** Counts how many books of [plan] are new and how many are in the library already. */
     suspend fun previewImport(plan: ImportPlan): Pair<Int, Int> {
-        // A book the file lists twice is new once, and known the second time.
-        val seen = db.books().all().toMutableList()
-        var fresh = 0
-        plan.books.forEach { planned ->
-            if (seen.none { CsvImporter.sameBook(it, planned.book) }) {
-                fresh++
-                seen += planned.book
+        val library = db.books().all()
+        // Not on the thread that draws: a long list takes a moment even when each book is found at once.
+        return withContext(Dispatchers.Default) {
+            // A book the file lists twice is new once, and known the second time.
+            val seen = CsvImporter.Index(library)
+            var fresh = 0
+            plan.books.forEach { planned ->
+                if (seen.find(planned.book) < 0) {
+                    fresh++
+                    seen.add(planned.book)
+                }
             }
+            fresh to (plan.books.size - fresh)
         }
-        return fresh to (plan.books.size - fresh)
     }
 
     /**
@@ -160,15 +166,15 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
      * it only gains what the file knows and the library does not. Returns (added, completed).
      */
     suspend fun importBooks(plan: ImportPlan): Pair<Int, Int> = db.withTransaction {
-        val library = db.books().all().toMutableList()
+        val library = CsvImporter.Index(db.books().all())
         val lists = db.shelves().all().associate { it.name.lowercase() to it.id }.toMutableMap()
         val added = HashSet<Long>()
         val completed = HashSet<Long>()
         plan.books.forEach { planned ->
-            val at = library.indexOfFirst { CsvImporter.sameBook(it, planned.book) }
+            val at = library.find(planned.book)
             val bookId = if (at < 0) {
                 db.books().insert(planned.book.copy(id = Ids.next(), updatedAt = System.currentTimeMillis())).also {
-                    library += planned.book.copy(id = it)
+                    library.add(planned.book.copy(id = it))
                     added += it
                 }
             } else {
@@ -180,7 +186,7 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
                     db.books().update(filled.copy(updatedAt = System.currentTimeMillis()))
                     // A file can name the same book twice. The second row goes on from here,
                     // not from the book as it was before the first one.
-                    library[at] = filled
+                    library.replace(at, filled)
                 }
                 match.id
             }

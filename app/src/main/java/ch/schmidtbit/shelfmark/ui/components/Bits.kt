@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePicker
@@ -21,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import ch.schmidtbit.shelfmark.R
@@ -31,6 +33,41 @@ fun BackButton(onBack: () -> Unit) {
     IconButton(onClick = onBack) {
         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.action_back))
     }
+}
+
+/**
+ * Asks before something is deleted that one tap would otherwise take away for good. The
+ * same dialog everywhere, so that it reads the same and the button sits in the same place.
+ */
+@Composable
+fun ConfirmDelete(
+    title: String,
+    onDismiss: () -> Unit,
+    text: String = stringResource(R.string.delete_no_undo),
+    confirm: String = stringResource(R.string.action_delete),
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = { TextButton(onClick = onConfirm, modifier = Modifier.testTag("confirmDeleteYes")) { Text(confirm) } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("confirmDeleteNo")) { Text(stringResource(R.string.action_cancel)) } },
+        modifier = Modifier.testTag("confirmDelete"),
+    )
+}
+
+/** Asks before a form is left with something typed into it that is not saved. */
+@Composable
+fun DiscardDialog(onKeep: () -> Unit, onDiscard: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        title = { Text(stringResource(R.string.discard_title)) },
+        text = { Text(stringResource(R.string.discard_text)) },
+        confirmButton = { TextButton(onClick = onDiscard, modifier = Modifier.testTag("discardYes")) { Text(stringResource(R.string.action_discard)) } },
+        dismissButton = { TextButton(onClick = onKeep, modifier = Modifier.testTag("discardNo")) { Text(stringResource(R.string.action_keep_editing)) } },
+        modifier = Modifier.testTag("discardDialog"),
+    )
 }
 
 /** A titled card, the building block of the detail pages. */

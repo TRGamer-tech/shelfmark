@@ -13,11 +13,15 @@ import ch.schmidtbit.shelfmark.data.model.LoanNewsKind
 import ch.schmidtbit.shelfmark.data.model.LoanRules
 import ch.schmidtbit.shelfmark.data.model.LoanState
 import ch.schmidtbit.shelfmark.data.model.Ownership
+import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.data.model.Quote
+import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.repo.BackupManager
 import ch.schmidtbit.shelfmark.data.repo.CoverStore
+import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.Keep
+import ch.schmidtbit.shelfmark.data.repo.RejectReason
 import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
 import ch.schmidtbit.shelfmark.data.repo.LoanBooks
 import ch.schmidtbit.shelfmark.data.repo.ServerSync
@@ -33,6 +37,7 @@ import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.server.ServerException
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import ch.schmidtbit.shelfmark.ui.friends.loanProblemRes
+import ch.schmidtbit.shelfmark.ui.friends.serverProblemRes
 import ch.schmidtbit.shelfmark.util.Dates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +46,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -106,6 +112,8 @@ class FakeServer : HttpPoster {
     private val users = LinkedHashMap<String, User>()
     private val tokens = HashMap<String, Pair<String, Long>>()
     private val refreshTokens = HashMap<String, String>()
+    /** Which refresh token came with which access token: the two are one sign-in on one device. */
+    private val sessions = HashMap<String, String>()
     private val profiles = LinkedHashMap<String, Profile>()
     private val friendships = HashSet<Pair<String, String>>()
     private val libraries = HashMap<String, Pair<Long, JsonElement>>()
@@ -130,6 +138,8 @@ class FakeServer : HttpPoster {
     var returnTo: String? = null
     /** A project whose schema.sql is the one from before the loans: it has no functions for them, and its sync names none. */
     var beforeLoans = false
+    /** The storage refuses to remove anything, as it does while it is down. */
+    var storageStuck = false
 
     fun knows(email: String): Boolean = users[email.lowercase()]?.let { it.id in profiles } == true
     fun hasAccount(email: String): Boolean = email.lowercase() in users
@@ -139,7 +149,7 @@ class FakeServer : HttpPoster {
     fun revisionOf(email: String): Long = users[email.lowercase()]?.let { vaults[it.id]?.revision } ?: 0
     fun confirm(email: String) { users.getValue(email.lowercase()).confirmed = true }
     /** Ends every sign-in, as changing the password would. */
-    fun revokeAll() { tokens.clear(); refreshTokens.clear() }
+    fun revokeAll() { tokens.clear(); refreshTokens.clear(); sessions.clear() }
 
     private class Refusal(val reason: String) : Exception()
     private class AuthRefusal(val status: Int, val code: String) : Exception()
@@ -153,6 +163,7 @@ class FakeServer : HttpPoster {
         val refresh = "refresh-" + UUID.randomUUID()
         tokens[access] = user.id to time / 1000 + tokenSeconds
         refreshTokens[refresh] = email
+        sessions[access] = refresh
         return buildJsonObject {
             put("access_token", access)
             put("refresh_token", refresh)
@@ -169,7 +180,8 @@ class FakeServer : HttpPoster {
         fun text(name: String) = (args[name] as? JsonPrimitive)?.content.orEmpty()
         return synchronized(this) {
             try {
-                if ("/auth/v1/" in url) return@synchronized auth(url.substringAfter("/auth/v1/"), ::text)
+                if ("/auth/v1/" in url) return@synchronized auth(url.substringAfter("/auth/v1/"), ::text, headers["Authorization"]?.removePrefix("Bearer "))
+                if ("/storage/v1/object/list/" in url) return@synchronized list(args, headers)
                 val function = url.substringAfterLast("/rpc/")
                 calls[function] = (calls[function] ?: 0) + 1
                 val bearer = headers["Authorization"]?.removePrefix("Bearer ")
@@ -191,17 +203,40 @@ class FakeServer : HttpPoster {
         }
     }
 
-    override suspend fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpAnswer {
-        if (offline) throw IOException("no connection")
-        val path = url.substringAfter("/storage/v1/object/shelfmark-covers/", "").ifBlank { return HttpAnswer(404, "{}") }
+    /** What is in a folder of the storage. Everybody sees their own folder and nothing of anybody else's. */
+    private fun list(args: JsonObject, headers: Map<String, String>): HttpAnswer {
+        calls["storage_list"] = (calls["storage_list"] ?: 0) + 1
         val caller = headers["Authorization"]?.removePrefix("Bearer ")?.let { tokens[it] }?.takeIf { it.second > time / 1000 }?.first
-        // Everybody writes below a folder named after their own user id, and nowhere else.
-        if (caller == null || path.substringBefore('/') != caller) return HttpAnswer(400, """{"statusCode":"403","message":"new row violates row-level security policy"}""")
-        if (method == "DELETE") pictures.remove(path) else pictures[path] = body ?: ByteArray(0)
-        return HttpAnswer(200, "{}")
+        val folder = (args["prefix"] as? JsonPrimitive)?.content.orEmpty().trim('/')
+        val limit = (args["limit"] as? JsonPrimitive)?.longOrNull?.toInt() ?: 100
+        val offset = (args["offset"] as? JsonPrimitive)?.longOrNull?.toInt() ?: 0
+        val names = if (caller == null || folder != caller) emptyList() else pictures.keys.filter { it.startsWith("$folder/") }.map { it.removePrefix("$folder/") }.sorted()
+        return HttpAnswer(200, JsonArray(names.drop(offset).take(limit).map { buildJsonObject { put("name", it) } }).toString())
     }
 
-    private fun auth(path: String, text: (String) -> String): HttpAnswer {
+    override suspend fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpAnswer {
+        if (offline) throw IOException("no connection")
+        // The address everybody can open. It needs no sign-in, only the address.
+        url.substringAfter("/storage/v1/object/public/shelfmark-covers/", "").takeIf { it.isNotBlank() && method == "GET" }?.let { open ->
+            return synchronized(this) { if (open in pictures) HttpAnswer(200, "") else HttpAnswer(400, """{"statusCode":"404","message":"Object not found"}""") }
+        }
+        val path = url.substringAfter("/storage/v1/object/shelfmark-covers/", "").ifBlank { return HttpAnswer(404, "{}") }
+        return synchronized(this) {
+            val caller = headers["Authorization"]?.removePrefix("Bearer ")?.let { tokens[it] }?.takeIf { it.second > time / 1000 }?.first
+            // Everybody writes below a folder named after their own user id, and nowhere else.
+            if (caller == null || path.substringBefore('/') != caller) return@synchronized HttpAnswer(400, """{"statusCode":"403","message":"new row violates row-level security policy"}""")
+            if (method == "DELETE") {
+                calls["storage_delete"] = (calls["storage_delete"] ?: 0) + 1
+                if (storageStuck) return@synchronized HttpAnswer(500, """{"message":"Internal Server Error"}""")
+                pictures.remove(path)
+            } else {
+                pictures[path] = body ?: ByteArray(0)
+            }
+            HttpAnswer(200, "{}")
+        }
+    }
+
+    private fun auth(path: String, text: (String) -> String, bearer: String?): HttpAnswer {
         calls[path.substringBefore('?')] = (calls[path.substringBefore('?')] ?: 0) + 1
         val email = text("email").trim().lowercase()
         return when {
@@ -228,7 +263,14 @@ class FakeServer : HttpPoster {
                 val user = users[owner] ?: throw AuthRefusal(400, "refresh_token_not_found")
                 HttpAnswer(200, session(owner, user).toString())
             }
-            path == "logout" -> HttpAnswer(204, "")
+            path.substringBefore('?') == "logout" -> {
+                // Supabase ends every sign-in of the account unless it is told that only this one is meant.
+                val user = tokens[bearer]?.first
+                val local = path.substringAfter("scope=", "global") == "local"
+                val ended = if (local) setOfNotNull(bearer) else tokens.filterValues { it.first == user }.keys.toSet()
+                ended.forEach { access -> tokens.remove(access); sessions.remove(access)?.let(refreshTokens::remove) }
+                HttpAnswer(204, "")
+            }
             path == "recover" -> HttpAnswer(200, "{}")
             else -> HttpAnswer(404, "{}")
         }
@@ -440,6 +482,42 @@ class FakeServer : HttpPoster {
     }
 }
 
+/**
+ * Stands between a phone and its server, so that a test can have something happen at one
+ * exact moment of a sync: right after the server answered a certain call, before the
+ * phone goes on with the answer. That is where a reader's tap falls in real life.
+ */
+class Between(private val real: HttpPoster) : HttpPoster {
+    private var function = ""
+    private var times = 0
+    private var then: suspend () -> Unit = {}
+
+    /** After each of the next [times] answers to [function], [then] happens. */
+    fun after(function: String, times: Int = 1, then: suspend () -> Unit) {
+        this.function = function
+        this.times = times
+        this.then = then
+    }
+
+    override suspend fun post(url: String, headers: Map<String, String>, body: String): HttpAnswer {
+        val answer = real.post(url, headers, body)
+        if (times > 0 && url.endsWith(function)) {
+            times--
+            then()
+        }
+        return answer
+    }
+
+    override suspend fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpAnswer {
+        val answer = real.send(method, url, headers, body)
+        if (times > 0 && url.endsWith(function)) {
+            times--
+            then()
+        }
+        return answer
+    }
+}
+
 /** One simulated device with its own database and settings, talking to a shared server. */
 class Phone(
     context: Context,
@@ -460,7 +538,12 @@ class Phone(
     }
     val library = LibraryRepository(db, covers)
     val social = SocialRepository(db, settings)
-    val server = ServerSync(db, settings, social, BackupManager(db, covers), covers, config, poster, File(folder.root, "$tag.base.json"), now = clock, today = clockDay)
+    val backup = BackupManager(db, covers)
+    /** Where a library goes that the choice between account and device replaces. */
+    val replacedDir = File(folder.root, "$tag.replaced")
+    /** What happens between this phone and its server can be arranged here. */
+    val line = Between(poster)
+    val server = ServerSync(db, settings, social, backup, covers, config, line, File(folder.root, "$tag.base.json"), now = clock, today = clockDay, replacedDir = replacedDir)
     /** An address nobody else has, also on a real server that other test runs use. */
     val email = "${name.lowercase()}-${UUID.randomUUID().toString().take(8)}@shelfmark.test"
     val password = "geheim-$name"
@@ -507,6 +590,12 @@ abstract class ServerStory {
         }
         owner.server.sync()
     }
+
+    /** Whether a cover photo can still be opened under the address everybody has. [path] is "<user id>/<file name>". */
+    protected suspend fun isThere(path: String): Boolean = poster.send("GET", config.coverAddress(path), mapOf("apikey" to config.key), null).code == 200
+
+    /** The titles in a library that was put aside as a backup file. */
+    protected suspend fun Phone.titlesIn(file: File): List<String> = file.inputStream().use { backup.inspect(it) }.first!!.books.map { it.title }.sorted()
 
     protected suspend fun Phone.loans(): List<Loan> = social.loans.first()
     protected suspend fun Phone.loan(): Loan = loans().single()
@@ -569,6 +658,18 @@ abstract class ServerStory {
         assertEquals("Ben", benAtAnna.friend.name)
         assertEquals(1, benAtAnna.bookCount)
         assertTrue(benAtAnna.friend.online)
+
+        // A file that claims to be Anna's library does not get onto her shelf: what stands there
+        // is what the server says, and a loan is asked for from that shelf.
+        val forged = ShareCodec.encode(anna.social.exportLibrary(includeStatus = true, includeRatings = true).let { real ->
+            real.copy(library = real.library!!.copy(books = real.library!!.books.map { it.copy(title = "Gefälscht", available = true) }))
+        })
+        assertEquals(ImportResult.Rejected(RejectReason.CONNECTED_FRIEND), ben.social.import(forged))
+        assertEquals(listOf("Emma", "Persuasion"), ben.social.friendBooks(anna.id).first().map { it.title }.sorted())
+        assertEquals(
+            "This library belongs to a friend who is connected with you through your accounts. Their shelf comes from the server, so a file cannot replace it.",
+            context.getString(R.string.import_connected_friend),
+        )
 
         // Wrong codes are told apart.
         assertEquals("unknown_code", (ben.server.addFriend("ZZZZZ-ZZZZZ").exceptionOrNull() as ServerException).reason)
@@ -1194,8 +1295,14 @@ abstract class ServerStory {
         // Until that is answered nothing is touched, on either side.
         assertEquals(listOf("Momo"), second.titles())
         assertEquals(SyncResult.Choose(onAccount = 2, onDevice = 1), second.server.sync())
+        assertTrue(second.backup.replaced(second.replacedDir).isEmpty())
+        // A book that is added while the answer is on its way is part of what gets replaced, and so of what is put aside.
+        second.line.after("shelfmark_vault_pull") { second.library.addBook(Book(title = "Krabat")) }
         assertTrue(second.server.choose(Keep.ACCOUNT) is SyncResult.Done)
         assertEquals(listOf("Dune", "Emma"), second.titles())
+        // The library that had to go was put aside first, as a backup file of the usual kind.
+        val gone = second.backup.replaced(second.replacedDir).single()
+        assertEquals(listOf("Krabat", "Momo"), second.titlesIn(gone))
 
         // The other answer: this device's library replaces the one on the account.
         val third = phone("Dritt")
@@ -1206,6 +1313,129 @@ abstract class ServerStory {
         second.server.sync()
         assertEquals(listOf("Faust"), first.titles())
         assertEquals(listOf("Faust"), second.titles())
+        // Here it is the account's library that was put aside, on the device that replaced it.
+        val replaced = third.backup.replaced(third.replacedDir).single()
+        assertEquals(listOf("Dune", "Emma"), third.titlesIn(replaced))
+
+        // Whoever chose wrongly gets it back the way any backup is restored, and it goes to the account from there.
+        assertEquals(2, replaced.inputStream().use { third.backup.restore(it) })
+        assertTrue(third.server.sync() is SyncResult.Done)
+        first.server.sync()
+        assertEquals(listOf("Dune", "Emma"), first.titles())
+    }
+
+    @Test fun whatTheReaderDoesWhileASyncIsOnItsWayIsNotRunOver() = runBlocking {
+        val phone = phone("Anna")
+        val emma = phone.library.addBook(Book(title = "Emma"))
+        val dune = phone.library.addBook(Book(title = "Dune"))
+        assertTrue(phone.join() is SyncResult.Done)
+        val tablet = secondDevice(phone, "Tablet")
+
+        // The tablet gave Emma stars. The phone has nothing new, and would take over what the account holds.
+        tablet.library.modify(emma) { it.copy(rating = 5f) }
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        // But while the answer is on its way, the reader writes a line about Dune and keeps a quote.
+        phone.line.after("shelfmark_vault_pull") {
+            phone.library.modify(dune) { it.copy(review = "Sand.") }
+            phone.library.saveQuote(Quote(bookId = dune, text = "Fear is the mind-killer."))
+        }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertEquals(5f, phone.library.getBook(emma)!!.rating)
+        assertEquals("Sand.", phone.library.getBook(dune)!!.review)
+        assertEquals(1, phone.library.quotes.first().size)
+        // It went to the account with the same sync.
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertEquals("Sand.", tablet.library.getBook(dune)!!.review)
+        assertEquals(1, tablet.library.quotes.first().size)
+
+        // The same when both have something new and the two libraries are put together.
+        tablet.library.modify(emma) { it.copy(spice = 3) }
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        phone.library.modify(dune) { it.copy(rating = 4f) }
+        phone.line.after("shelfmark_vault_pull") {
+            phone.library.addBook(Book(title = "Momo"))
+            phone.library.logSession(ReadingSession(bookId = dune, startPage = 0, endPage = 30, minutes = 25f))
+        }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        for (device in listOf(phone, tablet)) {
+            assertEquals(device.name, listOf("Dune", "Emma", "Momo"), device.titles())
+            assertEquals(device.name, 3, device.library.getBook(emma)!!.spice)
+            assertEquals(device.name, 4f, device.library.getBook(dune)!!.rating)
+            assertEquals(device.name, 30, device.library.getBook(dune)!!.currentPage)
+            assertEquals(device.name, 1, device.library.sessions.first().size)
+        }
+
+        // The settings go the same way. A name from the tablet does not undo a theme picked here meanwhile.
+        tablet.settings.setProfileName("Anna B.")
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        phone.line.after("shelfmark_vault_pull") { phone.settings.setTheme("midnight") }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertEquals("Anna B.", phone.settings.current().profileName)
+        assertEquals("midnight", phone.settings.current().theme)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertEquals("midnight", tablet.settings.current().theme)
+
+        // A library that does not hold still at all is left alone after a few tries. Nothing is run
+        // over to get done, and the next sync finds it at rest.
+        tablet.library.modify(emma) { it.copy(rating = 2f) }
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        var page = 100
+        phone.line.after("shelfmark_vault_pull", times = 50) { phone.library.modify(dune) { it.copy(currentPage = ++page) } }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertTrue(page > 101)
+        assertEquals(page, phone.library.getBook(dune)!!.currentPage)
+        assertEquals(5f, phone.library.getBook(emma)!!.rating)
+        phone.line.after("", times = 0) { }
+        assertTrue(phone.server.sync() is SyncResult.Done)
+        assertEquals(2f, phone.library.getBook(emma)!!.rating)
+        assertEquals(page, phone.library.getBook(dune)!!.currentPage)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertEquals(page, tablet.library.getBook(dune)!!.currentPage)
+    }
+
+    @Test fun aCoverPhotoNobodyShowsAnyMoreIsTakenOffTheStorage() = runBlocking {
+        val anna = phone("Anna")
+        for (name in listOf("emma.jpg", "dune.jpg", "momo.jpg")) anna.covers.file(name).writeBytes(byteArrayOf(1, 2, 3, 4))
+        val emma = anna.library.addBook(Book(title = "Emma", coverPath = "emma.jpg"))
+        val dune = anna.library.addBook(Book(title = "Dune", coverPath = "dune.jpg"))
+        val momo = anna.library.addBook(Book(title = "Momo", coverPath = "momo.jpg"))
+        assertTrue(anna.join() is SyncResult.Done)
+        val me = anna.id
+        for (name in listOf("emma.jpg", "dune.jpg", "momo.jpg")) assertTrue(name, isThere("$me/$name"))
+
+        // A book that is deleted takes its picture along, and so does one that gets another cover.
+        anna.library.deleteBook(emma)
+        anna.library.modify(dune) { it.copy(coverPath = "", coverUrl = "https://catalogue.example/dune.jpg") }
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertFalse(isThere("$me/emma.jpg"))
+        assertFalse(isThere("$me/dune.jpg"))
+        assertTrue(isThere("$me/momo.jpg"))
+
+        // A picture that two books show stays for as long as one of them does. The second
+        // device may be the one that deletes: it is the same account, and the same folder.
+        val twin = anna.library.addBook(Book(title = "Momo, das zweite Exemplar", coverUrl = config.coverAddress("$me/momo.jpg")))
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        val tablet = secondDevice(anna, "Tablet")
+        tablet.library.deleteBook(momo)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertTrue(isThere("$me/momo.jpg"))
+        tablet.library.deleteBook(twin)
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertFalse(isThere("$me/momo.jpg"))
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertEquals(listOf("Dune"), anna.titles())
+
+        // Before an account is deleted its folder is emptied, also of pictures that no book knows of any more.
+        val api = ServerApi(config, poster, anna.settings.current().accessToken)
+        api.uploadCover("$me/vergessen.jpg", byteArrayOf(5, 6))
+        anna.covers.file("neu.jpg").writeBytes(byteArrayOf(7, 8))
+        anna.library.addBook(Book(title = "Krabat", coverPath = "neu.jpg"))
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertEquals(setOf("neu.jpg", "vergessen.jpg"), api.listCovers(me).toSet())
+        assertTrue(anna.server.deleteAccount())
+        assertFalse(isThere("$me/vergessen.jpg"))
+        assertFalse(isThere("$me/neu.jpg"))
     }
 
     @Test fun signingInGoesWrongInPlainWords() = runBlocking {
@@ -1279,7 +1509,10 @@ class ServerSyncTest : ServerStory() {
         phone.covers.file("mine.jpg").writeBytes(byteArrayOf(1, 2, 3, 4))
         val photographed = phone.library.addBook(Book(title = "Emma", coverPath = "mine.jpg", coverUrl = "https://catalogue.example/emma.jpg"))
         phone.library.addBook(Book(title = "Dune", coverUrl = "https://catalogue.example/dune.jpg"))
+        // Stars given while the picture is on its way are not written over with the book as it was before.
+        phone.line.after("/mine.jpg") { phone.library.modify(photographed) { it.copy(rating = 4f) } }
         phone.join()
+        assertEquals(4f, phone.library.getBook(photographed)!!.rating)
 
         // The photo was uploaded below the account's own folder, and the book now carries its address.
         val address = config.coverAddress(phone.id + "/mine.jpg")
@@ -1299,13 +1532,166 @@ class ServerSyncTest : ServerStory() {
         tablet.server.sync()
         assertEquals(1, server.pictures.size)
 
-        // A new photo replaces the address. Deleting the account removes the pictures too.
+        // A new photo replaces the address, and the old picture goes. Deleting the account removes the pictures too.
         phone.covers.file("better.jpg").writeBytes(byteArrayOf(9))
         phone.library.modify(photographed) { it.copy(coverPath = "better.jpg") }
         phone.server.sync()
         assertEquals(config.coverAddress(phone.id + "/better.jpg"), phone.library.getBook(photographed)!!.coverUrl)
+        assertEquals(setOf(phone.id + "/better.jpg"), server.pictures.keys)
         assertTrue(phone.server.deleteAccount())
         assertNull(server.pictures[phone.id + "/better.jpg"])
+    }
+
+    @Test fun aPictureThatWillNotGoKeepsNothingFromBeingDeleted() = runBlocking {
+        val anna = phone("Anna")
+        anna.covers.file("emma.jpg").writeBytes(byteArrayOf(1))
+        val emma = anna.library.addBook(Book(title = "Emma", coverPath = "emma.jpg"))
+        anna.library.addBook(Book(title = "Dune"))
+        anna.join()
+        val picture = anna.id + "/emma.jpg"
+        assertTrue(picture in server.pictures)
+
+        // The storage is down. The book is deleted all the same, on the account too.
+        server.storageStuck = true
+        anna.library.deleteBook(emma)
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertEquals(1, server.calls["storage_delete"])
+        assertTrue(picture in server.pictures)
+        assertEquals(listOf("Dune"), secondDevice(anna, "Tablet").titles())
+        // And so is the account.
+        assertTrue(anna.server.deleteAccount())
+        assertFalse(server.hasAccount(anna.email))
+        assertFalse(anna.settings.current().signedIn)
+    }
+
+    @Test fun aFolderWithManyPicturesIsEmptiedPageByPage() = runBlocking {
+        val anna = phone("Anna")
+        anna.join()
+        repeat(250) { server.pictures["${anna.id}/alt-$it.jpg"] = byteArrayOf(1) }
+        server.pictures["somebody-else/theirs.jpg"] = byteArrayOf(2)
+        // What the folder holds is the caller's to see, and nobody else's.
+        val api = ServerApi(config, poster, anna.settings.current().accessToken)
+        assertEquals(250, api.listCovers(anna.id).size)
+        assertTrue(api.listCovers("somebody-else").isEmpty())
+        val asked = server.calls["storage_list"] ?: 0
+        assertTrue(anna.server.deleteAccount())
+        assertEquals(setOf("somebody-else/theirs.jpg"), server.pictures.keys)
+        // Two full pages and the rest.
+        assertEquals(3, (server.calls["storage_list"] ?: 0) - asked)
+    }
+
+    @Test fun signingOutOnOneDeviceLeavesTheOthersSignedIn() = runBlocking {
+        val phone = phone("Anna", clock = { server.time })
+        phone.library.addBook(Book(title = "Emma"))
+        phone.join()
+        val tablet = phone("Tablet", clock = { server.time })
+        assertTrue(tablet.server.signIn(phone.email, phone.password) is SyncResult.Done)
+
+        // The phone signs out. The tablet's sign-in is another one, and it goes on being renewed.
+        phone.server.signOut()
+        assertFalse(phone.settings.current().signedIn)
+        // Who signs out themselves does not have to be told.
+        assertFalse(phone.settings.current().signedOutNotice)
+        server.time += 2 * 3600_000L
+        assertTrue(tablet.server.sync() is SyncResult.Done)
+        assertTrue(tablet.settings.current().signedIn)
+        assertFalse(tablet.settings.current().signedOutNotice)
+
+        // A sign-in that ends by itself (a new password, say) is another matter: the shelf says so.
+        server.time += 2 * 3600_000L
+        server.revokeAll()
+        assertEquals(SyncResult.Off, tablet.server.sync())
+        assertFalse(tablet.settings.current().signedIn)
+        assertTrue(tablet.settings.current().signedOutNotice)
+        // It stays through further tries, and what is changed meanwhile stays on the device.
+        tablet.library.addBook(Book(title = "Dune"))
+        assertEquals(SyncResult.Off, tablet.server.sync())
+        assertTrue(tablet.settings.current().signedOutNotice)
+        assertEquals(listOf("Dune", "Emma"), tablet.titles())
+        // Signing in again takes it away, and brings the change to the account.
+        assertTrue(tablet.server.signIn(phone.email, phone.password) is SyncResult.Done)
+        assertFalse(tablet.settings.current().signedOutNotice)
+        assertTrue(phone.server.signIn(phone.email, phone.password) is SyncResult.Done)
+        assertEquals(listOf("Dune", "Emma"), phone.titles())
+
+        // Or the reader puts it away.
+        server.time += 2 * 3600_000L
+        server.revokeAll()
+        assertEquals(SyncResult.Off, tablet.server.sync())
+        assertTrue(tablet.settings.current().signedOutNotice)
+        tablet.settings.setSignedOutNotice(false)
+        assertFalse(tablet.settings.current().signedOutNotice)
+        assertEquals(
+            "You were signed out on this device. Your changes stay here until you sign in again.",
+            context.getString(R.string.signed_out_notice),
+        )
+    }
+
+    @Test fun whatNobodyForesawEndsASyncAndNotTheApp() = runBlocking {
+        val anna = phone("Anna")
+        val ben = phone("Ben")
+        anna.library.addBook(Book(title = "Emma"))
+        ben.library.addBook(Book(title = "Momo"))
+        befriend(anna, ben)
+
+        // Something breaks in the middle of a sync that is neither the network nor a no from the server.
+        anna.library.addBook(Book(title = "Dune"))
+        anna.line.after("shelfmark_vault_pull") { throw IllegalStateException("a mistake nobody has found yet") }
+        assertEquals(SyncResult.Failed(ServerSync.UNEXPECTED), anna.server.sync())
+        assertEquals(ServerSync.UNEXPECTED, anna.server.status.value.error)
+        assertFalse(anna.server.status.value.running)
+        assertEquals(
+            "Something unexpected went wrong while syncing. Nothing on this device was lost, and the next sync tries again.",
+            context.getString(serverProblemRes(ServerSync.UNEXPECTED), ""),
+        )
+        // Nothing is lost by it, and the next sync goes through.
+        assertEquals(listOf("Dune", "Emma"), anna.titles())
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        assertNull(anna.server.status.value.error)
+
+        // The same for everything else that talks to the server: it says no, it does not throw.
+        fun broken(function: String) = anna.line.after(function) { throw IllegalStateException("broken") }
+        broken("shelfmark_sync")
+        assertEquals(SyncResult.Failed(ServerSync.UNEXPECTED), anna.server.dailyCheck())
+        broken("shelfmark_loan_ask")
+        assertEquals(ServerSync.UNEXPECTED, anna.server.loanAsk(anna.onShelfOf(ben, "Momo"), ""))
+        broken("shelfmark_add_friend")
+        assertEquals(ServerSync.UNEXPECTED, (anna.server.addFriend("ABCDE-FGHJK").exceptionOrNull() as ServerException).reason)
+        broken("shelfmark_new_code")
+        assertNull(anna.server.newCode())
+        broken("shelfmark_remove_friend")
+        assertFalse(anna.server.removeFriend(ben.id))
+        broken("token?grant_type=password")
+        assertEquals(SyncResult.Failed(ServerSync.UNEXPECTED), anna.server.signIn(anna.email, anna.password))
+        broken("shelfmark_delete_account")
+        assertFalse(anna.server.deleteAccount())
+        assertTrue(anna.settings.current().signedIn)
+    }
+
+    @Test fun aNumberThatIsNoneStopsNeitherSyncNorBackup() = runBlocking {
+        val anna = phone("Anna")
+        // Typed as "1e39" into the field for the place in a series, before that field knew better.
+        val odd = anna.library.addBook(Book(title = "Dune", series = "Dune", seriesPosition = Float.POSITIVE_INFINITY))
+        anna.library.savePurchase(Purchase(bookId = odd, day = 20_000, price = Double.POSITIVE_INFINITY))
+        assertTrue(anna.join() is SyncResult.Done)
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        // On the account, and from there on every other device, it is "not set".
+        val tablet = secondDevice(anna, "Tablet")
+        assertEquals(0f, tablet.library.getBook(odd)!!.seriesPosition)
+        assertEquals(0.0, tablet.library.purchases.first().single().price, 0.0)
+        // A backup can be written, and what friends get as well.
+        assertTrue(anna.backup.exportTo { java.io.ByteArrayOutputStream() })
+        ShareCodec.encode(anna.social.exportLibrary(includeStatus = true, includeRatings = true))
+
+        // A library on the account that carries such a number (written by something else) is read, not refused.
+        val api = ServerApi(config, poster, anna.settings.current().accessToken)
+        val strange = """{"exportedAt":1,"books":[{"id":1,"title":"Momo","seriesPosition":1e39,"rating":1e999}],"shelves":[],"links":[],"quotes":[],"prefs":{"minutesPerPage":1e99}}"""
+        api.vaultPush(Json.parseToJsonElement(strange), api.vaultPull(0).revision)
+        assertTrue(anna.server.sync() is SyncResult.Done)
+        val momo = anna.library.allBooks().single { it.title == "Momo" }
+        assertEquals(0f, momo.seriesPosition)
+        assertEquals(0f, momo.rating)
+        assertTrue(anna.settings.current().minutesPerPage in 0.3f..10f)
     }
 
     @Test fun theShelfLooksTheSameEverywhere() = runBlocking {

@@ -6,11 +6,14 @@ import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.importer.Csv
 import ch.schmidtbit.shelfmark.data.importer.CsvImporter
+import ch.schmidtbit.shelfmark.data.importer.ImportPlan
+import ch.schmidtbit.shelfmark.data.importer.PlannedBook
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.OrnamentKind
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.Purchase
+import ch.schmidtbit.shelfmark.data.model.Quote
 import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
@@ -23,6 +26,9 @@ import ch.schmidtbit.shelfmark.data.repo.CustomTheme
 import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
 import ch.schmidtbit.shelfmark.data.repo.Settings
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
+import ch.schmidtbit.shelfmark.data.share.BackupPayload
+import ch.schmidtbit.shelfmark.util.Ids
+import androidx.room.withTransaction
 import ch.schmidtbit.shelfmark.data.stats.Insights
 import ch.schmidtbit.shelfmark.data.stats.MilestoneCategory
 import ch.schmidtbit.shelfmark.data.stats.Milestones
@@ -57,6 +63,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.zip.ZipEntry
@@ -456,6 +463,112 @@ class PortedFeaturesTest {
         assertEquals("9780441172719", dune.isbn)
         assertEquals("Ace", dune.publisher)
         assertEquals(0 to 4, library.previewImport(plan))
+    }
+
+    @Test fun aFewThousandRowsAreImportedWithoutTheAppStandingStill() = runBlocking {
+        // A library that is large already, and a file that is larger: half of its rows are known, by ISBN or by title and author.
+        val owned = (0 until 3000).map { Book(title = "Band $it", authors = "Autorin ${it % 70}", isbn = if (it % 2 == 0) "9783" + (100000000 + it) else "") }
+        db.withTransaction { owned.forEach { db.books().insert(it.copy(id = Ids.next())) } }
+        val rows = (0 until 6000).map { n ->
+            val known = n % 2 == 0
+            val at = n / 2
+            PlannedBook(
+                if (known) Book(title = "BAND $at", authors = "autorin ${at % 70}, und andere", isbn = if (at % 4 == 0) "9783" + (100000000 + at) else "", pageCount = 100 + at)
+                else Book(title = "Neuzugang $at", authors = "Autor ${at % 90}", pageCount = 200),
+                lists = if (n % 1000 == 0) listOf("Gross") else emptyList(),
+            )
+        }
+        val plan = ImportPlan("Test", rows)
+        val started = System.nanoTime()
+        assertEquals(3000 to 3000, library.previewImport(plan))
+        // Every known book gains its number of pages, every new one is added once.
+        assertEquals(3000 to 3000, library.importBooks(plan))
+        val seconds = (System.nanoTime() - started) / 1e9
+        // Row by row against the whole library this took minutes. A phone is slower than this machine, but not by that much.
+        assertTrue("took $seconds s", seconds < 30)
+        val books = library.allBooks()
+        assertEquals(6000, books.size)
+        assertEquals(100 + 17, books.single { it.title == "Band 17" }.pageCount)
+        assertEquals(1, books.count { it.title == "Neuzugang 2999" })
+        // The list the file names exists once, with the six books that are on it.
+        assertEquals("Gross", library.shelves.first().single().name)
+        assertEquals(6, library.links.first().size)
+        // A second time, nothing is new and nothing changes.
+        assertEquals(0 to 6000, library.previewImport(plan))
+        assertEquals(0 to 0, library.importBooks(plan))
+    }
+
+    @Test fun aLibraryIsOnlyReplacedWhileItIsStillTheOneThatWasLookedAt() = runBlocking {
+        val backup = BackupManager(db, covers)
+        val emma = library.addBook(Book(title = "Emma"))
+        val seen = backup.snapshot(at = 0)
+        val other = seen.copy(books = listOf(Book(id = 99, title = "Dune", addedAt = 1, updatedAt = 1)))
+
+        // The reader gave Emma stars after the look. Nothing is written over that.
+        library.modify(emma) { it.copy(rating = 5f) }
+        assertNull(backup.restore(other, onlyIf = seen))
+        assertEquals(5f, library.getBook(emma)!!.rating)
+        // The same for something that belongs to the book, and for a list.
+        val now = backup.snapshot(at = 0)
+        library.saveQuote(Quote(bookId = emma, text = "It is a truth universally acknowledged."))
+        assertNull(backup.restore(other, onlyIf = now))
+        assertEquals(1, library.quotes.first().size)
+
+        // What has to change along with the library and cannot leaves the library as it was.
+        val fresh = backup.snapshot(at = 0)
+        assertNull(backup.restore(other, onlyIf = fresh) { false })
+        assertEquals(listOf("Emma"), library.allBooks().map { it.title })
+        assertEquals(1, library.quotes.first().size)
+
+        // Unchanged since the look, it is replaced, and what stands there afterwards is told.
+        val written = backup.restore(other, onlyIf = fresh)!!
+        assertEquals(listOf("Dune"), written.books.map { it.title })
+        assertEquals(listOf("Dune"), library.allBooks().map { it.title })
+        assertTrue(library.quotes.first().isEmpty())
+    }
+
+    @Test fun aLibraryThatIsReplacedIsPutAsideAndTheLastThreeAreKept() = runBlocking {
+        val backup = BackupManager(db, covers)
+        val dir = File(folder.root, "replaced")
+        assertTrue(backup.replaced(dir).isEmpty())
+        covers.file("photo.jpg").writeBytes(byteArrayOf(1, 2, 3))
+        for (n in 1..5) {
+            val going = BackupPayload(exportedAt = 0, books = listOf(Book(id = n.toLong(), title = "Bibliothek $n", coverPath = "photo.jpg", addedAt = 1, updatedAt = 1)), shelves = emptyList(), links = emptyList(), quotes = emptyList())
+            val file = backup.keepReplaced(going, dir, at = 1_000L * n)!!
+            assertEquals(1_000L * n, BackupManager.replacedAt(file))
+        }
+        // The newest first, and no more than three.
+        val kept = backup.replaced(dir)
+        assertEquals(listOf(5_000L, 4_000L, 3_000L), kept.map { BackupManager.replacedAt(it) })
+        // Each is a backup like any other: the import reads it, and restoring it brings the library and its photos back.
+        val (inside, _) = kept.first().inputStream().use { backup.inspect(it) }
+        assertEquals(listOf("Bibliothek 5"), inside!!.books.map { it.title })
+        covers.file("photo.jpg").delete()
+        assertEquals(1, kept.last().inputStream().use { backup.restore(it) })
+        assertEquals(listOf("Bibliothek 3"), library.allBooks().map { it.title })
+        assertTrue(covers.file("photo.jpg").exists())
+        // A place that cannot be written to costs the backup, not the app.
+        assertNull(backup.keepReplaced(inside, File(folder.newFile("no-folder"), "below"), at = 9_000))
+    }
+
+    @Test fun aBackupThatCouldNotBeWrittenIsNotCalledSaved() = runBlocking {
+        val backup = BackupManager(db, covers)
+        library.addBook(Book(title = "Emma"))
+        // Written to the end: saved.
+        val bytes = ByteArrayOutputStream()
+        assertTrue(backup.exportTo { bytes })
+        assertEquals(listOf("Emma"), backup.inspect(ByteArrayInputStream(bytes.toByteArray())).first!!.books.map { it.title })
+        // The place gives no way in, as a document provider may.
+        assertFalse(backup.exportTo { null })
+        // The place refuses, or is gone.
+        assertFalse(backup.exportTo { throw SecurityException("no permission for this document") })
+        assertFalse(backup.exportTo { throw java.io.FileNotFoundException("the drive is not there") })
+        // The place breaks off half way.
+        val broken = object : java.io.OutputStream() {
+            var room = 20
+            override fun write(b: Int) { if (room-- <= 0) throw java.io.IOException("No space left on device") }
+        }
+        assertFalse(backup.exportTo { broken })
     }
 
     @Test fun aZipOfTablesIsSearchedForTheBooks() = runBlocking {

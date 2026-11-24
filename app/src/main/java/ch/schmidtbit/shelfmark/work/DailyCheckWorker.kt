@@ -11,6 +11,7 @@ import androidx.work.WorkerParameters
 import ch.schmidtbit.shelfmark.ShelfmarkApp
 import ch.schmidtbit.shelfmark.data.repo.ServerSync
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -19,7 +20,16 @@ import java.util.concurrent.TimeUnit
  * a book that is due are said by the app's container, which hears of every such look.
  */
 class DailyCheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        check()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Nobody is looking, and nothing here is worth more than the app staying up. The next run tries again.
+        Result.success()
+    }
+
+    private suspend fun check(): Result {
         val app = applicationContext as? ShelfmarkApp ?: return Result.success()
         return when (val result = app.container.server.dailyCheck()) {
             is SyncResult.Done -> Result.success()

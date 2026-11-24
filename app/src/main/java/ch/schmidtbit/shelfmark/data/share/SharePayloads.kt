@@ -3,6 +3,7 @@ package ch.schmidtbit.shelfmark.data.share
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.BookShelf
+import ch.schmidtbit.shelfmark.data.model.FiniteFloat
 import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendBook
 import ch.schmidtbit.shelfmark.data.model.Goal
@@ -79,7 +80,7 @@ data class SharedBook(
     val available: Boolean = false,
     val status: ReadingStatus? = null,
     val shelves: List<String> = emptyList(),
-    val rating: Float = 0f,
+    @Serializable(with = FiniteFloat::class) val rating: Float = 0f,
     val spice: Int = 0,
     val review: String = "",
     val startedOn: Long? = null,
@@ -96,7 +97,7 @@ data class VaultPrefs(
     val profileName: String = "",
     val shareStatus: Boolean = true,
     val shareRatings: Boolean = true,
-    val minutesPerPage: Float = 1.5f,
+    @Serializable(with = FiniteFloat::class) val minutesPerPage: Float = 1.5f,
     val theme: String = "system",
     val customThemes: List<CustomTheme> = emptyList(),
     /** COVERS, SPINES or LIST. */

@@ -20,8 +20,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.Animatable
@@ -44,7 +51,16 @@ fun nextRating(rating: Float, star: Int): Float = when (rating) {
     else -> star.toFloat()
 }
 
-/** One to five stars with half steps. Read-only when [onChange] is null. */
+/** The rating a screen reader asked for, on the half star steps there are. */
+fun ratingFor(asked: Float): Float = ((asked.takeIf { it.isFinite() } ?: 0f).coerceIn(0f, 5f) * 2).roundToInt() / 2f
+
+/**
+ * One to five stars with half steps. Read-only when [onChange] is null.
+ *
+ * To a screen reader a bar that can be changed is one control with a value, which it reads
+ * out and can set (as it does with a slider), and each star besides is a button that says
+ * what tapping it gives. Nothing of that changes what is drawn or what a tap does.
+ */
 @Composable
 fun RatingBar(
     rating: Float,
@@ -55,7 +71,18 @@ fun RatingBar(
     val color = LocalShelfColors.current.star
     val empty = MaterialTheme.colorScheme.outline
     val description = stringResource(R.string.rating_description, formatRating(rating))
-    Row(modifier.semantics { contentDescription = description }, verticalAlignment = Alignment.CenterVertically) {
+    val label = stringResource(R.string.book_section_rating)
+    val adjust = if (onChange == null) {
+        Modifier.semantics { contentDescription = description }
+    } else {
+        Modifier.testTag("ratingBar").semantics {
+            contentDescription = label
+            stateDescription = description
+            progressBarRangeInfo = ProgressBarRangeInfo(rating.coerceIn(0f, 5f), 0f..5f, steps = 9)
+            setProgress { asked -> onChange(ratingFor(asked)); true }
+        }
+    }
+    Row(modifier.then(adjust), verticalAlignment = Alignment.CenterVertically) {
         for (star in 1..5) {
             val icon = when {
                 rating >= star -> Icons.Rounded.Star
@@ -63,8 +90,12 @@ fun RatingBar(
                 else -> Icons.Rounded.StarBorder
             }
             val tap = if (onChange != null) {
+                // A tap gives the whole star, then the half one, then none: the button says which.
+                val next = nextRating(rating, star)
+                val says = if (next == 0f) stringResource(R.string.rating_clear) else stringResource(R.string.rating_set, formatRating(next))
                 Modifier
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onChange(nextRating(rating, star)) }
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button) { onChange(next) }
+                    .semantics { contentDescription = says }
                     .padding(4.dp)
                     .testTag("star$star")
             } else {
@@ -86,11 +117,26 @@ fun SpiceBar(
     val hot = LocalShelfColors.current.spice
     val cold = MaterialTheme.colorScheme.outlineVariant
     val description = stringResource(R.string.spice_description, level)
-    Row(modifier.semantics { contentDescription = description }, verticalAlignment = Alignment.CenterVertically) {
+    val label = stringResource(R.string.spice_label)
+    val adjust = if (onChange == null) {
+        Modifier.semantics { contentDescription = description }
+    } else {
+        // The same two ways in for a screen reader as the stars have.
+        Modifier.testTag("spiceBar").semantics {
+            contentDescription = label
+            stateDescription = description
+            progressBarRangeInfo = ProgressBarRangeInfo(level.coerceIn(0, 5).toFloat(), 0f..5f, steps = 4)
+            setProgress { asked -> onChange((asked.takeIf { it.isFinite() } ?: 0f).roundToInt().coerceIn(0, 5)); true }
+        }
+    }
+    Row(modifier.then(adjust), verticalAlignment = Alignment.CenterVertically) {
         for (i in 1..5) {
             val tap = if (onChange != null) {
+                val next = if (level == i) 0 else i
+                val says = if (next == 0) stringResource(R.string.spice_clear) else stringResource(R.string.spice_set, next)
                 Modifier
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onChange(if (level == i) 0 else i) }
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button) { onChange(next) }
+                    .semantics { contentDescription = says }
                     .padding(4.dp)
                     .testTag("spice$i")
             } else {

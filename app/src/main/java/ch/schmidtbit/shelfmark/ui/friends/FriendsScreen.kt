@@ -56,10 +56,12 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.rounded.Cloud
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.model.Friend
 import ch.schmidtbit.shelfmark.data.model.FriendWithCount
 import ch.schmidtbit.shelfmark.data.repo.Settings
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.LocalImporter
+import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.components.SectionTitle
 import ch.schmidtbit.shelfmark.ui.lists.NameDialog
@@ -81,6 +83,7 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onLoans: () -> Unit, onOpenBoo
     val loans by container.social.loans.collectAsStateWithLifecycle(initialValue = emptyList())
     val library by container.library.books.collectAsStateWithLifecycle(initialValue = emptyList())
     var askName by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<Friend?>(null) }
     var shareAfterName by remember { mutableStateOf(false) }
     // The card for the server only shows where there is a server to talk to.
     val hasServer = container.server.available
@@ -196,12 +199,22 @@ fun FriendsScreen(onOpenFriend: (String) -> Unit, onLoans: () -> Unit, onOpenBoo
                 FriendCard(
                     friend,
                     onClick = { onOpenFriend(friend.friend.id) },
-                    onRemove = {
-                        container.launch {
-                            if (!container.server.removeFriend(friend.friend.id)) Toast.makeText(context, R.string.server_error_network, Toast.LENGTH_LONG).show()
-                        }
-                    },
+                    onRemove = { removing = friend.friend },
                 )
+            }
+        }
+    }
+
+    removing?.let { friend ->
+        ConfirmDelete(
+            title = stringResource(R.string.friends_remove_title, friend.name),
+            text = stringResource(R.string.friends_remove_text),
+            confirm = stringResource(R.string.friends_remove),
+            onDismiss = { removing = null },
+        ) {
+            removing = null
+            container.launch {
+                if (!container.server.removeFriend(friend.id)) Toast.makeText(context, R.string.server_error_network, Toast.LENGTH_LONG).show()
             }
         }
     }

@@ -56,6 +56,10 @@ object LoanRules {
      * saw it ([before], null when it never did). The server keeps no history, so a step is
      * told by the state it leads to. Where two steps lead to the same state, the state seen
      * before decides.
+     *
+     * A friendship that ended is told the same way: its open questions come back as taken
+     * back or as answered with a no, and whoever did not end it hears of each like of any
+     * other step of the other side.
      */
     fun news(loan: Loan, before: Loan?): LoanNewsKind? {
         val dueMoved = before != null && before.dueOn != loan.dueOn

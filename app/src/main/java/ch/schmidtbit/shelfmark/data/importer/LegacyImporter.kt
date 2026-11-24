@@ -12,6 +12,8 @@ import ch.schmidtbit.shelfmark.data.model.ReadingSession
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
+import ch.schmidtbit.shelfmark.util.Numbers
+import ch.schmidtbit.shelfmark.util.finite
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -100,7 +102,7 @@ object LegacyImporter {
                 description = b.str("description"),
                 coverUrl = b.str("cover_url"),
                 status = status,
-                rating = (b.double("rating") ?: 0.0).toFloat().coerceIn(0f, 5f),
+                rating = (b.double("rating") ?: 0.0).toFloat().finite().coerceIn(0f, 5f),
                 review = b.str("review"),
                 startedOn = lastRead?.day("start"),
                 finishedOn = lastRead?.day("end"),
@@ -110,7 +112,7 @@ object LegacyImporter {
                 genres = b.arr("genres").orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }.joinToString(", "),
                 tags = b.arr("tags").orEmpty().mapNotNull { (it as? JsonPrimitive)?.longOrNull?.let(tagNames::get) }.filter { it.isNotBlank() }.joinToString(", "),
                 series = b.str("series"),
-                seriesPosition = (b.double("series_pos") ?: 0.0).toFloat(),
+                seriesPosition = (b.double("series_pos") ?: 0.0).toFloat().finite().takeIf { it in 0f..Numbers.MAX_SERIES } ?: 0f,
                 addedAt = b.millis("added", zone) ?: System.currentTimeMillis(),
                 updatedAt = b.millis("updated", zone) ?: System.currentTimeMillis(),
             )
@@ -122,7 +124,7 @@ object LegacyImporter {
                     startedAt = e.millis("when", zone) ?: System.currentTimeMillis(),
                     startPage = e.int("start"),
                     endPage = e.int("end"),
-                    minutes = (e.double("minutes") ?: 0.0).toFloat(),
+                    minutes = (e.double("minutes") ?: 0.0).toFloat().finite().coerceAtLeast(0f),
                     note = e.str("note"),
                 )
             }

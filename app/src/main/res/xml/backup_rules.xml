@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. Nothing of the app is backed up: every place it keeps data in is left out. -->
 <full-backup-content>
-    <include domain="database" path="." />
-    <include domain="file" path="covers/" />
-    <include domain="file" path="datastore/" />
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
 </full-backup-content>

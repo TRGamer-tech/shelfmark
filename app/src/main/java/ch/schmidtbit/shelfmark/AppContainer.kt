@@ -22,12 +22,15 @@ import ch.schmidtbit.shelfmark.data.repo.LibraryRepository
 import ch.schmidtbit.shelfmark.data.repo.ServerSync
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.server.HttpPoster
+import ch.schmidtbit.shelfmark.data.server.LazyPoster
 import ch.schmidtbit.shelfmark.data.server.OkHttpPoster
 import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.work.Notifier
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,7 +42,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
 import okhttp3.OkHttpClient
@@ -100,6 +105,12 @@ class AppContainer(
         }
     }
 
+    /** How the server is reached: with every kind of call, a picture as well as a question. */
+    val poster: HttpPoster = serverPoster ?: LazyPoster { OkHttpPoster(httpClient) }
+
+    /** Where a library is put aside before the reader's choice replaces it as a whole. */
+    val replacedDir = java.io.File(appContext.filesDir, "replaced")
+
     /** The account: one library on every device and on the website, and friends. Does nothing until somebody signs in. */
     val server = ServerSync(
         db = database,
@@ -108,8 +119,9 @@ class AppContainer(
         backup = backup,
         covers = covers,
         config = serverConfig,
-        poster = serverPoster ?: HttpPoster { url, headers, body -> OkHttpPoster(httpClient).post(url, headers, body) },
+        poster = poster,
         baseFile = java.io.File(appContext.filesDir, "vault_base.json"),
+        replacedDir = replacedDir,
         website = website,
         // Whoever looked at the server (the screen, a tap, the check in the background),
         // what a friend did to a loan is said in one place.
@@ -125,9 +137,33 @@ class AppContainer(
      * Scope for writes started from the UI. It outlives any screen, so a save is not
      * cut short when the user navigates away right after tapping the button.
      */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            // Work that goes on behind the screens has nobody to report to. What it trips over
+            // is written down, and the app stays open with everything the reader was doing.
+            CoroutineExceptionHandler { _, problem -> runCatching { android.util.Log.e("Shelfmark", "Work in the background failed", problem) } },
+    )
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
+
+    // How many jobs are running that change many books in a row, and a sign for when one of them ends.
+    private val bulkJobs = MutableStateFlow(0)
+    private val bulkEnded = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * Runs a job that changes many books one after the other (an import, the search for
+     * covers). The library goes to the account once when it is through, not after every
+     * book: each time would send the whole library again.
+     */
+    suspend fun <T> bulk(job: suspend () -> T): T {
+        bulkJobs.update { it + 1 }
+        try {
+            return job()
+        } finally {
+            bulkJobs.update { it - 1 }
+            bulkEnded.tryEmit(Unit)
+        }
+    }
 
     init {
         // A change to the library goes to the account a few seconds after the last one, so that
@@ -136,9 +172,17 @@ class AppContainer(
             scope.launch {
                 merge(
                     database.invalidationTracker.createFlow("books", "shelves", "book_shelf", "quotes", "sessions", "notes", "goals", "purchases", "ornaments", emitInitialState = false).map { },
-                    settings.settings.map { listOf(it.profileName, it.shareStatus, it.shareRatings, it.minutesPerPage, it.theme, it.customThemes, it.viewMode, it.sort, it.motion) }.distinctUntilChanged().drop(1).map { },
-                ).debounce(4_000).collect {
-                    if (settings.current().signedIn) remember(server.sync())
+                    settings.settings.map { it.vaultPrefs() }.distinctUntilChanged().drop(1).map { },
+                    bulkEnded,
+                ).debounce(AUTO_SYNC_MS).collect {
+                    // One sync that goes wrong must not be the last one that is tried.
+                    try {
+                        if (bulkJobs.value == 0 && settings.current().signedIn) remember(server.sync())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("Shelfmark", "The sync after a change failed", e)
+                    }
                 }
             }
         }
@@ -160,7 +204,14 @@ class AppContainer(
         val now = android.os.SystemClock.elapsedRealtime()
         if (!force && lastRefresh != 0L && now - lastRefresh < WATCH_MS) return SyncResult.Off
         lastRefresh = now
-        return remember(server.dailyCheck())
+        return try {
+            remember(server.dailyCheck())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The look once a minute goes on, whatever one of them ran into.
+            SyncResult.Failed(ServerSync.UNEXPECTED)
+        }
     }
 
     /**
@@ -196,14 +247,18 @@ class AppContainer(
     /** Goes through every book without a cover, e.g. after importing a list from another app. */
     fun findMissingCovers() {
         if (coverJob.value != null) return
+        // Taken at once, so that a second tap does not start a second search.
+        coverJob.value = 0 to 0
         launch {
-            val books = library.booksWithoutCover()
-            coverJob.value = 0 to books.size
             try {
-                books.forEachIndexed { index, book ->
-                    val url = runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull()
-                    if (url != null) library.modify(book.id) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it }
-                    coverJob.value = (index + 1) to books.size
+                bulk {
+                    val books = library.booksWithoutCover()
+                    coverJob.value = 0 to books.size
+                    books.forEachIndexed { index, book ->
+                        val url = runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull()
+                        if (url != null) library.modify(book.id) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it }
+                        coverJob.value = (index + 1) to books.size
+                    }
                 }
             } finally {
                 coverJob.value = null
@@ -220,7 +275,10 @@ class AppContainer(
     /** The last catalogue hit the user looked at, kept for the preview sheet across rotation. */
     var lastPreview: RemoteBook? = null
 
-    private companion object {
-        const val WATCH_MS = 60_000L
+    companion object {
+        private const val WATCH_MS = 60_000L
+
+        /** How long after the last change the library goes to the account. */
+        const val AUTO_SYNC_MS = 4_000L
     }
 }

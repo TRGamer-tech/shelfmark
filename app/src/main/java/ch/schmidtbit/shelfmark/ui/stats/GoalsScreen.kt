@@ -57,6 +57,7 @@ import ch.schmidtbit.shelfmark.data.stats.GoalMath
 import ch.schmidtbit.shelfmark.data.stats.GoalProgress
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.components.BackButton
+import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import ch.schmidtbit.shelfmark.ui.components.DayPickerDialog
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.ui.detail.EmptyHint
@@ -95,6 +96,13 @@ fun GoalsScreen(onBack: () -> Unit) {
     val today = remember { LocalDate.now() }
     val progress = remember(goals, books, sessions) { goals.orEmpty().filter { !it.archived }.map { GoalMath.progress(it, books, sessions, today) } }
     var editing by remember { mutableStateOf<Goal?>(null) }
+    var deleting by remember { mutableStateOf<Goal?>(null) }
+    deleting?.let { goal ->
+        ConfirmDelete(stringResource(R.string.delete_goal_title), onDismiss = { deleting = null }) {
+            deleting = null
+            container.launch { container.library.deleteGoal(goal.id) }
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.goals_title)) }, navigationIcon = { BackButton(onBack) }) },
@@ -112,7 +120,7 @@ fun GoalsScreen(onBack: () -> Unit) {
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)) {
             if (goals != null && progress.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.goals_empty)) }
             items(progress, key = { it.goal.id }) { item ->
-                GoalCard(item, onEdit = { editing = item.goal }, onDelete = { container.launch { container.library.deleteGoal(item.goal.id) } })
+                GoalCard(item, onEdit = { editing = item.goal }, onDelete = { deleting = item.goal })
             }
         }
     }
@@ -176,7 +184,7 @@ private fun GoalCard(progress: GoalProgress, onEdit: () -> Unit, onDelete: () ->
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = onDelete) {
+            IconButton(onClick = onDelete, modifier = Modifier.testTag("deleteGoal")) {
                 Icon(Icons.Rounded.Delete, contentDescription = stringResource(R.string.action_delete), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

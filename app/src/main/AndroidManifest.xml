@@ -9,9 +9,14 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!--
+        No backup by the system and no transfer to a new phone: both would copy the library and
+        the sign-in to a place nobody chose. The library travels with the account, or in a backup
+        file the reader saves. The two rule files say the same for the Android versions that ask them.
+    -->
     <application
         android:name=".ShelfmarkApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

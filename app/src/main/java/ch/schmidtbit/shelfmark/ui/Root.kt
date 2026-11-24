@@ -219,7 +219,14 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) slideOutVertically(tween(TRANSITION_MS)) { it / 36 } else ExitTransition.None },
         ) {
             composable<LibraryRoute> {
-                LibraryScreen(libraryViewModel, onOpenBook = { nav.navigate(BookRoute(it)) }, onAdd = { adding = true }, onSettings = { nav.navigate(SettingsRoute) })
+                LibraryScreen(
+                    libraryViewModel,
+                    onOpenBook = { nav.navigate(BookRoute(it)) },
+                    onAdd = { adding = true },
+                    onSettings = { nav.navigate(SettingsRoute) },
+                    // The account, with the form for signing in, is at the top of the friends' tab.
+                    onSignIn = { openTab(FriendsRoute) },
+                )
             }
             composable<ListsRoute> {
                 ListsScreen(libraryViewModel) { filter ->
@@ -397,6 +404,7 @@ private fun ImportDialogs(nav: NavHostController) {
                         RejectReason.OWN_LIBRARY -> R.string.import_own_library
                         RejectReason.NEWER_VERSION -> R.string.import_newer_version
                         RejectReason.OLD_REQUEST -> R.string.import_old_request
+                        RejectReason.CONNECTED_FRIEND -> R.string.import_connected_friend
                     },
                 ),
             )

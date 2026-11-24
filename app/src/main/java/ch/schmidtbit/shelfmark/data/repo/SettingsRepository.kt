@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import ch.schmidtbit.shelfmark.data.share.VaultPrefs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -61,8 +62,18 @@ data class Settings(
     val loansSeen: Boolean = false,
     /** Epoch day of the last daily check that keeps the server awake. */
     val lastPingDay: Long = 0,
+    /**
+     * The sign-in on this device ended without the reader ending it (the server would not
+     * renew it). The shelf says so until the reader puts the notice away or signs in again:
+     * what changes here from now on stays here, and nobody should find that out by chance.
+     */
+    val signedOutNotice: Boolean = false,
 ) {
     val signedIn: Boolean get() = refreshToken.isNotBlank()
+
+    /** The settings that belong to the person and travel with the account. */
+    fun vaultPrefs(): VaultPrefs =
+        VaultPrefs(profileName, shareStatus, shareRatings, minutesPerPage, theme, customThemes, viewMode.name, sort.name, motion)
 
     companion object {
         const val THEME_SYSTEM = "system"
@@ -104,7 +115,9 @@ data class TimerState(
 }
 
 class SettingsRepository(private val store: DataStore<Preferences>) {
-    val settings: Flow<Settings> = store.data.map { p ->
+    val settings: Flow<Settings> = store.data.map(::read)
+
+    private fun read(p: Preferences): Settings =
         Settings(
             theme = p[THEME] ?: Settings.THEME_SYSTEM,
             viewMode = p[VIEW].toEnum(ViewMode.COVERS),
@@ -113,7 +126,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             userId = p[USER_ID].orEmpty(),
             shareStatus = p[SHARE_STATUS] ?: true,
             shareRatings = p[SHARE_RATINGS] ?: true,
-            minutesPerPage = (p[SPEED] ?: Settings.DEFAULT_SPEED).coerceIn(0.3f, 10f),
+            minutesPerPage = speed(p[SPEED] ?: Settings.DEFAULT_SPEED),
             onboarded = p[ONBOARDED] ?: false,
             timer = p[TIMER_BOOK]?.let { bookId ->
                 TimerState(
@@ -138,8 +151,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             lastSyncAt = p[LAST_SYNC] ?: 0,
             loansSeen = p[LOANS_SEEN] ?: false,
             lastPingDay = p[LAST_PING] ?: 0,
+            signedOutNotice = p[SIGNED_OUT_NOTICE] ?: false,
         )
-    }
 
     suspend fun current(): Settings = settings.first()
 
@@ -166,6 +179,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             p[REFRESH_TOKEN] = refreshToken
             p[TOKEN_EXPIRES] = expiresAt
             if (email.isNotBlank()) p[ACCOUNT_EMAIL] = email
+            // Signed in again: whatever was said about being signed out is over.
+            if (refreshToken.isNotBlank()) p.remove(SIGNED_OUT_NOTICE)
             if (userId != null) {
                 p[USER_ID] = userId
                 listOf(FRIEND_CODE, HELLO_NAME, PUBLISHED_HASH, VAULT_HASH, LAST_SYNC).forEach { p.remove(it) }
@@ -201,20 +216,34 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         }
     }
 
-    /** The settings that travel with the account. */
-    suspend fun applyPrefs(prefs: ch.schmidtbit.shelfmark.data.share.VaultPrefs) {
+    /** Says, or stops saying, that the sign-in on this device ended by itself. */
+    suspend fun setSignedOutNotice(shown: Boolean) {
+        store.edit { p -> if (shown) p[SIGNED_OUT_NOTICE] = true else p.remove(SIGNED_OUT_NOTICE) }
+    }
+
+    /**
+     * Takes over the settings that travel with the account. With [onlyIf] given, only while
+     * they are still what they were when that was read: a setting the reader changed in the
+     * meantime is not run over. Returns the settings as they stand afterwards, or null
+     * when they had changed and nothing was written.
+     */
+    suspend fun applyPrefs(prefs: VaultPrefs, onlyIf: VaultPrefs? = null): VaultPrefs? {
+        var applied: VaultPrefs? = null
         store.edit { p ->
+            if (onlyIf != null && read(p).vaultPrefs() != onlyIf) return@edit
             p[NAME] = prefs.profileName
             p[SHARE_STATUS] = prefs.shareStatus
             p[SHARE_RATINGS] = prefs.shareRatings
-            p[SPEED] = prefs.minutesPerPage.coerceIn(0.3f, 10f)
+            p[SPEED] = speed(prefs.minutesPerPage)
             p[THEME] = prefs.theme
             p[CUSTOM_THEMES] = themeJson.encodeToString(ListSerializer(CustomTheme.serializer()), prefs.customThemes)
             // Words this app does not know (from a newer one, say) leave things as they are.
             enumValues<ViewMode>().firstOrNull { it.name == prefs.viewMode }?.let { p[VIEW] = it.name }
             enumValues<SortOrder>().firstOrNull { it.name == prefs.sort }?.let { p[SORT] = it.name }
             p[MOTION] = prefs.motion
+            applied = read(p).vaultPrefs()
         }
+        return applied
     }
 
     suspend fun setFriendCode(code: String) { store.edit { it[FRIEND_CODE] = code } }
@@ -233,7 +262,10 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             it[SHARE_RATINGS] = ratings
         }
     }
-    suspend fun setMinutesPerPage(value: Float) { store.edit { it[SPEED] = value.coerceIn(0.3f, 10f) } }
+    suspend fun setMinutesPerPage(value: Float) { store.edit { it[SPEED] = speed(value) } }
+
+    // A speed that is no number (from a damaged file, say) is the speed nobody has set.
+    private fun speed(value: Float): Float = (value.takeIf { it.isFinite() } ?: Settings.DEFAULT_SPEED).coerceIn(0.3f, 10f)
     suspend fun setOnboarded() { store.edit { it[ONBOARDED] = true } }
 
     /** Adds the theme, or replaces the one with the same id. */
@@ -302,6 +334,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val LAST_SYNC = longPreferencesKey("last_sync")
         val LOANS_SEEN = booleanPreferencesKey("loans_seen")
         val LAST_PING = longPreferencesKey("last_ping_day")
+        val SIGNED_OUT_NOTICE = booleanPreferencesKey("signed_out_notice")
         val themeJson = Json { ignoreUnknownKeys = true }
     }
 }

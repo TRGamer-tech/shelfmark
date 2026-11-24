@@ -19,7 +19,12 @@ sealed interface ImportResult {
     data class Rejected(val reason: RejectReason) : ImportResult
 }
 
-enum class RejectReason { NOT_SHELFMARK, OWN_LIBRARY, NEWER_VERSION, OLD_REQUEST }
+enum class RejectReason {
+    NOT_SHELFMARK, OWN_LIBRARY, NEWER_VERSION, OLD_REQUEST,
+
+    /** A library file of somebody whose shelf comes through the server. */
+    CONNECTED_FRIEND,
+}
 
 /** Friends' shared libraries, and the loans between friends as the server last told them. */
 class SocialRepository(private val db: AppDatabase, private val settings: SettingsRepository) {
@@ -58,11 +63,19 @@ class SocialRepository(private val db: AppDatabase, private val settings: Settin
         return import(envelope)
     }
 
-    suspend fun import(envelope: Envelope): ImportResult {
+    /**
+     * Takes in what a Shelfmark file or the server brought. [fromServer] says that the server
+     * handed it over, which vouches for whose library it is. A file vouches for nothing:
+     * anybody can write any id into one.
+     */
+    suspend fun import(envelope: Envelope, fromServer: Boolean = false): ImportResult {
         if (envelope.v > Envelope.VERSION) return ImportResult.Rejected(RejectReason.NEWER_VERSION)
         val me = settings.ensureUserId()
         envelope.library?.let { library ->
             if (library.ownerId == me) return ImportResult.Rejected(RejectReason.OWN_LIBRARY)
+            // The shelf of a friend who is connected through the server is what the server says.
+            // A file with their id would put other books on it, and loans are asked from that shelf.
+            if (!fromServer && db.social().getFriend(library.ownerId)?.online == true) return ImportResult.Rejected(RejectReason.CONNECTED_FRIEND)
             val friend = ShareCodec.toFriend(library)
             val books = ShareCodec.toFriendBooks(library)
             db.withTransaction {

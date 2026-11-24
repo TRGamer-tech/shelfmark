@@ -28,6 +28,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -44,6 +45,9 @@ data class ServerConfig(val url: String, val key: String) {
 
     /** The address under which everybody can see that photo. */
     fun coverAddress(path: String): String = url.trimEnd('/') + "/storage/v1/object/public/$COVERS/" + path
+
+    /** Where the storage is asked what a folder holds. */
+    val coverList: String get() = url.trimEnd('/') + "/storage/v1/object/list/$COVERS"
 
     /**
      * The project key always travels as "apikey". "Authorization" carries the token of the
@@ -77,7 +81,28 @@ fun interface HttpPoster {
     suspend fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpAnswer = HttpAnswer(501, "")
 }
 
+/**
+ * Passes every call on to the poster that [make] builds, which it does when the first
+ * call is made: an HTTP client is not needed to start the app, only to talk to a server.
+ */
+class LazyPoster(make: () -> HttpPoster) : HttpPoster {
+    private val real by lazy(make)
+
+    override suspend fun post(url: String, headers: Map<String, String>, body: String): HttpAnswer = real.post(url, headers, body)
+
+    override suspend fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpAnswer = real.send(method, url, headers, body)
+}
+
 class OkHttpPoster(private val client: OkHttpClient) : HttpPoster {
+    // A whole library, or a picture, over a slow line takes longer than a question and its answer.
+    private val patient: OkHttpClient by lazy {
+        client.newBuilder()
+            .callTimeout(LARGE_SECONDS, TimeUnit.SECONDS)
+            .readTimeout(LARGE_SECONDS, TimeUnit.SECONDS)
+            .writeTimeout(LARGE_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     override suspend fun post(url: String, headers: Map<String, String>, body: String): HttpAnswer =
         run(Request.Builder().url(url).post(body.toRequestBody(JSON)).apply { headers.forEach { (k, v) -> header(k, v) } }.build())
 
@@ -86,8 +111,11 @@ class OkHttpPoster(private val client: OkHttpClient) : HttpPoster {
         return run(Request.Builder().url(url).method(method, content).apply { headers.forEach { (k, v) -> header(k, v) } }.build())
     }
 
+    /** The call for [request], with the time it is given: more for what carries a library or a picture. */
+    internal fun callFor(request: Request): Call = (if (isLarge(request.url.encodedPath)) patient else client).newCall(request)
+
     private suspend fun run(request: Request): HttpAnswer = suspendCancellableCoroutine { cont ->
-        val call = client.newCall(request)
+        val call = callFor(request)
         cont.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -106,8 +134,16 @@ class OkHttpPoster(private val client: OkHttpClient) : HttpPoster {
         })
     }
 
-    private companion object {
-        val JSON = "application/json; charset=utf-8".toMediaType()
+    companion object {
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /** How long a call that carries a whole library, or a picture, may take. */
+        const val LARGE_SECONDS = 60L
+
+        // The vault in both directions, what friends get, what friends give, and the cover photos.
+        private val LARGE = listOf("/rpc/shelfmark_vault_", "/rpc/shelfmark_publish", "/rpc/shelfmark_sync", "/storage/v1/object/")
+
+        fun isLarge(path: String): Boolean = LARGE.any { it in path }
     }
 }
 
@@ -252,7 +288,27 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
     }
 
     suspend fun deleteCover(path: String) {
-        poster.send("DELETE", config.cover(path), config.headers(token ?: throw ServerException("signed_out", 0)), null)
+        val answer = poster.send("DELETE", config.cover(path), config.headers(token ?: throw ServerException("signed_out", 0)), null)
+        if (answer.code !in 200..299) throw ServerException("remove_${answer.code}", answer.code)
+    }
+
+    /**
+     * The names of all the pictures in the folder of [userId], which has to be the caller's own:
+     * the storage shows everybody their own folder and nothing of anybody else's.
+     */
+    suspend fun listCovers(userId: String): List<String> {
+        val headers = config.headers(token ?: throw ServerException("signed_out", 0))
+        val names = mutableListOf<String>()
+        // A page at a time, until one comes back that is not full. The bound is for a server that never stops.
+        for (page in 0 until LIST_PAGES) {
+            val asked = buildJsonObject { put("prefix", userId); put("limit", LIST_PAGE); put("offset", page * LIST_PAGE) }
+            val answer = poster.post(config.coverList, headers, asked.toString())
+            if (answer.code !in 200..299) throw ServerException("list_${answer.code}", answer.code)
+            val entries = runCatching { json.parseToJsonElement(answer.body) as? JsonArray }.getOrNull() ?: throw ServerException("bad_answer", answer.code)
+            names += entries.mapNotNull { (it as? JsonObject)?.text("name")?.takeIf(String::isNotBlank) }
+            if (entries.size < LIST_PAGE) break
+        }
+        return names
     }
 
     private suspend fun call(function: String, arguments: JsonObject, signedIn: Boolean = true): JsonElement {
@@ -283,6 +339,8 @@ class ServerApi(private val config: ServerConfig, private val poster: HttpPoster
 
     companion object {
         private const val PREFIX = "shelfmark:"
+        private const val LIST_PAGE = 100
+        private const val LIST_PAGES = 200
         private val json = Json { ignoreUnknownKeys = true }
 
         private fun JsonObject.text(name: String): String = (get(name) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content.orEmpty()
@@ -360,8 +418,12 @@ class AuthApi(private val config: ServerConfig, private val poster: HttpPoster, 
     suspend fun refresh(refreshToken: String): Session =
         session(post("token?grant_type=refresh_token", buildJsonObject { put("refresh_token", refreshToken) })) ?: throw AuthException("bad_answer", 200)
 
+    /**
+     * Ends the sign-in of this device. Supabase would end every sign-in of the account when it
+     * is not told otherwise, and with it the one on the reader's other phone and in their browser.
+     */
     suspend fun signOut(accessToken: String) {
-        post("logout", buildJsonObject { }, accessToken)
+        post("logout?scope=local", buildJsonObject { }, accessToken)
     }
 
     /** Has Supabase send a mail with a link for choosing a new password. */

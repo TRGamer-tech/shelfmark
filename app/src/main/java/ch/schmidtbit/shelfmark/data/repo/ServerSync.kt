@@ -19,7 +19,7 @@ import ch.schmidtbit.shelfmark.data.server.SyncAnswer
 import ch.schmidtbit.shelfmark.data.server.VaultAnswer
 import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
-import ch.schmidtbit.shelfmark.data.share.VaultPrefs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -97,6 +97,11 @@ class ServerSync(
      * whatever they do with its result, so that nothing is said twice and nothing is lost.
      */
     private val announce: (SyncResult.Done) -> Unit = {},
+    /**
+     * Where a library is put aside before it is replaced as a whole, which only happens when
+     * an account and a device that both hold books meet and the reader says which one counts.
+     */
+    private val replacedDir: File? = null,
 ) {
     val status = MutableStateFlow(SyncStatus())
 
@@ -109,17 +114,15 @@ class ServerSync(
 
     /** Signs in and brings this device in step with the account. */
     suspend fun signIn(email: String, password: String): SyncResult = withContext(work) {
-        signInNow(email, password)
+        safely({ SyncResult.Failed(it) }) { signInNow(email, password) }
     }
 
     private suspend fun signInNow(email: String, password: String): SyncResult {
         val config = config ?: return SyncResult.Failed(NO_SERVER)
         val session = try {
             AuthApi(config, poster, now).signIn(email, password)
-        } catch (e: AuthException) {
-            return SyncResult.Failed(e.reason)
-        } catch (e: IOException) {
-            return SyncResult.Failed(NETWORK)
+        } catch (e: Exception) {
+            return SyncResult.Failed(reasonOf(e))
         }
         welcome(session)
         return sync()
@@ -130,7 +133,7 @@ class ServerSync(
      * mail first: nobody is signed in then, and signing in works once that is done.
      */
     suspend fun signUp(email: String, password: String): SyncResult? = withContext(work) {
-        signUpNow(email, password)
+        safely<SyncResult?>({ SyncResult.Failed(it) }) { signUpNow(email, password) }
     }
 
     private suspend fun signUpNow(email: String, password: String): SyncResult? {
@@ -138,10 +141,8 @@ class ServerSync(
         val session = try {
             // The link in the confirmation mail should end on the page that says "confirmed".
             AuthApi(config, poster, now).signUp(email, password, website.takeIf { it.startsWith("http") }?.let { "$it/confirmed" }) ?: return null
-        } catch (e: AuthException) {
-            return SyncResult.Failed(e.reason)
-        } catch (e: IOException) {
-            return SyncResult.Failed(NETWORK)
+        } catch (e: Exception) {
+            return SyncResult.Failed(reasonOf(e))
         }
         welcome(session)
         return sync()
@@ -165,15 +166,13 @@ class ServerSync(
         return try {
             AuthApi(config, poster, now).recover(email)
             null
-        } catch (e: AuthException) {
-            e.reason
-        } catch (e: IOException) {
-            NETWORK
+        } catch (e: Exception) {
+            reasonOf(e)
         }
     }
 
     /** Signs out on this device. The library stays here, and it stays on the account. */
-    suspend fun signOut() = withContext(work) { signOutNow() }
+    suspend fun signOut() = withContext(work) { safely({ }) { signOutNow() } }
 
     private suspend fun signOutNow() = mutex.withLock {
         val s = settings.current()
@@ -186,20 +185,24 @@ class ServerSync(
     }
 
     /** Deletes the account and everything of it on the server. This device keeps its library. False when that failed. */
-    suspend fun deleteAccount(): Boolean = withContext(work) { deleteAccountNow() }
+    suspend fun deleteAccount(): Boolean = withContext(work) { safely({ false }) { deleteAccountNow() } }
 
     private suspend fun deleteAccountNow(): Boolean = mutex.withLock {
         val config = config ?: return@withLock false
         try {
             val token = token() ?: return@withLock false
             val api = ServerApi(config, poster, token)
-            // The cover photos first, while there is still somebody who may remove them.
-            val mine = config.coverAddress(settings.current().userId + "/")
-            db.books().all().filter { it.coverUrl.startsWith(mine) }.forEach { book ->
-                runCatching { api.deleteCover(book.coverUrl.removePrefix(config.coverAddress(""))) }
-            }
+            // The cover photos first, while there is still somebody who may remove them: everything
+            // in the account's own folder, also the pictures of books that are long gone. What the
+            // folder does not name (a server that cannot list) is at least what the books still show.
+            val me = settings.current().userId
+            val listed = quietly { api.listCovers(me).map { "$me/$it" } }.orEmpty()
+            val shown = db.books().all().map { it.coverUrl }.filter { it.startsWith(config.coverAddress("$me/")) }.map { it.removePrefix(config.coverAddress("")) }
+            // A picture that will not go must not keep the account from going.
+            (listed + shown).distinct().forEach { path -> quietly { api.deleteCover(path) } }
             api.deleteAccount()
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            reasonOf(e)
             return@withLock false
         }
         forget()
@@ -232,13 +235,48 @@ class ServerSync(
             // the password was changed, the account deleted, or the session ended elsewhere.
             if (e.reason == "over_request_rate_limit" || e.status >= 500) throw e
             forget()
+            // The reader did not do this, and may not be looking: the shelf says that it happened.
+            settings.setSignedOutNotice(true)
             null
         }
     }
 
+    /**
+     * What went wrong, as a reason that can be shown. Whatever happens while this class is
+     * at work ends here as a failed step with a reason: it never takes the app down.
+     */
+    private fun reasonOf(e: Exception): String = when (e) {
+        is CancellationException -> throw e
+        is ServerException -> e.reason
+        is AuthException -> e.reason
+        is IOException -> NETWORK
+        else -> {
+            runCatching { android.util.Log.w("Shelfmark", "The sync stopped on something unexpected", e) }
+            UNEXPECTED
+        }
+    }
+
+    /** Runs one of the things this class offers. What it throws becomes what [failed] makes of the reason. */
+    private suspend fun <T> safely(failed: (String) -> T, step: suspend () -> T): T = try {
+        step()
+    } catch (e: Exception) {
+        failed(reasonOf(e))
+    }
+
+    /** Does something that may fail without anything depending on it. Null when it failed. */
+    private suspend fun <T> quietly(step: suspend () -> T): T? = try {
+        step()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
     // ---- keeping everything in step ----
 
-    suspend fun sync(): SyncResult = withContext(work) { syncNow() }
+    suspend fun sync(): SyncResult = withContext(work) {
+        safely({ reason -> status.value = SyncStatus(error = reason); SyncResult.Failed(reason) }) { syncNow() }
+    }
 
     private suspend fun syncNow(): SyncResult = mutex.withLock {
         val config = config ?: return@withLock SyncResult.Off
@@ -254,34 +292,63 @@ class ServerSync(
                 settings.setSession("", s.refreshToken, 0, s.accountEmail)
                 exchange(config)
             }
-        } catch (e: ServerException) {
-            SyncResult.Failed(e.reason)
-        } catch (e: IOException) {
-            SyncResult.Failed(NETWORK)
+        } catch (e: Exception) {
+            SyncResult.Failed(reasonOf(e))
         }
         status.value = SyncStatus(error = (result as? SyncResult.Failed)?.reason)
         result
     }
 
     /** Answers the question of [SyncResult.Choose] and goes on from there. */
-    suspend fun choose(keep: Keep): SyncResult = withContext(work) { chooseNow(keep) }
+    suspend fun choose(keep: Keep): SyncResult = withContext(work) { safely({ SyncResult.Failed(it) }) { chooseNow(keep) } }
 
     private suspend fun chooseNow(keep: Keep): SyncResult {
         val config = config ?: return SyncResult.Off
         val failed = mutex.withLock {
             try {
                 val api = ServerApi(config, poster, token() ?: return@withLock SyncResult.Off)
-                val remote = api.vaultPull(0)
-                val theirs = read(remote, known = 0)
-                if (keep == Keep.ACCOUNT && theirs != null) adopt(theirs, remote.revision) else push(api, snapshot(), remote.revision)
+                replaceOne(api, keep)
                 null
-            } catch (e: ServerException) {
-                SyncResult.Failed(e.reason)
-            } catch (e: IOException) {
-                SyncResult.Failed(NETWORK)
+            } catch (e: Exception) {
+                SyncResult.Failed(reasonOf(e))
             }
         }
         return failed ?: sync()
+    }
+
+    /**
+     * One of two libraries is replaced as a whole here, and only here. Whichever one it is,
+     * it is put aside as a backup file first, so that one tap cannot lose it for good.
+     */
+    private suspend fun replaceOne(api: ServerApi, keep: Keep) {
+        repeat(TRIES) {
+            val remote = api.vaultPull(0)
+            val theirs = read(remote, known = 0)
+            val local = snapshot()
+            try {
+                if (keep == Keep.ACCOUNT && theirs != null) {
+                    // Put aside first: a phone that is switched off in between has lost nothing.
+                    val aside = putAside(local)
+                    try {
+                        adopt(theirs, remote.revision, seen = local)
+                    } catch (e: ChangedMeanwhile) {
+                        aside?.delete()
+                        throw e
+                    }
+                } else {
+                    if (theirs != null) putAside(theirs)
+                    push(api, local, remote.revision)
+                }
+                return
+            } catch (e: ChangedMeanwhile) {
+                // What is put aside has to be what is replaced. Once more, with the library as it is now.
+            }
+        }
+    }
+
+    private suspend fun putAside(library: BackupPayload): File? {
+        val dir = replacedDir ?: return null
+        return if (library.isEmpty()) null else backup.keepReplaced(library, dir, now())
     }
 
     private suspend fun exchange(config: ServerConfig): SyncResult {
@@ -349,7 +416,11 @@ class ServerSync(
                 if (e.reason == "expired") throw e
                 continue
             }
-            db.books().update(book.copy(coverUrl = address, updatedAt = now()))
+            // Onto the book as it is now: the reader may have changed it while the picture was on its way.
+            db.withTransaction {
+                val current = db.books().get(book.id)
+                if (current != null && current.coverPath == book.coverPath) db.books().update(current.copy(coverUrl = address, updatedAt = now()))
+            }
         }
     }
 
@@ -358,16 +429,26 @@ class ServerSync(
      * null when that is done, or a question for the user.
      */
     private suspend fun vault(api: ServerApi): SyncResult? {
-        repeat(4) {
+        var conflict = false
+        repeat(TRIES) {
             try {
                 return vaultOnce(api)
             } catch (e: ServerException) {
                 // Somebody else saved between our look and our save. Look again.
                 if (e.reason != "conflict") throw e
+                conflict = true
+            } catch (e: ChangedMeanwhile) {
+                // The reader changed something between our look and our write. Look again, with that in it.
+                conflict = false
             }
         }
-        throw ServerException("conflict", 400)
+        if (conflict) throw ServerException("conflict", 400)
+        // The library does not hold still. The next sync, a moment after the last change, finds it at rest.
+        return SyncResult.Done()
     }
+
+    /** The library or the settings were changed between the look at them and the write over them. */
+    private class ChangedMeanwhile : Exception()
 
     private suspend fun vaultOnce(api: ServerApi): SyncResult? {
         val s = settings.current()
@@ -379,7 +460,7 @@ class ServerSync(
             val theirs = read(remote, known = 0)
             when {
                 theirs == null || theirs.isEmpty() -> push(api, local, remote.revision)
-                local.isEmpty() -> adopt(theirs, remote.revision)
+                local.isEmpty() -> adopt(theirs, remote.revision, seen = local)
                 else -> return SyncResult.Choose(onAccount = theirs.books.size, onDevice = local.books.size)
             }
             return null
@@ -391,15 +472,30 @@ class ServerSync(
         when {
             // The server has what we last saw (or lost it altogether): only our own changes matter.
             theirs == null -> if (changedHere || remote.revision != s.vaultRevision) push(api, local, remote.revision)
-            !changedHere -> adopt(theirs, remote.revision)
+            !changedHere -> adopt(theirs, remote.revision, seen = local)
             else -> {
-                val merged = VaultMerge.merge(loadBase(), local, theirs)
-                backup.restore(merged)
-                merged.prefs?.let { settings.applyPrefs(it) }
-                push(api, snapshot(), remote.revision)
+                replace(VaultMerge.merge(loadBase(), local, theirs), seen = local)
+                push(api, snapshot(), remote.revision, showed = listOf(local, theirs))
             }
         }
         return null
+    }
+
+    /**
+     * Puts [library] in the place of the one on this device, but only while that one is still
+     * the one that was looked at ([seen]): the look and the write are a second or two of
+     * network apart, and a star given or a session logged in between must not be run over.
+     * Returns the library as it stands here afterwards.
+     */
+    private suspend fun replace(library: BackupPayload, seen: BackupPayload): BackupPayload {
+        var prefs = seen.prefs
+        val written = backup.restore(library, onlyIf = seen) {
+            // The settings go the same way, and with the library or not at all.
+            val wanted = library.prefs ?: return@restore true
+            prefs = settings.applyPrefs(wanted, onlyIf = seen.prefs) ?: return@restore false
+            true
+        } ?: throw ChangedMeanwhile()
+        return written.copy(prefs = prefs)
     }
 
     /**
@@ -418,25 +514,42 @@ class ServerSync(
         return ShareCodec.decodeVault(payload) ?: throw ServerException(UNREADABLE, 200)
     }
 
-    private suspend fun snapshot(): BackupPayload {
-        val s = settings.current()
-        // The time of the snapshot is left at zero: the same library is the same document.
-        val prefs = VaultPrefs(s.profileName, s.shareStatus, s.shareRatings, s.minutesPerPage, s.theme, s.customThemes, s.viewMode.name, s.sort.name, s.motion)
-        return backup.snapshot(prefs, at = 0)
-    }
+    // The time of the snapshot is left at zero: the same library is the same document.
+    private suspend fun snapshot(): BackupPayload = backup.snapshot(settings.current().vaultPrefs(), at = 0)
 
-    private suspend fun push(api: ServerApi, local: BackupPayload, expected: Long) {
+    /**
+     * Saves [local] to the account. [showed] are libraries that went into it besides the one
+     * this device and the account last agreed on: what they showed and [local] does not is
+     * a picture nobody shows any more.
+     */
+    private suspend fun push(api: ServerApi, local: BackupPayload, expected: Long, showed: List<BackupPayload> = emptyList()) {
+        val before = listOfNotNull(loadBase()) + showed
         val revision = api.vaultPush(ShareCodec.encodeVault(local.copy(exportedAt = now())), expected)
         settings.setVault(revision, fingerprint(local))
         saveBase(local)
+        removeCoversNobodyShows(api, before, local)
     }
 
-    /** Takes over the library of the account. */
-    private suspend fun adopt(theirs: BackupPayload, revision: Long) {
-        backup.restore(theirs)
-        theirs.prefs?.let { settings.applyPrefs(it) }
+    /**
+     * A cover photo has an address that anybody who knows it can open. Once no book shows it
+     * any more (the book was deleted, or got another cover), it is taken off the storage.
+     * [before] is what showed pictures until this save, [saved] what the account holds now.
+     * Only pictures of the account's own folder are touched, and one that will not go is
+     * left: the save has happened, and a picture is no reason to call it failed.
+     */
+    private suspend fun removeCoversNobodyShows(api: ServerApi, before: List<BackupPayload>, saved: BackupPayload) {
+        val config = config ?: return
+        val mine = config.coverAddress(settings.current().userId + "/")
+        val shown = saved.books.mapTo(HashSet()) { it.coverUrl }
+        before.flatMap { it.books }.map { it.coverUrl }.filter { it.startsWith(mine) && it !in shown }.distinct().forEach { address ->
+            quietly { api.deleteCover(address.removePrefix(config.coverAddress(""))) }
+        }
+    }
+
+    /** Takes over the library of the account, unless the one here has changed since it was looked at ([seen]). */
+    private suspend fun adopt(theirs: BackupPayload, revision: Long, seen: BackupPayload) {
         // What is here now, as this app writes it, is what later changes are measured against.
-        val mine = snapshot()
+        val mine = replace(theirs, seen)
         settings.setVault(revision, fingerprint(mine))
         saveBase(mine)
     }
@@ -456,7 +569,7 @@ class ServerSync(
             val envelope = ShareCodec.decodeElement(entry.payload) ?: continue
             // A library counts only for the person the server says it came from.
             if (envelope.library?.ownerId != entry.owner) continue
-            if (social.import(envelope) is ImportResult.LibraryImported) {
+            if (social.import(envelope, fromServer = true) is ImportResult.LibraryImported) {
                 db.social().markOnline(entry.owner, entry.at)
                 libraries++
             }
@@ -498,12 +611,12 @@ class ServerSync(
         val loans = db.social().loans()
         if (loans.isEmpty()) return false
         val shared = loans.filter { !it.lender && it.state.out }.mapNotNull { db.social().findFriendBook(it.peerId, it.bookId) }
-        val changed = LoanBooks.follow(db.books().all(), loans, shared, now())
-        if (changed.isEmpty()) return false
-        db.withTransaction {
+        // Read and written in one go, so that nothing the reader does to a book falls in between.
+        return db.withTransaction {
+            val changed = LoanBooks.follow(db.books().all(), loans, shared, now())
             changed.forEach { book -> if (db.books().get(book.id) == null) db.books().insert(book) else db.books().update(book) }
+            changed.isNotEmpty()
         }
-        return true
     }
 
     // ---- loans ----
@@ -514,7 +627,7 @@ class ServerSync(
      * else in the meantime, "network", or what else the server said.
      */
     suspend fun loanAsk(book: FriendBook, note: String): String? = withContext(work) {
-        loanStep { api -> api.loanAsk(book, note.trim()) }
+        safely<String?>({ it }) { loanStep { api -> api.loanAsk(book, note.trim()) } }
     }
 
     /**
@@ -525,7 +638,7 @@ class ServerSync(
      * and show where it stands.
      */
     suspend fun loanAct(loanId: String, action: LoanAction, due: Long? = null, reason: String = ""): String? = withContext(work) {
-        loanStep(putAway = action == LoanAction.HIDE) { api -> api.loanAct(loanId, action, due, reason.trim()) }
+        safely<String?>({ it }) { loanStep(putAway = action == LoanAction.HIDE) { api -> api.loanAct(loanId, action, due, reason.trim()) } }
     }
 
     private suspend fun loanStep(putAway: Boolean = false, step: suspend (ServerApi) -> Loan): String? {
@@ -537,10 +650,8 @@ class ServerSync(
             if (putAway) db.social().deleteLoan(loan.id)
             else db.social().upsertLoans(listOf(loan.copy(dueSaid = db.social().getLoan(loan.id)?.dueSaid)))
             null
-        } catch (e: ServerException) {
-            e.reason
-        } catch (e: IOException) {
-            NETWORK
+        } catch (e: Exception) {
+            reasonOf(e)
         }
         // The books follow the loan, and what friends may ask for changes with it. After a
         // refusal too: the loan is not where this device thought it was.
@@ -551,7 +662,9 @@ class ServerSync(
     // ---- friends ----
 
     /** Connects with the owner of [code]. Returns their name, or the reason it did not work. */
-    suspend fun addFriend(code: String): Result<String> = withContext(work) { addFriendNow(code) }
+    suspend fun addFriend(code: String): Result<String> = withContext(work) {
+        safely({ Result.failure(ServerException(it, 0)) }) { addFriendNow(code) }
+    }
 
     private suspend fun addFriendNow(code: String): Result<String> {
         val config = config ?: return Result.failure(ServerException(NO_SERVER, 0))
@@ -560,21 +673,22 @@ class ServerSync(
             val friend = ServerApi(config, poster, token).addFriend(code)
             sync()
             Result.success(friend.name)
-        } catch (e: ServerException) {
-            Result.failure(e)
-        } catch (e: IOException) {
-            Result.failure(ServerException(NETWORK, 0))
+        } catch (e: Exception) {
+            Result.failure(e as? ServerException ?: ServerException(reasonOf(e), 0))
         }
     }
 
     /** Ends the friendship, on the server too when it lives there. False when the server could not be reached. */
-    suspend fun removeFriend(id: String): Boolean {
+    suspend fun removeFriend(id: String): Boolean = safely({ false }) { removeFriendNow(id) }
+
+    private suspend fun removeFriendNow(id: String): Boolean {
         val friend = db.social().getFriend(id) ?: return true
         if (friend.online && config != null && settings.current().signedIn) {
             try {
                 val token = mutex.withLock { token() } ?: return false
                 ServerApi(config, poster, token).removeFriend(id)
-            } catch (e: IOException) {
+            } catch (e: Exception) {
+                reasonOf(e)
                 return false
             }
         }
@@ -588,7 +702,8 @@ class ServerSync(
         return try {
             val token = mutex.withLock { token() } ?: return null
             ServerApi(config, poster, token).newCode().also { settings.setFriendCode(it) }
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            reasonOf(e)
             null
         }
     }
@@ -599,7 +714,7 @@ class ServerSync(
      * the user is sent, and it happens whether or not anybody is signed in. Somebody who
      * is signed in is brought up to date as well.
      */
-    suspend fun dailyCheck(): SyncResult = withContext(work) { dailyCheckNow() }
+    suspend fun dailyCheck(): SyncResult = withContext(work) { safely({ SyncResult.Failed(it) }) { dailyCheckNow() } }
 
     private suspend fun dailyCheckNow(): SyncResult {
         val config = config ?: return SyncResult.Off
@@ -608,8 +723,9 @@ class ServerSync(
             try {
                 ServerApi(config, poster).ping()
                 settings.setLastPingDay(day)
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 // No connection right now. The next start of the app or the next run in the background tries again.
+                reasonOf(e)
             }
         }
         return sync()
@@ -626,5 +742,11 @@ class ServerSync(
 
         /** The library on the account is one this version cannot read. Nothing is written until an update can. */
         const val UNREADABLE = "unreadable"
+
+        /** Something went wrong that nobody foresaw. The step is given up, the app goes on. */
+        const val UNEXPECTED = "unexpected"
+
+        /** How often a step is started over when the library, here or on the account, changed under it. */
+        private const val TRIES = 4
     }
 }

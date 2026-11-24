@@ -80,7 +80,7 @@ data class Book(
      */
     @ColumnInfo(defaultValue = "") val loanId: String = "",
     /** 0 = unrated, otherwise 0.5 to 5.0 in half star steps. */
-    val rating: Float = 0f,
+    @Serializable(with = FiniteFloat::class) val rating: Float = 0f,
     /** 0 = not set, 1 to 5 chillies. */
     val spice: Int = 0,
     val review: String = "",
@@ -96,7 +96,7 @@ data class Book(
     val tags: String = "",
     val series: String = "",
     /** Position in the series, 0 = not set. */
-    val seriesPosition: Float = 0f,
+    @Serializable(with = FiniteFloat::class) val seriesPosition: Float = 0f,
     val addedAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {
@@ -163,7 +163,7 @@ data class ReadingSession(
     val startPage: Int = 0,
     val endPage: Int = 0,
     /** Minutes spent, 0 when the session was logged without a time. */
-    val minutes: Float = 0f,
+    @Serializable(with = FiniteFloat::class) val minutes: Float = 0f,
     val note: String = "",
 ) {
     val pages: Int get() = (endPage - startPage).coerceAtLeast(0)
@@ -215,7 +215,7 @@ data class Purchase(
     val bookId: Long,
     /** Epoch day of the purchase. */
     val day: Long,
-    val price: Double = 0.0,
+    @Serializable(with = FiniteDouble::class) val price: Double = 0.0,
     val currency: String = "",
     val store: String = "",
     val note: String = "",

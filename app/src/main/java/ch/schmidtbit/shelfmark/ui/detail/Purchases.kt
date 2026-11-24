@@ -26,9 +26,11 @@ import androidx.compose.ui.unit.dp
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Purchase
 import ch.schmidtbit.shelfmark.ui.LocalContainer
+import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import ch.schmidtbit.shelfmark.ui.components.DayPickerDialog
 import ch.schmidtbit.shelfmark.ui.components.SectionCard
 import ch.schmidtbit.shelfmark.util.Dates
+import ch.schmidtbit.shelfmark.util.Numbers
 import java.util.Currency
 import java.util.Locale
 
@@ -72,6 +74,14 @@ fun PurchaseSection(bookId: Long, purchases: List<Purchase>) {
         var note by remember(purchase) { mutableStateOf(purchase.note) }
         var day by remember(purchase) { mutableStateOf(purchase.day) }
         var pickingDay by remember { mutableStateOf(false) }
+        var deleting by remember(purchase) { mutableStateOf(false) }
+        if (deleting) {
+            ConfirmDelete(stringResource(R.string.delete_purchase_title), onDismiss = { deleting = false }) {
+                deleting = false
+                editing = null
+                container.launch { container.library.deletePurchase(purchase.id) }
+            }
+        }
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text(stringResource(if (purchase.id == 0L) R.string.purchase_add else R.string.purchase_edit)) },
@@ -109,17 +119,14 @@ fun PurchaseSection(bookId: Long, purchases: List<Purchase>) {
             confirmButton = {
                 TextButton(onClick = {
                     editing = null
-                    val saved = purchase.copy(price = price.replace(',', '.').toDoubleOrNull() ?: 0.0, currency = currency.trim(), store = store.trim(), note = note.trim(), day = day)
+                    val saved = purchase.copy(price = Numbers.decimal(price) ?: 0.0, currency = currency.trim(), store = store.trim(), note = note.trim(), day = day)
                     container.launch { container.library.savePurchase(saved) }
                 }, modifier = Modifier.testTag("purchaseSave")) { Text(stringResource(R.string.action_save)) }
             },
             dismissButton = {
                 Row {
                     if (purchase.id != 0L) {
-                        TextButton(onClick = {
-                            editing = null
-                            container.launch { container.library.deletePurchase(purchase.id) }
-                        }) { Text(stringResource(R.string.action_delete)) }
+                        TextButton(onClick = { deleting = true }, modifier = Modifier.testTag("deletePurchase")) { Text(stringResource(R.string.action_delete)) }
                     }
                     TextButton(onClick = { editing = null }) { Text(stringResource(R.string.action_cancel)) }
                 }

@@ -17,9 +17,11 @@ import ch.schmidtbit.shelfmark.data.share.BackupPayload
 import ch.schmidtbit.shelfmark.data.share.Envelope
 import ch.schmidtbit.shelfmark.data.share.ShareCodec
 import ch.schmidtbit.shelfmark.data.share.ShareFiles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
+import java.io.File
 
 sealed interface ImportOutcome {
     data class Done(val result: ImportResult) : ImportOutcome
@@ -40,8 +42,17 @@ class ImportController(private val container: AppContainer, private val context:
     var outcome by mutableStateOf<ImportOutcome?>(null)
 
     fun open(uri: Uri) {
-        container.launch {
-            val bytes = withContext(Dispatchers.IO) { ShareFiles.readBytes(context, uri) }
+        container.launch { open(withContext(Dispatchers.IO) { ShareFiles.readBytes(context, uri) }) }
+    }
+
+    /** A file of the app's own, such as a library that was put aside when another one took its place. */
+    fun open(file: File) {
+        container.launch { open(withContext(Dispatchers.IO) { runCatching { file.readBytes() }.getOrNull() }) }
+    }
+
+    private suspend fun open(bytes: ByteArray?) {
+        // Whatever a file from outside does to the code that reads it, the answer is "unreadable", not a closed app.
+        try {
             when {
                 bytes == null -> outcome = ImportOutcome.Unreadable
                 ShareFiles.isZip(bytes) -> {
@@ -54,6 +65,10 @@ class ImportController(private val container: AppContainer, private val context:
                 }
                 else -> openText(bytes.decodeToString())
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            outcome = ImportOutcome.Unreadable
         }
     }
 
@@ -81,10 +96,17 @@ class ImportController(private val container: AppContainer, private val context:
     fun confirmRestore(pending: ImportOutcome.ConfirmRestore) {
         outcome = null
         container.launch {
-            val count = when {
-                pending.zip != null -> container.backup.restore(ByteArrayInputStream(pending.zip))
-                pending.backup != null -> pending.backup.books.size.also { container.backup.restore(pending.backup) }
-                else -> null
+            val count = try {
+                when {
+                    pending.zip != null -> container.backup.restore(ByteArrayInputStream(pending.zip))
+                    pending.backup != null -> pending.backup.books.size.also { container.backup.restore(pending.backup) }
+                    else -> null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A backup that names a book twice, say. The transaction took nothing over.
+                null
             }
             outcome = if (count == null) ImportOutcome.Unreadable else ImportOutcome.Restored(count)
         }
@@ -98,8 +120,15 @@ class ImportController(private val container: AppContainer, private val context:
     fun confirmImport(pending: ImportOutcome.ConfirmImport) {
         outcome = null
         container.launch {
-            val (added, completed) = container.library.importBooks(pending.plan)
-            outcome = ImportOutcome.Imported(added, completed)
+            outcome = try {
+                // One sync when all the books are in, not one for every few of them.
+                val (added, completed) = container.bulk { container.library.importBooks(pending.plan) }
+                ImportOutcome.Imported(added, completed)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ImportOutcome.Unreadable
+            }
         }
     }
 

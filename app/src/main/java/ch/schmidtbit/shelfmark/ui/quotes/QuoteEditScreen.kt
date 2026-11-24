@@ -73,6 +73,8 @@ import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.camera.Ocr
 import ch.schmidtbit.shelfmark.ui.camera.PhotoCapture
 import ch.schmidtbit.shelfmark.ui.components.BackButton
+import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
+import ch.schmidtbit.shelfmark.ui.components.DiscardDialog
 import ch.schmidtbit.shelfmark.ui.detail.NumberField
 import ch.schmidtbit.shelfmark.util.OcrText
 import kotlinx.coroutines.launch
@@ -95,6 +97,10 @@ fun QuoteEditScreen(quoteId: Long, presetBookId: Long, onBack: () -> Unit) {
     var bookId by rememberSaveable { mutableStateOf(presetBookId) }
     var fromOcr by rememberSaveable { mutableStateOf(false) }
     var createdAt by rememberSaveable { mutableStateOf(0L) }
+    // The quote as it was found here: what is stored, or nothing at all for a new one.
+    var found by rememberSaveable { mutableStateOf(listOf("", "", "", presetBookId.toString())) }
+    var askDiscard by remember { mutableStateOf(false) }
+    var askDelete by remember { mutableStateOf(false) }
 
     var pickingBook by remember { mutableStateOf(false) }
     var takingPhoto by remember { mutableStateOf(false) }
@@ -112,6 +118,7 @@ fun QuoteEditScreen(quoteId: Long, presetBookId: Long, onBack: () -> Unit) {
                     bookId = q.bookId
                     fromOcr = q.fromOcr
                     createdAt = q.createdAt
+                    found = listOf(text, page, note, bookId.toString())
                 }
             } else {
                 // Text another app shared with Shelfmark arrives here.
@@ -151,6 +158,18 @@ fun QuoteEditScreen(quoteId: Long, presetBookId: Long, onBack: () -> Unit) {
 
     val selectedBook = books.firstOrNull { it.id == bookId }
     val canSave = text.isNotBlank() && selectedBook != null
+    // Text that another app handed over counts as typed: it is nowhere else in Shelfmark yet.
+    val changed = loaded && listOf(text, page, note, bookId.toString()) != found
+    val leave = { if (changed) askDiscard = true else onBack() }
+    BackHandler(enabled = changed) { askDiscard = true }
+    if (askDiscard) DiscardDialog(onKeep = { askDiscard = false }) { askDiscard = false; onBack() }
+    if (askDelete) {
+        ConfirmDelete(stringResource(R.string.delete_quote_title), onDismiss = { askDelete = false }) {
+            askDelete = false
+            container.launch { container.library.deleteQuote(quoteId) }
+            onBack()
+        }
+    }
 
     fun save() {
         val quote = Quote(
@@ -170,13 +189,12 @@ fun QuoteEditScreen(quoteId: Long, presetBookId: Long, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(if (quoteId == 0L) R.string.quote_add else R.string.quote_edit)) },
-                navigationIcon = { BackButton(onBack) },
+                navigationIcon = { BackButton(leave) },
                 actions = {
                     if (quoteId != 0L) {
-                        IconButton(onClick = {
-                            container.launch { container.library.deleteQuote(quoteId) }
-                            onBack()
-                        }) { Icon(Icons.Rounded.Delete, contentDescription = stringResource(R.string.action_delete)) }
+                        IconButton(onClick = { askDelete = true }, modifier = Modifier.testTag("deleteQuote")) {
+                            Icon(Icons.Rounded.Delete, contentDescription = stringResource(R.string.action_delete))
+                        }
                     }
                     TextButton(onClick = ::save, enabled = canSave, modifier = Modifier.testTag("saveQuote")) { Text(stringResource(R.string.action_save)) }
                 },

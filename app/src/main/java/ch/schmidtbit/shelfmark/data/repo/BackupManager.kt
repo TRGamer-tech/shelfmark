@@ -12,6 +12,7 @@ import ch.schmidtbit.shelfmark.data.share.VaultPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipEntry
@@ -42,8 +43,12 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
         prefs = prefs,
     )
 
-    suspend fun export(out: OutputStream) = withContext(Dispatchers.IO) {
-        val payload = snapshot()
+    /**
+     * Writes a backup: the library as it is now, or [library] when one is given, with the
+     * cover photos of its books that are on this phone.
+     */
+    suspend fun export(out: OutputStream, library: BackupPayload? = null) = withContext(Dispatchers.IO) {
+        val payload = library ?: snapshot()
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry(JSON_NAME))
             zip.write(ShareCodec.encode(Envelope(type = Envelope.TYPE_BACKUP, backup = payload)).toByteArray())
@@ -87,9 +92,64 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
         backup.books.size
     }
 
-    /** Replaces the library with [backup]. */
-    suspend fun restore(backup: BackupPayload) {
+    /**
+     * Saves a backup to wherever [open] leads: a file the reader chose, on the phone, on a
+     * drive in the cloud, on a stick. False when nothing usable was written, because the
+     * place gave no way in or broke off on the way. A place like that is not the app's to
+     * trust, so whatever it throws ends here.
+     */
+    suspend fun exportTo(open: () -> OutputStream?): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val out = open() ?: return@withContext false
+            out.use { export(it) }
+            true
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Puts [library] aside in [dir] before it is replaced as a whole, as a backup file that
+     * the backup import reads. Only the newest [KEPT] are kept. Returns the file, or null
+     * when it could not be written: the library on its way out is then lost as it would
+     * have been before, which is no reason to stop the reader from going on.
+     */
+    suspend fun keepReplaced(library: BackupPayload, dir: File, at: Long = System.currentTimeMillis()): File? = withContext(Dispatchers.IO) {
+        runCatching {
+            dir.mkdirs()
+            val file = File(dir, "$REPLACED_PREFIX$at.zip")
+            file.outputStream().use { export(it, library.copy(exportedAt = at)) }
+            replaced(dir).drop(KEPT).forEach { it.delete() }
+            file
+        }.getOrNull()
+    }
+
+    /** The libraries that were put aside in [dir], the newest first. */
+    fun replaced(dir: File): List<File> =
+        dir.listFiles { file -> file.name.startsWith(REPLACED_PREFIX) && file.name.endsWith(".zip") }.orEmpty().sortedByDescending { it.name }
+
+    /**
+     * Replaces the library with [backup]. With [onlyIf] given, only while the library is
+     * still what it was when that snapshot was taken, looked at and written in one
+     * transaction: what the reader changed in the meantime is not run over. [together] is
+     * what has to change along with the library (the settings, which live elsewhere): when
+     * it says no, the library stays as it was. Returns the library as it stands afterwards,
+     * or null when nothing was written.
+     */
+    suspend fun restore(backup: BackupPayload, onlyIf: BackupPayload? = null, together: suspend () -> Boolean = { true }): BackupPayload? = try {
+        replace(backup, onlyIf, together)
+    } catch (e: NotWritten) {
+        null
+    }
+
+    /** Leaves the transaction without keeping what it wrote. */
+    private class NotWritten : Exception()
+
+    private suspend fun replace(backup: BackupPayload, onlyIf: BackupPayload?, together: suspend () -> Boolean): BackupPayload =
         db.withTransaction {
+            if (onlyIf != null && !sameLibrary(snapshot(at = 0), onlyIf)) throw NotWritten()
             // Deleting the books cascades to their quotes, sessions, notes and list memberships.
             db.books().clear()
             db.shelves().clear()
@@ -108,8 +168,12 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
             // Ornaments on a custom list only make sense if that list came along.
             backup.ornaments.filter { o -> !o.shelfKey.startsWith("list_") || o.shelfKey.removePrefix("list_").toLongOrNull() in shelfIds }
                 .forEach { db.ornaments().insert(it) }
+            if (!together()) throw NotWritten()
+            snapshot(at = 0)
         }
-    }
+
+    /** Whether two snapshots hold the same books, lists, quotes and so on. When they were taken and the settings do not count. */
+    private fun sameLibrary(a: BackupPayload, b: BackupPayload): Boolean = a.copy(exportedAt = 0, prefs = null) == b.copy(exportedAt = 0, prefs = null)
 
     /**
      * Looks into a zip without changing anything. Returns the backup it holds, or failing
@@ -146,7 +210,16 @@ class BackupManager(private val db: AppDatabase, private val covers: CoverStore)
     private fun ZipInputStream.readBytes(): ByteArray = ByteArrayOutputStream().also { copyTo(it) }.toByteArray()
 
     companion object {
+        /** When the library in [file] was put aside: its name says so, and failing that the file itself. */
+        fun replacedAt(file: File): Long = file.name.removePrefix(REPLACED_PREFIX).removeSuffix(".zip").toLongOrNull() ?: file.lastModified()
+
         const val JSON_NAME = "shelfmark-backup.json"
         const val COVER_PREFIX = "covers/"
+
+        /** How the files of libraries that were replaced as a whole begin. The moment follows, so that names sort by age. */
+        const val REPLACED_PREFIX = "shelfmark-replaced-"
+
+        /** How many replaced libraries are kept. */
+        const val KEPT = 3
     }
 }
