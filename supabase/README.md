@@ -87,6 +87,15 @@ Days (`startedOn`, `finishedOn`, `day`, `lentSince`, goal days) are days since 1
 in local time (`LocalDate.toEpochDay`). Moments (`addedAt`, `createdAt`, `startedAt`,
 `updatedAt`) are milliseconds since 1970.
 
+**A library a client cannot read is never replaced.** A document that is damaged, has a
+shape the client does not know, carries a word it does not know where a fixed set is
+expected (an ornament, a format, a status that a newer version invented), or names a
+`format` higher than the client knows (a document without `format` is format 1, and so is
+everything written today) stops the sync on that device: the client says that it needs an
+update, and writes nothing over the document, neither its own library nor an empty one.
+"No document yet" (revision 0) is the only case in which a client writes without having
+read.
+
 ## Cover photos
 
 A cover that was photographed is uploaded, so that it has an address every device and
@@ -104,8 +113,13 @@ Everybody can write below their own user id only. In a book, `coverPath` is the 
 picture's file on the phone that took it (it means nothing anywhere else), and `coverUrl`
 is what everybody shows. Whoever gives a book another cover, from a catalogue or by an
 upload of its own, clears `coverPath`: otherwise the phone that still has the old photo
-would go on showing it, and upload it again. A client deletes its pictures before it
-deletes the account, while it is still allowed to.
+would go on showing it, and upload it again.
+
+A picture is removed from the storage when nothing shows it any more: when its book is
+deleted or gets another cover, and no other book of the library uses the same address.
+Before an account is deleted the client lists the account's own folder
+(`POST /storage/v1/object/list/shelfmark-covers` with `{"prefix": "<user id>"}`) and removes
+everything in it, also the pictures of books that are long gone, while it is still allowed to.
 
 ## What friends get
 
