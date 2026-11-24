@@ -87,6 +87,12 @@ available in English and German.
   photographed is uploaded, so it shows everywhere too.
 - When two devices changed things while the other was not looking, both sets of changes are
   kept, book by book.
+- Safety nets: a library a device cannot read (a newer version wrote it) is never overwritten,
+  a sync never runs over what you did while it was fetching, and when the first sign-in has to
+  ask which of two libraries counts, the other one is kept as a backup on the phone.
+- Android's own cloud backup is switched off for Shelfmark, so that "without an account
+  everything stays on this device" is true. The backup in the settings and the account are the
+  ways to move a library.
 - The same library in a browser, on the website, with the same sign-in. The website does
   what the app does, reading timer and import from other apps included. What it leaves to the
   phone is what needs a phone: the camera (scanning a barcode, reading a quote off a page),
@@ -182,7 +188,8 @@ dashboard (**Authentication > Users**).
   accounts is deleted.
 - Cover photos, in a storage bucket. Everybody can write below their own user id only.
   Reading a picture needs its full address, which nobody can guess, and no sign-in, so that
-  friends can see the covers of a shared shelf.
+  friends can see the covers of a shared shelf. A picture is removed when no book shows it
+  any more.
 - The tables live in a schema the Supabase Data API does not expose, with row level security
   on and no policies. The apps can only call the functions `public.shelfmark_*`, and each of
   them works for the signed-in caller and nobody else.
