@@ -99,26 +99,43 @@ available in English and German.
   and reviews.
 - Per book: whether you own it, borrowed it, or do not have it, and whether friends may ask
   for it.
-- A friend can ask to borrow a book that is available. You answer with one tap, yes or no.
-  Saying yes marks your copy as lent to them.
-- Two ways to get there, see below: with an account, where everything arrives by itself, or
-  with small files sent through any messenger.
+- A friend can ask to borrow a book that is available, and from there a loan has a life that
+  both of you see, see [Borrowing](#borrowing).
+- A shelf can also be shown to somebody without an account, as a small file sent through any
+  messenger. Borrowing needs both sides signed in.
 
 ## How sharing works
 
-**With an account.** Signed in, the Friends tab shows your friend code, like `ZJ242-5U97E`.
-Whoever enters your code is your friend, and you are theirs. From then on your shared shelf is
-kept up to date for them, and borrow requests and answers arrive by themselves, with a
-notification when the app is closed.
+Signed in, the Friends tab shows your friend code, like `ZJ242-5U97E`. Whoever enters your
+code is your friend, and you are theirs. From then on your shared shelf is kept up to date for
+them. For somebody without an account, **Share my library** makes a small `.shelfmark.json`
+file to send through the messenger you already use; they open it with Shelfmark and can
+browse your shelf.
 
-**With files.** Without an account, or for a friend who has none, everything travels as a
-small `.shelfmark.json` file through the messenger you already use:
+## Borrowing
 
-1. You tap **Share my library** and send the file.
-2. Your friend opens it with Shelfmark and can browse your shelf.
-3. On a book that is available they tap **Ask to borrow**, which creates a request file to send
-   back to you.
-4. You open it, tap **Yes** or **No**, and send the answer file.
+A loan is one record that lender and borrower both see, in the app and on the website. It
+moves in steps, and each step changes something real:
+
+| Step | Who | What changes |
+| --- | --- | --- |
+| Asks | borrower | The lender finds the question on the book itself and under **Loans** |
+| Says yes | lender | The book is **reserved**: nobody else can ask for it. The lender names a day it is wanted back by, or no fixed date |
+| Handed over | lender, then borrower | Once both said so, the book is **lent**, and it stands on the borrower's own shelf as borrowed, ready to be read and rated |
+| Given back | borrower, then lender | Once both said so, the book is free again. The borrower keeps their copy as "read, not mine", with rating, notes and quotes |
+
+- Either side can step back as long as the book has not changed hands: the borrower takes the
+  question back, the lender says no (with a reason, if they like) or takes the yes back.
+- If two friends ask for the same book, the second is told that somebody else got it and can
+  ask again later.
+- The day can be changed by the lender at any time. When it has come, both are reminded.
+- Handover and return each take both people on purpose: nobody can claim to have given a book
+  back that the lender does not have. A lender who has the book back while the borrower never
+  said so can close the loan alone.
+- News arrives by itself: the app looks every minute while it is open and twice a day in the
+  background, with a notification.
+- Lending to somebody who does not use Shelfmark still works by hand: **Mark as lent out** on
+  the book, with any name.
 
 ## The server
 
@@ -160,8 +177,9 @@ dashboard (**Authentication > Users**).
 
 - Per account: the whole library as one document (only its owner ever gets it), a name, a
   friend code, and the part of the library the person chose to share.
-- Borrow requests and answers on their way. They are deleted as soon as the receiving device
-  has fetched them.
+- Loans between friends: which book, the two people, a note, the day it is wanted back by
+  and when each step happened. A loan stays until both have put it away or one of the two
+  accounts is deleted.
 - Cover photos, in a storage bucket. Everybody can write below their own user id only.
   Reading a picture needs its full address, which nobody can guess, and no sign-in, so that
   friends can see the covers of a shared shelf.
@@ -313,8 +331,8 @@ first version with the current code and has to keep passing.
 ```
 
 The suite covers the catalogue clients (against recorded responses), barcode decoding, the
-sharing and borrow request flow between simulated phones (with files, and with accounts
-against a server rebuilt in memory), keeping one library in step between several devices, backup and import (Goodreads, StoryGraph, CSV, the desktop Shelfmark), the
+sharing a shelf and whole loans between simulated phones (against a server rebuilt in
+memory), keeping one library in step between several devices, backup and import (Goodreads, StoryGraph, CSV, the desktop Shelfmark), the
 database migrations, statistics, calendar, recaps, milestones and goals. It also drives the
 real screens (in German) and writes screenshots to `app/build/outputs/roborazzi`.
 
@@ -348,8 +366,8 @@ Cover pictures also come from the Open Library and DNB cover services, which ans
 ## Not here yet
 
 - A sort order per shelf, and the timer alarm of the desktop Shelfmark.
-- News from friends the moment it happens. The app looks for it when it is opened and twice a
-  day in the background, which is what works without a push service.
+- News from friends the moment it happens. The app looks for it every minute while it is
+  open and twice a day in the background, which is what works without a push service.
 - Signing in with Google, Apple or a link by mail. It is e-mail and password.
 
 ## Licences
