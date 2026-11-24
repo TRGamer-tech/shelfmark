@@ -554,7 +554,7 @@ export const strings: Record<string, string> = {
   settings_replaced_item_account: "The account's library, put aside on %1$s",
   settings_replaced_item_device: "This device's library, put aside on %1$s",
   settings_replaced_text: "A library that was replaced when you said which one counts is put aside here, and so are both when they were put together. The last three are kept. Tap one to bring it back in place of the current library.",
-  settings_server_daily: "The app checks in with its server once a day, so that it is not put to sleep. Nothing about you is sent with that.",
+  settings_server_daily: "The app checks in with its server once a day, so that it is not put to sleep. Nothing about you is sent with that. While you are signed in, it also looks for news from your friends about every quarter of an hour, also when it is closed.",
   settings_speed: "Reading speed",
   settings_speed_hint: "Used to estimate how long a book will still take.",
   settings_speed_pph: "%1$d pages/h",

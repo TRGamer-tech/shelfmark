@@ -554,7 +554,7 @@ export const strings: Record<string, string> = {
   settings_replaced_item_account: "Bibliothek des Kontos, beiseitegelegt am %1$s",
   settings_replaced_item_device: "Bibliothek dieses Geräts, beiseitegelegt am %1$s",
   settings_replaced_text: "Eine Bibliothek, die ersetzt wurde, als du gewählt hast, welche gilt, wird hier beiseitegelegt, und ebenso beide, wenn sie zusammengeführt wurden. Die letzten drei bleiben erhalten. Tippe eine an, um sie anstelle der jetzigen Bibliothek zurückzuholen.",
-  settings_server_daily: "Die App meldet sich einmal am Tag bei ihrem Server, damit er nicht schlafen gelegt wird. Über dich wird dabei nichts übertragen.",
+  settings_server_daily: "Die App meldet sich einmal am Tag bei ihrem Server, damit er nicht schlafen gelegt wird. Über dich wird dabei nichts übertragen. Solange du angemeldet bist, schaut sie zudem etwa jede Viertelstunde nach Neuigkeiten von deinen Freunden, auch wenn sie geschlossen ist.",
   settings_speed: "Lesetempo",
   settings_speed_hint: "Damit wird geschätzt, wie lange ein Buch noch dauert.",
   settings_speed_pph: "%1$d Seiten/h",
