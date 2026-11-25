@@ -62,13 +62,13 @@ fun BookCover(
     elevation: Dp = 3.dp,
     /** For covers the size of a thumbnail: a drawn cover then shows one letter instead of small print. */
     tiny: Boolean = false,
-    /** Why the book is away, in words, or null for a book that is here (see Away.kt). */
-    away: String? = null,
+    /** Drawn as a book that is away (see Away.kt). What a screen reader hears of it is the caller's to say. */
+    away: Boolean = false,
 ) {
     val shape = coverShape(cornerRadius)
     Box(
         modifier
-            .away(away, shape)
+            .awayLook(away, shape)
             .aspectRatio(2f / 3f)
             .shadow(elevation, shape)
             .clip(shape),

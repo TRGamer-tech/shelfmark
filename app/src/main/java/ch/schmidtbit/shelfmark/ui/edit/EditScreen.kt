@@ -3,6 +3,7 @@
 package ch.schmidtbit.shelfmark.ui.edit
 
 import androidx.activity.compose.BackHandler
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -46,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -59,6 +63,8 @@ import ch.schmidtbit.shelfmark.data.model.isAudio
 import ch.schmidtbit.shelfmark.data.model.withDefaultsFor
 import ch.schmidtbit.shelfmark.data.model.withFormOf
 import ch.schmidtbit.shelfmark.ui.LocalContainer
+import ch.schmidtbit.shelfmark.ui.add.CartBar
+import ch.schmidtbit.shelfmark.ui.add.CartIcon
 import ch.schmidtbit.shelfmark.ui.camera.PhotoCapture
 import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.BookCover
@@ -77,10 +83,11 @@ private val BookSaver = Saver<Book?, String>(
 
 /**
  * The form for typing in a book by hand or correcting one. With [bookId] 0 it creates a
- * new book, starting from whatever the scanner or the search left as a draft.
+ * new book, starting from whatever the scanner or the search left as a draft, and the
+ * book can go onto the book cart instead of the shelf.
  */
 @Composable
-fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
+fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit, onOpenCart: () -> Unit = {}) {
     val container = LocalContainer.current
     var book by rememberSaveable(stateSaver = BookSaver) { mutableStateOf(null) }
     // The book as the form found it. What differs from it when the form is saved is what the reader did here.
@@ -92,6 +99,7 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
     var takingPhoto by remember { mutableStateOf(false) }
     var searchingCover by remember { mutableStateOf(false) }
     val isNew = bookId == 0L
+    val context = LocalContext.current
 
     LaunchedEffect(bookId) {
         if (book == null) {
@@ -131,15 +139,20 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
         return
     }
 
-    fun save() {
+    // The book as the form says it is, tidied up the way it is stored.
+    fun typed(): Book {
         val cleanedIsbn = Isbn.to13(current.isbn) ?: Isbn.clean(current.isbn)
-        val toSave = current.copy(
+        return current.copy(
             title = current.title.trim(),
             authors = current.authors.trim(),
             isbn = cleanedIsbn,
             // A position the reader did not touch stays what it is, also one this field cannot write.
             seriesPosition = if (seriesPosition == openedPosition) found.seriesPosition else Numbers.seriesPosition(seriesPosition),
         )
+    }
+
+    fun save() {
+        val toSave = typed()
         container.launch {
             val id = if (isNew) {
                 container.library.addBook(toSave.withDefaultsFor(status, Dates.today())).also { container.findCoverLater(it) }
@@ -150,6 +163,18 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
                 toSave.id
             }
             onSaved(id)
+        }
+    }
+
+    // Onto the cart instead of the shelf, with the list chosen here as its own. Then back to
+    // where the book was found, for the next one.
+    fun toCart() {
+        val book = typed()
+        container.launch {
+            val before = container.cart.cart.value
+            val after = container.cart.change { cart -> cart.put(book, cart.chosen(status)) }
+            if (after == before) Toast.makeText(context, context.getString(R.string.cart_put_twice, book.title), Toast.LENGTH_SHORT).show()
+            onBack()
         }
     }
 
@@ -176,6 +201,7 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
                 },
             )
         },
+        bottomBar = { if (isNew) CartBar(onOpenCart, Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) },
     ) { padding ->
         Column(
             Modifier
@@ -264,22 +290,27 @@ fun EditScreen(bookId: Long, onBack: () -> Unit, onSaved: (Long) -> Unit) {
             if (isNew) {
                 Text(stringResource(R.string.edit_add_to), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 StatusChips(status) { status = it }
+                OutlinedButton(onClick = ::toCart, enabled = current.title.isNotBlank(), modifier = Modifier.fillMaxWidth().testTag("editToCart")) {
+                    Icon(CartIcon, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.cart_put))
+                }
             }
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
-/** The five built-in lists as a row of chips. */
+/** The five built-in lists as a row of chips. [tag] tells two rows of them on one screen apart. */
 @Composable
-fun StatusChips(selected: ReadingStatus, onSelect: (ReadingStatus) -> Unit) {
+fun StatusChips(selected: ReadingStatus, tag: String = "pick", onSelect: (ReadingStatus) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(ReadingStatus.NONE, ReadingStatus.WISHLIST, ReadingStatus.READING, ReadingStatus.READ, ReadingStatus.ABANDONED).forEach { status ->
             FilterChip(
                 selected = selected == status,
                 onClick = { onSelect(status) },
                 label = { Text(stringResource(status.labelRes())) },
-                modifier = Modifier.testTag("pick_${status.name}"),
+                modifier = Modifier.testTag("${tag}_${status.name}"),
             )
         }
     }

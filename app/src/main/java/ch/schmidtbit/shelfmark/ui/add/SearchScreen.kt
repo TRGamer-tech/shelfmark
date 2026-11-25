@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -38,8 +40,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import ch.schmidtbit.shelfmark.AppContainer
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.cart.Cart
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.withDefaultsFor
@@ -160,6 +165,16 @@ class SearchViewModel(private val container: AppContainer, initialQuery: String)
         }
     }
 
+    fun cart() = container.cart.cart
+
+    /**
+     * The button of a result and of the preview: onto the book cart, or off it again. A list
+     * chosen in the preview is the book's own, for it and not for the others on the cart.
+     */
+    fun toggleCart(book: RemoteBook, status: ReadingStatus = ReadingStatus.NONE) {
+        container.launch { container.cart.change { it.toggle(book.toBook(), status) } }
+    }
+
     companion object {
         const val MIN_CHARS = 3
         const val TYPING_PAUSE_MS = 450L
@@ -173,10 +188,12 @@ fun SearchScreen(
     onOpenBook: (Long) -> Unit,
     onManual: (Book) -> Unit,
     onScan: () -> Unit,
+    onOpenCart: () -> Unit = {},
 ) {
     val viewModel = containerViewModel { SearchViewModel(it, initialQuery) }
     val state = viewModel.state
     val library by remember { viewModel.libraryFlow() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val cart by remember { viewModel.cart() }.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { if (initialQuery.isBlank()) focus.requestFocus() }
@@ -185,6 +202,7 @@ fun SearchScreen(
         topBar = {
             TopAppBar(title = { Text(stringResource(R.string.search_title)) }, navigationIcon = { BackButton(onBack) })
         },
+        bottomBar = { CartBar(onOpenCart, Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
             OutlinedTextField(
@@ -207,7 +225,18 @@ fun SearchScreen(
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).size(width = 0.dp, height = 4.dp)) {
                 if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            LazyColumn(Modifier.weight(1f).testTag("searchResults"), contentPadding = PaddingValues(bottom = 24.dp)) {
+            // A new answer is read from its first book. Without this the list would keep the place of
+            // whatever stood at its top before, the hint for instance, and the best hits would lie above the screen.
+            // Only for an answer that is new, not for the same one after the phone was turned.
+            val list = rememberLazyListState()
+            var answered by rememberSaveable { mutableIntStateOf(state.results.hashCode()) }
+            LaunchedEffect(state.results) {
+                if (state.results.hashCode() != answered) {
+                    answered = state.results.hashCode()
+                    list.scrollToItem(0)
+                }
+            }
+            LazyColumn(Modifier.weight(1f).testTag("searchResults"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
                 if (state.results.isNotEmpty()) {
                     item(key = "heading") {
                         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -225,7 +254,8 @@ fun SearchScreen(
                 }
                 itemsIndexed(state.results, key = { index, book -> "$index-${book.title}-${book.isbn}" }) { _, book ->
                     val owned = library.any { it.isbn.isNotBlank() && it.isbn == book.isbn }
-                    ResultRow(book, owned) { keyboard?.hide(); viewModel.preview(book) }
+                    val onCart = cart.entryOf(book.toBook()) != null
+                    ResultRow(book, owned, onCart, onToggleCart = { viewModel.toggleCart(book) }) { keyboard?.hide(); viewModel.preview(book) }
                     HorizontalDivider(Modifier.padding(start = 84.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 item(key = "footer") {
@@ -262,12 +292,14 @@ fun SearchScreen(
             onAdd = { status -> viewModel.add(book, status) { id -> viewModel.preview(null); onOpenBook(id) } },
             onEditFirst = { viewModel.preview(null); onManual(book.toBook()) },
             onOpenExisting = { id -> viewModel.preview(null); onOpenBook(id) },
+            onCart = cart.entryOf(book.toBook()) != null,
+            onToggleCart = { status -> viewModel.toggleCart(book, status); viewModel.preview(null) },
         )
     }
 }
 
 @Composable
-private fun ResultRow(book: RemoteBook, owned: Boolean, onClick: () -> Unit) {
+private fun ResultRow(book: RemoteBook, owned: Boolean, onCart: Boolean, onToggleCart: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -283,6 +315,8 @@ private fun ResultRow(book: RemoteBook, owned: Boolean, onClick: () -> Unit) {
             val meta = book.metaLine()
             if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (owned) Text(stringResource(R.string.add_already_in_library), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            // Several books of one search, one tap each: a series is found once and put on the cart volume by volume.
+            CartToggle(onCart, onToggleCart, Modifier.testTag("cartToggle_" + Cart.keyOf(book.toBook())))
         }
     }
 }

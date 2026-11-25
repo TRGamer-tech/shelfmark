@@ -5,9 +5,9 @@ package ch.schmidtbit.shelfmark.ui
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.scaleIn
@@ -71,8 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -87,6 +87,8 @@ import ch.schmidtbit.shelfmark.data.repo.ImportResult
 import ch.schmidtbit.shelfmark.data.repo.Keep
 import ch.schmidtbit.shelfmark.data.repo.SyncResult
 import ch.schmidtbit.shelfmark.data.repo.RejectReason
+import ch.schmidtbit.shelfmark.ui.add.CartIcon
+import ch.schmidtbit.shelfmark.ui.add.CartScreen
 import ch.schmidtbit.shelfmark.ui.add.ScanScreen
 import ch.schmidtbit.shelfmark.ui.add.SearchScreen
 import ch.schmidtbit.shelfmark.ui.detail.BookScreen
@@ -104,6 +106,7 @@ import ch.schmidtbit.shelfmark.ui.friends.ChooseLibraryDialog
 import ch.schmidtbit.shelfmark.ui.friends.serverProblemRes
 import ch.schmidtbit.shelfmark.ui.nav.BookRoute
 import ch.schmidtbit.shelfmark.ui.nav.CalendarRoute
+import ch.schmidtbit.shelfmark.ui.nav.CartRoute
 import ch.schmidtbit.shelfmark.ui.nav.MilestonesRoute
 import ch.schmidtbit.shelfmark.ui.nav.RecapRoute
 import ch.schmidtbit.shelfmark.ui.nav.EditRoute
@@ -176,6 +179,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     // Loans in which the next tap is the reader's own.
     val waitingLoans by container.social.waitingLoans.collectAsStateWithLifecycle(initialValue = 0)
     var adding by rememberSaveable { mutableStateOf(false) }
+    val cart by container.cart.cart.collectAsStateWithLifecycle()
     val back: () -> Unit = { nav.popBackStack() }
     val swipe = remember { BackSwipe() }
 
@@ -190,6 +194,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
         container.draft = draft
         nav.navigate(EditRoute())
     }
+    fun openCart() = nav.navigate(CartRoute) { launchSingleTop = true }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -222,16 +227,16 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             startDestination = LibraryRoute,
             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
             // A new page rises into place, the old one sinks back. A book comes forward
-            // out of the shelf (see its route below).
-            enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) slideInVertically(tween(TRANSITION_MS)) { it / 36 } else EnterTransition.None },
-            // Every ordinary change of page asks for one of these two, so this is where a swipe that came before is forgotten.
-            exitTransition = { swipe.revealing = false; fadeOut(tween(TRANSITION_MS)) },
+            // out of the shelf (see its route below). How the page below comes in is chosen
+            // for every change of page, so that is where the app notes whether a swipe uncovers it.
+            enterTransition = { swipe.revealing = false; fadeIn(tween(TRANSITION_MS)) + if (motion) slideInVertically(tween(TRANSITION_MS)) { it / 36 } else EnterTransition.None },
+            exitTransition = { fadeOut(tween(TRANSITION_MS)) },
             popEnterTransition = { swipe.revealing = false; fadeIn(tween(TRANSITION_MS)) },
             popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) slideOutVertically(tween(TRANSITION_MS)) { it / 36 } else ExitTransition.None },
             // Going back with a swipe from the edge (see BackSwipe.kt). The back button of the
             // three-button bar is no swipe: it takes the two pop transitions above.
             predictivePopEnterTransition = { _ -> swipe.revealing = motion; backSwipeEnter() },
-            predictivePopExitTransition = { edge -> backSwipeExit(motion, edge) },
+            predictivePopExitTransition = { edge -> backSwipeExit(backSwipeMove(motion, edge)) },
         ) {
             page<LibraryRoute>(swipe) {
                 LibraryScreen(
@@ -281,11 +286,18 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             }
             page<EditRoute>(swipe) { stackEntry ->
                 val route = stackEntry.toRoute<EditRoute>()
-                EditScreen(route.id, onBack = back, onSaved = { id -> if (route.id == 0L) openNewBook(id) else nav.popBackStack() })
+                EditScreen(route.id, onBack = back, onSaved = { id -> if (route.id == 0L) openNewBook(id) else nav.popBackStack() }, onOpenCart = ::openCart)
             }
-            page<ScanRoute>(swipe) { ScanScreen(onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor) }
+            page<ScanRoute>(swipe) { ScanScreen(onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor, onOpenCart = ::openCart) }
             page<SearchRoute>(swipe) { stackEntry ->
-                SearchScreen(stackEntry.toRoute<SearchRoute>().query, onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor, onScan = { nav.navigate(ScanRoute) })
+                SearchScreen(stackEntry.toRoute<SearchRoute>().query, onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor, onScan = { nav.navigate(ScanRoute) }, onOpenCart = ::openCart)
+            }
+            page<CartRoute>(swipe) {
+                CartScreen(onBack = back) { count ->
+                    Toast.makeText(context, context.resources.getQuantityString(R.plurals.cart_shelved, count, count), Toast.LENGTH_LONG).show()
+                    // The books are on the shelf, and so is the reader. The screens that found them are done.
+                    if (!nav.popBackStack<LibraryRoute>(inclusive = false)) openTab(LibraryRoute)
+                }
             }
             page<QuoteRoute>(swipe) { stackEntry ->
                 val route = stackEntry.toRoute<QuoteRoute>()
@@ -301,10 +313,12 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
 
     if (adding) {
         AddSheet(
+            cartCount = cart.count,
             onDismiss = { adding = false },
             onScan = { adding = false; nav.navigate(ScanRoute) },
             onSearch = { adding = false; nav.navigate(SearchRoute()) },
             onManual = { adding = false; openEditor(Book(title = "")) },
+            onCart = { adding = false; openCart() },
         )
     }
 
@@ -372,17 +386,25 @@ private inline fun <reified T : Any> NavGraphBuilder.page(
     noinline enterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition?)? = null,
     noinline popExitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition?)? = null,
     noinline content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
-) = composable<T>(enterTransition = enterTransition, popExitTransition = popExitTransition) { entry -> Revealed(swipe) { content(entry) } }
+) = composable<T>(
+    // NavHost asks a page with a way in of its own instead of the way in for all pages, so it notes the same.
+    enterTransition = enterTransition?.let { enter -> { swipe.revealing = false; enter() } },
+    popExitTransition = popExitTransition,
+) { entry -> Revealed(swipe) { content(entry) } }
 
-/** The three ways to add a book. */
+/** The three ways to add a book, and the cart where books wait that were found before. */
 @Composable
-private fun AddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onSearch: () -> Unit, onManual: () -> Unit) {
+private fun AddSheet(cartCount: Int, onDismiss: () -> Unit, onScan: () -> Unit, onSearch: () -> Unit, onManual: () -> Unit, onCart: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp)) {
             Text(stringResource(R.string.add_book), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             AddOption(Icons.Rounded.QrCodeScanner, stringResource(R.string.add_scan), stringResource(R.string.add_scan_hint), "addScan", onScan)
             AddOption(Icons.Rounded.Search, stringResource(R.string.add_search), stringResource(R.string.add_search_hint), "addSearch", onSearch)
             AddOption(Icons.Rounded.EditNote, stringResource(R.string.add_manual), stringResource(R.string.add_manual_hint), "addManual", onManual)
+            // The cart stays when the app is closed. This is the way back to it from the shelf.
+            if (cartCount > 0) {
+                AddOption(CartIcon, stringResource(R.string.cart_open), pluralStringResource(R.plurals.cart_count, cartCount, cartCount), "addCart", onCart)
+            }
         }
     }
 }

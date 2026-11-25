@@ -52,8 +52,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // Raise versionCode with every release, Android refuses to install a lower one over a higher one.
-        versionCode = 8
-        versionName = "1.5.0"
+        versionCode = 9
+        versionName = "1.6.0"
         buildConfigField("String", "SERVER_URL", "\"" + serverUrl.replace("\"", "") + "\"")
         buildConfigField("String", "SERVER_KEY", "\"" + serverKey.replace("\"", "") + "\"")
         buildConfigField("String", "WEBSITE_URL", "\"" + websiteUrl.replace("\"", "") + "\"")

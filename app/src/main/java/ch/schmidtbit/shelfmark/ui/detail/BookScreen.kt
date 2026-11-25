@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -92,8 +93,8 @@ import ch.schmidtbit.shelfmark.data.model.progress
 import ch.schmidtbit.shelfmark.data.model.withStatus
 import ch.schmidtbit.shelfmark.data.model.withStatusOf
 import ch.schmidtbit.shelfmark.ui.LocalContainer
-import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.awayWords
+import ch.schmidtbit.shelfmark.ui.components.BackButton
 import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import ch.schmidtbit.shelfmark.ui.components.DayPickerDialog
@@ -287,10 +288,11 @@ private fun countSuffix(count: Int) = if (count > 0) " ($count)" else ""
 
 @Composable
 private fun Header(book: Book) {
-    // On its own page a book that is away looks as it does on the shelf, and says why.
-    val away = awayWords(LocalContext.current.resources, book)
+    // On its own page a book that is away looks as it does on the shelf, and says why in words,
+    // which is also what a screen reader hears.
+    val away = awayWords(LocalResources.current, book)
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), verticalAlignment = Alignment.Bottom) {
-        BookCover(book.title, book.authors, book.coverModel(), Modifier.width(104.dp).testTag("bookCover"), elevation = 6.dp, away = away)
+        BookCover(book.title, book.authors, book.coverModel(), Modifier.width(104.dp).testTag("bookCover"), elevation = 6.dp, away = away != null)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(book.title, style = MaterialTheme.typography.headlineSmall, maxLines = 4, overflow = TextOverflow.Ellipsis)

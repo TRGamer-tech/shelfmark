@@ -1,10 +1,15 @@
 package ch.schmidtbit.shelfmark
 
 import android.content.Intent
+import androidx.activity.BackEventCompat
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -23,6 +28,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import ch.schmidtbit.shelfmark.data.SampleBooks
+import ch.schmidtbit.shelfmark.data.cart.Cart
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.BookFormat
@@ -92,14 +98,28 @@ private object FakeCatalogue : BookSource {
         title = "Der Vorleser", authors = listOf("Bernhard Schlink"), isbn = "9783257229530", publisher = "Diogenes", year = "1997",
         pageCount = 206, description = "Sie ist reizbar, rätselhaft und viel älter als er.", format = BookFormat.PAPERBACK, language = "de",
     )
+    /** A series, for the book cart: seven books that one search finds. */
+    val potter = listOf(
+        "der Stein der Weisen" to "9783551551672",
+        "die Kammer des Schreckens" to "9783551551689",
+        "der Gefangene von Askaban" to "9783551551696",
+        "der Feuerkelch" to "9783551551702",
+        "der Orden des Phönix" to "9783551551719",
+        "der Halbblutprinz" to "9783551551726",
+        "die Heiligtümer des Todes" to "9783551551733",
+    ).map { (title, isbn) -> RemoteBook(title = "Harry Potter und $title", authors = listOf("J. K. Rowling"), isbn = isbn, publisher = "Carlsen", language = "de", format = BookFormat.HARDCOVER) }
     val queries = mutableListOf<Pair<String, Boolean>>()
 
     override suspend fun search(query: String, limit: Int, lang: String, partial: Boolean): List<RemoteBook> {
         queries += query to partial
-        return if (query.contains("vorl", ignoreCase = true)) listOf(vorleser.copy(description = ""), RemoteBook("Vorlesungen", authors = listOf("G. W. F. Hegel"), year = "1837")) else emptyList()
+        return when {
+            query.contains("vorl", ignoreCase = true) -> listOf(vorleser.copy(description = ""), RemoteBook("Vorlesungen", authors = listOf("G. W. F. Hegel"), year = "1837"))
+            query.contains("potter", ignoreCase = true) -> potter
+            else -> emptyList()
+        }
     }
 
-    override suspend fun byIsbn(isbn: String, lang: String): RemoteBook? = vorleser.takeIf { it.isbn == isbn }
+    override suspend fun byIsbn(isbn: String, lang: String): RemoteBook? = (potter + vorleser).firstOrNull { it.isbn == isbn }
 }
 
 /**
@@ -335,6 +355,74 @@ class AppFlowTest {
     }.also {
         // The friends came by the app's code, which is news. A test that is about something else starts with a clean slate.
         clearNotifications()
+    }
+
+    /**
+     * What a screen reader hears of a book on the shelf besides its title: why it is away, or
+     * null for a book that is here. The shelf [listTag] is scrolled to the book first.
+     */
+    private fun awaySaid(listTag: String, title: String): String? {
+        waitForTag(listTag)
+        waitFor {
+            compose.mainClock.autoAdvance = true
+            val tried = runCatching { compose.onNodeWithTag(listTag).performScrollToNode(hasContentDescription(title)) }
+            compose.mainClock.autoAdvance = false
+            tried.isSuccess
+        }
+        return compose.onAllNodesWithContentDescription(title).fetchSemanticsNodes().first().config.getOrNull(SemanticsProperties.StateDescription)
+    }
+
+    /** Scrolls a list to the first of its items that says [text]. */
+    private fun scrollToText(listTag: String, text: String) {
+        waitForTag(listTag)
+        waitFor {
+            compose.mainClock.autoAdvance = true
+            val tried = runCatching { compose.onNodeWithTag(listTag).performScrollToNode(hasText(text, substring = true)) }
+            compose.mainClock.autoAdvance = false
+            tried.isSuccess
+        }
+    }
+
+    /** The text a node shows. It may be part of something that is tapped as a whole, so it is looked for among the parts. */
+    private fun textOf(tag: String): String =
+        compose.onAllNodesWithTag(tag, useUnmergedTree = true).onFirst().fetchSemanticsNode().config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString { it.text }
+
+    /** What is typed into a field. */
+    private fun inputOf(tag: String): String = compose.onAllNodesWithTag(tag).onFirst().fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+    /** Where a node is on the screen. */
+    private fun boundsOf(tag: String) = compose.onAllNodesWithTag(tag).onFirst().fetchSemanticsNode().boundsInRoot
+
+    private fun screenWidth(): Float {
+        var width = 0
+        scenario!!.onActivity { width = it.window.decorView.width }
+        return width.toFloat()
+    }
+
+    /** A swipe back from the [edge] of the screen that has come as far as [progress], with the finger still down. */
+    private fun swipeBack(edge: Int, progress: Float) {
+        val width = screenWidth()
+        val x = if (edge == BackEventCompat.EDGE_RIGHT) width - 4f else 4f
+        val moved = if (edge == BackEventCompat.EDGE_RIGHT) -width * progress else width * progress
+        // One step a frame, as a finger gives them.
+        scenario!!.onActivity { it.onBackPressedDispatcher.dispatchOnBackStarted(BackEventCompat(x, 900f, 0f, edge)) }
+        pause()
+        scenario!!.onActivity { it.onBackPressedDispatcher.dispatchOnBackProgressed(BackEventCompat(x + moved / 2, 900f, progress / 2, edge)) }
+        pause()
+        scenario!!.onActivity { it.onBackPressedDispatcher.dispatchOnBackProgressed(BackEventCompat(x + moved, 900f, progress, edge)) }
+        pause()
+    }
+
+    /** The finger leaves the screen past the point where the swipe counts. */
+    private fun letGo() {
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        settle()
+    }
+
+    /** The finger goes back to the edge it came from, and the swipe does not count. */
+    private fun takeSwipeBack() {
+        scenario!!.onActivity { it.onBackPressedDispatcher.dispatchOnBackCancelled() }
+        settle()
     }
 
     /** A book as it stands on the shelf of the app's account, seen from a friend's phone. */
@@ -1944,6 +2032,8 @@ class AppFlowTest {
             settle()
             openBook("Emma")
             waitForTag("bookOverview")
+            // While I have it, it is a book like any other.
+            assertTrue(!hasTag("bookAway"))
             scrollListTo("bookOverview", "bookLoan")
             waitForText("Ausgeliehen von Anna seit")
             waitForText("Zurück bis ${Dates.format(due)}")
@@ -1971,6 +2061,12 @@ class AppFlowTest {
             assertEquals("Anna", book("Emma").borrowedFrom)
             assertEquals(1, books().size)
             shot("76_read_not_mine")
+            // Given back before I finished it, it stands there as an outline of itself, until I say I read it.
+            waitFor { textOf("bookAway") == "An Anna zurückgegeben, nicht fertig gelesen" }
+            scrollListTo("bookOverview", "status_READ")
+            tap("status_READ")
+            waitFor { book("Emma").status == ReadingStatus.READ }
+            waitFor { !hasTag("bookAway") }
         } finally {
             anna.close()
         }
@@ -2058,6 +2154,8 @@ class AppFlowTest {
             // The page of my book shows the loan where the controls for lending by hand were.
             tap("loanBook")
             waitForTag("bookOverview")
+            // And the book is drawn away, with the words for it.
+            waitFor { textOf("bookAway") == "Verliehen an Ben" }
             scrollListTo("bookOverview", "bookLoan")
             waitForText("Verliehen an Ben seit")
             waitForTag("loan_close")
@@ -2084,6 +2182,7 @@ class AppFlowTest {
             waitFor { runBlocking { container.library.getBook(myDune) }!!.let { it.lentTo == "" && it.loanId == "" && it.lentSince == null } }
             waitForTag("lendable")
             waitForText("Als verliehen markieren")
+            waitFor { !hasTag("bookAway") }
             assertEquals(listOf("returned"), fakeServer.loanStatesOf(myEmail))
             // His copy stays with him as read, not his.
             runBlocking {
@@ -2510,5 +2609,385 @@ class AppFlowTest {
         back()
         waitForTag("spineShelf")
         shot("49_still_shelf")
+    }
+
+    @Test fun aBookThatIsNotHereStandsThereAsItsOutline() {
+        val today = Dates.today()
+        // Given back to Lena before it was finished: the copies a loan leaves, in every list.
+        fun givenBack(title: String, status: ReadingStatus, loan: String) =
+            Book(title = title, authors = "Lena Berg", pageCount = 200, currentPage = if (status == ReadingStatus.READING) 40 else 0, status = status, ownership = Ownership.NOT_OWNED, borrowedFrom = "Lena", loanId = loan)
+        runBlocking {
+            // Lent through a loan: what the loan writes on the lender's book while it is out.
+            container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", lentTo = "Ben", lentSince = today - 3, loanId = "7c1e2f30-5b0a-4d4e-8a61-0d9b6e2c4f11"))
+            container.library.addBook(Book(title = "Emma", authors = "Jane Austen"))
+            container.library.addBook(givenBack("Momo", ReadingStatus.NONE, "11111111-0000-4000-8000-000000000001"))
+            container.library.addBook(givenBack("Faust", ReadingStatus.READING, "11111111-0000-4000-8000-000000000002"))
+            container.library.addBook(givenBack("Der Prozess", ReadingStatus.WISHLIST, "11111111-0000-4000-8000-000000000003"))
+            container.library.addBook(givenBack("Die Wand", ReadingStatus.ABANDONED, "11111111-0000-4000-8000-000000000004"))
+            container.library.addBook(givenBack("Stiller", ReadingStatus.READ, "11111111-0000-4000-8000-000000000005"))
+            // Borrowed and still with the reader, and a wish that was never borrowed: both here.
+            container.library.addBook(Book(title = "Effi Briest", authors = "Theodor Fontane", ownership = Ownership.BORROWED, borrowedFrom = "Lena", loanId = "11111111-0000-4000-8000-000000000006"))
+            container.library.addBook(Book(title = "Siddhartha", authors = "Hermann Hesse", status = ReadingStatus.WISHLIST, ownership = Ownership.NOT_OWNED))
+            // Scrolling in a test waits until everything stands still. Without movement a book that changes jumps instead of fading.
+            container.settings.setMotion(false)
+        }
+        val unfinished = "An Lena zurückgegeben, nicht fertig gelesen"
+        start()
+
+        // Cover by cover, what a screen reader hears.
+        assertEquals("Verliehen an Ben", awaySaid("coverShelf", "Dune"))
+        listOf("Momo", "Faust", "Der Prozess", "Die Wand").forEach { assertEquals(it, unfinished, awaySaid("coverShelf", it)) }
+        listOf("Stiller", "Effi Briest", "Siddhartha", "Emma").forEach { assertNull(it, awaySaid("coverShelf", it)) }
+        // The book being read is one of them, and its card says so.
+        scrollListTo("coverShelf", "continueReading")
+        waitFor { textOf("awayWords") == unfinished }
+        shot("54_away_covers")
+
+        // The same on the spines.
+        appDoes { container.settings.setViewMode(ViewMode.SPINES) }
+        assertEquals("Verliehen an Ben", awaySaid("spineShelf", "Dune"))
+        assertEquals(unfinished, awaySaid("spineShelf", "Die Wand"))
+        assertNull(awaySaid("spineShelf", "Stiller"))
+        shot("55_away_spines")
+
+        // In the list the words stand next to the book.
+        appDoes { container.settings.setViewMode(ViewMode.LIST) }
+        scrollToText("bookList", "Verliehen an Ben")
+        scrollToText("bookList", unfinished)
+        shot("56_away_list")
+
+        // Given back unfinished and then read to the end: a book like any other.
+        scrollToText("bookList", "Momo")
+        tapText("Momo")
+        waitForTag("bookOverview")
+        waitFor { textOf("bookAway") == unfinished }
+        shot("57_away_book_page")
+        tap("status_READ")
+        waitFor { book("Momo").status == ReadingStatus.READ }
+        waitFor { !hasTag("bookAway") }
+        back()
+        appDoes { container.settings.setViewMode(ViewMode.COVERS) }
+        waitForTag("coverShelf")
+        assertNull(awaySaid("coverShelf", "Momo"))
+        // Read again, it is out of reach again.
+        runBlocking { container.library.setStatus(book("Momo").id, ReadingStatus.READING) }
+        waitFor { awaySaid("coverShelf", "Momo") == unfinished }
+
+        // Lent by hand: away until it is back.
+        runBlocking { container.library.modify(book("Emma").id) { it.copy(lentTo = "Clara", lentSince = today) } }
+        waitFor { awaySaid("coverShelf", "Emma") == "Verliehen an Clara" }
+        openBook("Emma")
+        waitForTag("bookOverview")
+        waitFor { textOf("bookAway") == "Verliehen an Clara" }
+        scrollListTo("bookOverview", "gotItBack")
+        tap("gotItBack")
+        waitFor { book("Emma").lentTo.isEmpty() }
+        waitFor { !hasTag("bookAway") }
+        back()
+        assertNull(awaySaid("coverShelf", "Emma"))
+
+        // What is lent out has a filter of its own, and there too it is drawn away.
+        // The chip is at the far end of the row of filters.
+        waitForText("Verliehen  1")
+        compose.mainClock.autoAdvance = true
+        compose.onAllNodesWithText("Verliehen  1").onFirst().performScrollTo()
+        compose.mainClock.autoAdvance = false
+        pause()
+        compose.onAllNodesWithText("Verliehen  1").onFirst().performClick()
+        waitForText("1 Buch")
+        assertEquals("Verliehen an Ben", awaySaid("coverShelf", "Dune"))
+    }
+
+    @Test fun threeVolumesOfOneSearchAreShelvedTogether() {
+        val potter = FakeCatalogue.potter
+        val holiday = runBlocking {
+            // The fourth volume stands on the shelf already, in another edition.
+            container.library.addBook(Book(title = potter[3].title, authors = "J. K. Rowling", isbn = "9783551354048"))
+            container.library.createShelf("Ferien")
+        }
+        start()
+        tap("addBook")
+        tap("addSearch")
+        type("searchField", "harry potter")
+        waitForText(potter[0].title)
+        // Seven books, one search: three of them onto the cart, one tap each.
+        fun toggle(book: RemoteBook) {
+            scrollListTo("searchResults", "cartToggle_" + Cart.keyOf(book.toBook()))
+            tap("cartToggle_" + Cart.keyOf(book.toBook()))
+        }
+        toggle(potter[0])
+        waitForText("1 Buch auf dem Bücherwagen")
+        toggle(potter[1])
+        toggle(potter[2])
+        waitForText("3 Bücher auf dem Bücherwagen")
+        waitForText("Auf dem Bücherwagen")
+        // The same button takes a book off again.
+        toggle(potter[1])
+        waitForText("2 Bücher auf dem Bücherwagen")
+        toggle(potter[1])
+        waitForText("3 Bücher auf dem Bücherwagen")
+        assertEquals(listOf(potter[0], potter[2], potter[1]).map { it.title }, container.cart.cart.value.items.map { it.book.title })
+        // A tap on a result still opens it, and from there it goes onto the shelf or onto the cart.
+        scrollListTo("searchResults", "cartToggle_" + Cart.keyOf(potter[3].toBook()))
+        tapText(potter[3].title)
+        waitForTag("previewSheet")
+        tap("previewCart")
+        waitForText("4 Bücher auf dem Bücherwagen")
+        waitFor { !hasTag("previewSheet") }
+        shot("24_search_cart")
+        assertEquals(1, books().size)
+
+        tap("openCart")
+        waitForTag("cartList")
+        // The one that is on the shelf already is said to be, and left out.
+        waitFor { hasTag("alreadyHere_" + Cart.keyOf(potter[3].toBook()), unmerged = true) }
+        waitForText("Alle 3 Bücher einräumen")
+        // For all of them: on the holiday list.
+        tap("all_list_$holiday")
+        waitFor { container.cart.cart.value.forAll.listIds == listOf(holiday) }
+        // The second volume is a wish, unlike the others.
+        tap("cartItem_" + Cart.keyOf(potter[1].toBook()))
+        waitForTag("cartOne")
+        tap("one_status_WISHLIST")
+        tap("cartOneDone")
+        waitFor { !hasTag("cartOne") }
+        // Then all of them are read, all but the one that was set apart.
+        tap("all_status_READ")
+        waitFor { container.cart.cart.value.forAll.status == ReadingStatus.READ }
+        waitFor { textOf("cartSettings_" + Cart.keyOf(potter[1].toBook())) == "Wunschliste · Nicht im Besitz · Ferien" }
+        assertEquals("Gelesen · Besitze ich · Ferien", textOf("cartSettings_" + Cart.keyOf(potter[0].toBook())))
+        shot("25_cart")
+
+        tap("shelveCart")
+        waitFor { latestToast() == "3 Bücher eingeräumt" }
+        // Shelved, the cart is empty and the reader is on the shelf.
+        waitForTag("coverShelf")
+        waitFor { container.cart.cart.value.count == 0 }
+        assertTrue(!hasTag("cartList"))
+        val shelved = books()
+        assertEquals(4, shelved.size)
+        val stone = shelved.single { it.title == potter[0].title }
+        assertEquals(ReadingStatus.READ, stone.status)
+        assertEquals(Ownership.OWNED, stone.ownership)
+        assertEquals(Dates.today(), stone.finishedOn)
+        assertEquals(potter[0].isbn, stone.isbn)
+        val chamber = shelved.single { it.title == potter[1].title }
+        assertEquals(ReadingStatus.WISHLIST, chamber.status)
+        assertEquals(Ownership.NOT_OWNED, chamber.ownership)
+        assertEquals(ReadingStatus.READ, shelved.single { it.title == potter[2].title }.status)
+        // The fourth was not put there a second time.
+        assertEquals(1, shelved.count { it.title == potter[3].title })
+        val onHoliday = runBlocking { container.library.links.first() }.filter { it.shelfId == holiday }.map { it.bookId }.toSet()
+        assertEquals(shelved.filter { it.title in potter.take(3).map(RemoteBook::title) }.map { it.id }.toSet(), onHoliday)
+        // Every one of them has an id of its own, made the way every id is made.
+        assertEquals(4, shelved.map { it.id }.toSet().size)
+    }
+
+    @Test fun theScannerPutsEveryBookStraightOntoTheCart() {
+        val potter = FakeCatalogue.potter
+        runBlocking { container.library.addBook(FakeCatalogue.vorleser.toBook()) }
+        start()
+        tap("addBook")
+        tap("addScan")
+        tap("cartStraight")
+        waitFor { container.cart.straight.value }
+
+        // A typed number is a scan: the book goes onto the cart, and the scanner waits for the next one.
+        retype("isbnField", potter[0].isbn)
+        tap("isbnLookup")
+        waitForText("Auf dem Bücherwagen: ${potter[0].title}")
+        waitForText("1 Buch auf dem Bücherwagen")
+        waitFor { hasTag("isbnField") && inputOf("isbnField").isEmpty() }
+        assertTrue(!hasTag("previewSheet"))
+        shot("32_scan_straight")
+
+        // The same book again is not put there twice.
+        retype("isbnField", potter[0].isbn)
+        tap("isbnLookup")
+        waitForText("Liegt schon auf dem Bücherwagen: ${potter[0].title}")
+        // Nor one that stands on the shelf.
+        retype("isbnField", FakeCatalogue.vorleser.isbn)
+        tap("isbnLookup")
+        waitForText("Steht schon in deinem Regal: Der Vorleser")
+        retype("isbnField", potter[1].isbn)
+        tap("isbnLookup")
+        waitForText("2 Bücher auf dem Bücherwagen")
+        assertEquals(listOf(potter[0].title, potter[1].title), container.cart.cart.value.items.map { it.book.title })
+        assertEquals(1, books().size)
+
+        // The switch stays as it was set, the next time too.
+        back()
+        tap("addBook")
+        tap("addScan")
+        waitFor { compose.onAllNodesWithTag("cartStraight").fetchSemanticsNodes().firstOrNull()?.config?.getOrNull(SemanticsProperties.ToggleableState) == ToggleableState.On }
+
+        // Without it, a scan opens the book as before, and the cart is one button of it.
+        tap("cartStraight")
+        waitFor { !container.cart.straight.value }
+        retype("isbnField", potter[2].isbn)
+        tap("isbnLookup")
+        waitForTag("previewSheet")
+        tap("previewCart")
+        waitForText("3 Bücher auf dem Bücherwagen")
+
+        tap("openCart")
+        waitForText("Alle 3 Bücher einräumen")
+        tap("shelveCart")
+        waitFor { latestToast() == "3 Bücher eingeräumt" }
+        waitFor { books().size == 4 }
+        waitForTag("coverShelf")
+    }
+
+    @Test fun theCartIsThereUntilItIsShelvedOrEmptied() {
+        start()
+        tap("addBook")
+        // An empty cart is not mentioned.
+        waitForTag("addManual")
+        assertTrue(!hasTag("addCart"))
+        // A book typed in by hand goes onto the cart, and the form goes back to where it came from.
+        tap("addManual")
+        type("fieldTitle", "Die Wand")
+        type("fieldAuthors", "Marlen Haushofer")
+        assertTrue(!hasTag("cartBar"))
+        scrollTo("editToCart")
+        tap("editToCart")
+        waitForTag("addBook")
+        settle()
+        assertEquals(listOf("Die Wand"), container.cart.cart.value.items.map { it.book.title })
+        assertTrue(books().isEmpty())
+
+        // While the cart holds books, every way of adding them says so.
+        tap("addBook")
+        waitForTag("addCart")
+        waitForText("1 Buch auf dem Bücherwagen")
+        tap("addSearch")
+        waitForTag("cartBar")
+        waitForText("1 Buch auf dem Bücherwagen")
+        back()
+        tap("addBook")
+        tap("addScan")
+        waitForTag("cartBar")
+        back()
+        tap("addBook")
+        tap("addManual")
+        waitForTag("cartBar")
+        tap("openCart")
+        waitForTag("cartList")
+        waitForText("Die Wand")
+        back()
+        back()
+
+        // The app is closed and opened again: the cart is still there.
+        scenario!!.close()
+        container.scope.cancel()
+        container.database.close()
+        container = AppContainer(
+            context = app,
+            database = AppDatabase.inMemory(app),
+            lookupOverride = BookLookup(listOf(FakeCatalogue)),
+            settingsStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "again.preferences_pb") },
+            coverProbeOverride = ImageProbe { false },
+            serverConfig = null,
+        )
+        app.container = container
+        start()
+        tap("addBook")
+        waitForText("1 Buch auf dem Bücherwagen")
+        tap("addCart")
+        waitForTag("cartList")
+        waitForText("Die Wand")
+        shot("26_cart_after_restart")
+
+        // Emptying it asks first.
+        tap("cartClear")
+        waitForText("Alle Bücher vom Wagen nehmen?")
+        tap("cartClearConfirm")
+        waitForTag("cartEmpty")
+        waitForText("Der Bücherwagen ist leer")
+        assertEquals(0, container.cart.cart.value.count)
+        back()
+        tap("addBook")
+        waitForTag("addManual")
+        assertTrue(!hasTag("addCart"))
+    }
+
+    @Test fun swipingBackMovesThePageAsideAndTakesItsOfferAlong() {
+        runBlocking { container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", pageCount = 600)) }
+        start()
+        openBook("Dune")
+        waitForTag("bookOverview")
+        settle()
+        val width = screenWidth()
+        // A move to another list offers to take it back, at the bottom of the page.
+        tap("status_READING")
+        waitForText("Rückgängig")
+
+        // The finger comes from the left edge and is halfway: the page is halfway to the right,
+        // as large as ever, and the shelf below shows under a veil.
+        val still = boundsOf("bookOverview")
+        swipeBack(BackEventCompat.EDGE_LEFT, 0.5f)
+        waitFor { kotlin.math.abs(boundsOf("bookOverview").left - width / 2) < width * 0.05f }
+        // Its top and bottom stay where they were: nothing is scaled.
+        assertEquals(still.top, boundsOf("bookOverview").top, 1f)
+        assertEquals(still.bottom, boundsOf("bookOverview").bottom, 1f)
+        assertTrue(hasTag("backVeil"))
+        // The offer went with the gesture: it does not stay behind where the page was.
+        waitFor { !hasText("Rückgängig") }
+        shot("17_swipe_back")
+
+        // Let go short of the point: the page comes back.
+        takeSwipeBack()
+        waitFor { kotlin.math.abs(boundsOf("bookOverview").left) < 1f }
+        waitFor { !hasTag("backVeil") }
+        assertTrue(!hasText("Rückgängig"))
+        // The move stays: only the offer to take it back went away.
+        assertEquals(ReadingStatus.READING, book("Dune").status)
+
+        // From the right edge the page goes to the left. What is off the screen is not measured, so its right edge tells.
+        swipeBack(BackEventCompat.EDGE_RIGHT, 0.3f)
+        waitFor { kotlin.math.abs(boundsOf("bookOverview").right - width * 0.7f) < width * 0.05f }
+        takeSwipeBack()
+        waitFor { kotlin.math.abs(boundsOf("bookOverview").left) < 1f }
+
+        // Past the point: the page leaves and the shelf is there, with nothing of the page left on it.
+        tap("status_READ")
+        waitForText("Rückgängig")
+        swipeBack(BackEventCompat.EDGE_LEFT, 0.7f)
+        letGo()
+        waitFor { !hasTag("bookOverview") }
+        waitForTag("coverShelf")
+        waitFor { !hasTag("backVeil") }
+        assertTrue(!hasText("Rückgängig"))
+        assertTrue(!hasTag("bookSnackbar"))
+        assertEquals(ReadingStatus.READ, book("Dune").status)
+
+        // The back button of the three-button bar is no swipe: it goes back the way it always did.
+        openBook("Dune")
+        waitForTag("bookOverview")
+        back()
+        waitFor { !hasTag("bookOverview") }
+        waitForTag("coverShelf")
+    }
+
+    @Test fun withoutMovementASwipeBackIsAPlainCut() {
+        runBlocking {
+            container.library.addBook(Book(title = "Dune", authors = "Frank Herbert", pageCount = 600))
+            container.settings.setMotion(false)
+        }
+        start()
+        openBook("Dune")
+        waitForTag("bookOverview")
+        settle()
+        tap("status_READING")
+        waitForText("Rückgängig")
+        swipeBack(BackEventCompat.EDGE_LEFT, 0.6f)
+        settle()
+        // Nothing moves and nothing darkens while the finger is down, but the offer is put away all the same.
+        assertEquals(0f, boundsOf("bookOverview").left, 1f)
+        assertTrue(!hasTag("backVeil"))
+        waitFor { !hasText("Rückgängig") }
+        letGo()
+        waitFor { !hasTag("bookOverview") }
+        waitForTag("coverShelf")
     }
 }

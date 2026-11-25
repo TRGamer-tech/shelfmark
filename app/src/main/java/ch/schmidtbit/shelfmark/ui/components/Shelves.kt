@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import ch.schmidtbit.shelfmark.ui.theme.Serif
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -258,8 +259,12 @@ fun CoverShelf(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .bookPress { onClick(item) }
-                                        .semantics { contentDescription = item.title },
-                                    away = item.away,
+                                        .semantics {
+                                            contentDescription = item.title
+                                            // There is no room for the words next to a cover, so they are only heard.
+                                            item.away?.let { stateDescription = it }
+                                        },
+                                    away = item.away != null,
                                 )
                                 item.ribbon?.let { Ribbon(it, Modifier.align(Alignment.TopEnd).padding(end = 8.dp)) }
                             }
@@ -405,13 +410,16 @@ private fun Spine(item: ShelfItem, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
     Box(
         modifier
-            .away(item.away, shape)
+            .awayLook(item.away != null, shape)
             .width(width)
             .height(height)
             .clip(shape)
             // Lighter in the middle, darker at the edges: the spine is rounded.
             .background(Brush.horizontalGradient(listOf(lerpDark(base, 0.28f), lerpLight(base, 0.10f), lerpDark(base, 0.22f))))
-            .semantics { contentDescription = item.title },
+            .semantics {
+                contentDescription = item.title
+                item.away?.let { stateDescription = it }
+            },
     ) {
         Box(Modifier.fillMaxWidth().padding(top = 9.dp).height(2.dp).background(ink.copy(alpha = 0.45f)))
         Box(Modifier.fillMaxWidth().padding(top = 13.dp).height(1.dp).background(ink.copy(alpha = 0.30f)))

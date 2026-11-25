@@ -52,6 +52,20 @@ class LibraryRepository(private val db: AppDatabase, private val covers: CoverSt
         id
     }
 
+    /**
+     * Adds several books in one go, each with the lists of the reader's own it goes on, and
+     * returns their ids in the same order. A list that is gone in the meantime is left out.
+     */
+    suspend fun addBooks(books: List<Pair<Book, Collection<Long>>>): List<Long> = db.withTransaction {
+        val lists = db.shelves().all().mapTo(HashSet()) { it.id }
+        val now = System.currentTimeMillis()
+        books.map { (book, shelfIds) ->
+            val id = db.books().insert(book.copy(id = Ids.next(), addedAt = now, updatedAt = now))
+            shelfIds.filter { it in lists }.forEach { db.shelves().link(BookShelf(id, it)) }
+            id
+        }
+    }
+
     suspend fun updateBook(book: Book) {
         val previous = db.books().get(book.id)
         db.books().update(book.copy(updatedAt = System.currentTimeMillis()))

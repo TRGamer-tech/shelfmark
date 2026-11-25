@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
@@ -52,6 +53,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -76,8 +78,6 @@ import ch.schmidtbit.shelfmark.data.model.progress
 import ch.schmidtbit.shelfmark.data.repo.SortOrder
 import ch.schmidtbit.shelfmark.data.repo.ViewMode
 import ch.schmidtbit.shelfmark.ui.LocalContainer
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.platform.LocalResources
 import ch.schmidtbit.shelfmark.ui.awayWords
 import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.awayAmount
@@ -442,20 +442,28 @@ private fun Greeting(name: String, bookCount: Int) {
 /** The book being read, with a bookmark of how far along it is. One tap opens it. */
 @Composable
 private fun ContinueCard(book: Book, cover: Any?, onOpen: () -> Unit) {
+    // The book being read can be one that is not here: lent on, or given back before the end.
+    // Then the card is its outline, as on the website, and only the picture is see-through.
+    val words = awayWords(LocalResources.current, book)
+    val amount = awayAmount(words != null)
     Card(
         onClick = onOpen,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("continueReading"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .dashedOutline({ amount.value }, CardDefaults.shape, awayLine(), inset = 4.dp)
+            .testTag("continueReading"),
     ) {
-        // The book being read can be one that is not here: lent on, or given back before the end.
-        val words = awayWords(LocalResources.current, book)
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            BookCover(book.title, book.authors, cover, Modifier.width(44.dp), elevation = 2.dp, tiny = true, away = words)
+            BookCover(book.title, book.authors, cover, Modifier.width(44.dp).seeThrough { amount.value }, elevation = 2.dp, tiny = true)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.continue_reading), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (words != null) Text(words, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (words != null) {
+                    Text(words, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("awayWords"))
+                }
                 book.progress?.let { progress ->
                     Spacer(Modifier.height(6.dp))
                     AnimatedProgress(progress, Modifier.fillMaxWidth().height(6.dp))

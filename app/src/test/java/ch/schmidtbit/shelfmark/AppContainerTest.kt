@@ -9,8 +9,10 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import ch.schmidtbit.shelfmark.data.cart.Cart
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
 import ch.schmidtbit.shelfmark.data.remote.BookSource
 import ch.schmidtbit.shelfmark.data.remote.ImageProbe
@@ -25,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -127,6 +130,48 @@ class AppContainerTest {
         pass(5_000) { !app.server.status.value.running }
         assertEquals(before + 1, pushes())
         assertEquals(1L + before, server.revisionOf("anna@shelfmark.test"))
+    }
+
+    @Test fun shelvingTheCartIsOneJobAndTheAccountHearsOfItOnce() {
+        val nothing = object : BookSource {
+            override val name = "nothing"
+            override suspend fun search(query: String, limit: Int, lang: String, partial: Boolean): List<RemoteBook> = emptyList()
+            override suspend fun byIsbn(isbn: String, lang: String): RemoteBook? = null
+        }
+        val app = container(lookup = BookLookup(listOf(nothing)))
+        val holiday = appDoes {
+            assertTrue(app.server.signUp("ben@shelfmark.test", "geheim-ben") is SyncResult.Done)
+            app.library.addBook(Book(title = "Momo", authors = "Michael Ende"))
+            app.library.createShelf("Ferien")
+        }
+        appDoes {
+            app.cart.change { cart ->
+                cart.put(Book(title = "Emma", authors = "Jane Austen")).put(Book(title = "Dune", authors = "Frank Herbert")).put(Book(title = "Momo", authors = "Michael Ende"))
+                    .put(Book(title = "Faust", authors = "Goethe"))
+                    .forAll { it.withList(holiday, true) }
+                    .forOne(Cart.keyOf(Book(title = "Faust", authors = "Goethe"))) { it.withStatus(ReadingStatus.READ) }
+            }
+        }
+        // Whatever the books and the list set off has run its course.
+        pass(3 * AppContainer.AUTO_SYNC_MS)
+        pass(5_000) { !app.server.status.value.running }
+        val before = pushes()
+
+        // Momo is on the shelf already and stays there once.
+        assertEquals(3, appDoes { app.shelveCart() })
+        assertEquals(0, app.cart.cart.value.count)
+        val books = appDoes { app.library.allBooks() }
+        assertEquals(listOf("Dune", "Emma", "Faust", "Momo"), books.map { it.title }.sorted())
+        assertEquals(ReadingStatus.READ, books.single { it.title == "Faust" }.status)
+        val onHoliday = appDoes { app.library.links.first() }.filter { it.shelfId == holiday }.map { it.bookId }.toSet()
+        assertEquals(books.filter { it.title != "Momo" }.map { it.id }.toSet(), onHoliday)
+
+        // The three books reach the account with one sync, and nothing comes after it.
+        val giveUp = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        while (pushes() == before && System.nanoTime() < giveUp) pass(500)
+        pass(3 * AppContainer.AUTO_SYNC_MS)
+        pass(5_000) { !app.server.status.value.running }
+        assertEquals(before + 1, pushes())
     }
 
     @Test fun theLookInTheBackgroundComesEveryQuarterOfAnHourInPlaceOfTheOldOne() {

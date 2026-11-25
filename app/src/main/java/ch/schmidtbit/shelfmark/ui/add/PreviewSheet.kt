@@ -10,11 +10,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -50,7 +54,9 @@ fun RemoteBook.metaLine(): String = listOfNotNull(
 
 /**
  * What the catalogue knows about a book, with the choice of list to put it on.
- * [existingId] is set when the book is already in the library.
+ * [existingId] is set when the book is already in the library. With [onToggleCart] the
+ * book can also go onto the book cart, with the list chosen here, or come off it again
+ * when it is [onCart] already.
  */
 @Composable
 fun PreviewSheet(
@@ -60,6 +66,8 @@ fun PreviewSheet(
     onAdd: (ReadingStatus) -> Unit,
     onEditFirst: () -> Unit,
     onOpenExisting: (Long) -> Unit,
+    onCart: Boolean = false,
+    onToggleCart: ((ReadingStatus) -> Unit)? = null,
 ) {
     var status by rememberSaveable { mutableStateOf(ReadingStatus.NONE) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -99,6 +107,15 @@ fun PreviewSheet(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = onEditFirst, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.add_edit_first), maxLines = 1) }
                     Button(onClick = { onAdd(status) }, modifier = Modifier.weight(1f).testTag("confirmAdd")) { Text(stringResource(R.string.add_confirm), maxLines = 1) }
+                }
+            }
+            if (onToggleCart != null) {
+                Spacer(Modifier.height(8.dp))
+                // Not onto the shelf yet: onto the cart, to be shelved with others.
+                OutlinedButton(onClick = { onToggleCart(status) }, modifier = Modifier.fillMaxWidth().testTag("previewCart")) {
+                    Icon(if (onCart) Icons.Rounded.Check else CartIcon, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(if (onCart) R.string.cart_take_off else R.string.cart_put), maxLines = 1)
                 }
             }
         }

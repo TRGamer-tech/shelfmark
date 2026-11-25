@@ -15,6 +15,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class EditRoute(val id: Long = 0)
 @Serializable data object ScanRoute
 @Serializable data class SearchRoute(val query: String = "")
+@Serializable data object CartRoute
 /** quoteId = 0 creates a new quote, optionally for a given book. */
 @Serializable data class QuoteRoute(val quoteId: Long = 0, val bookId: Long = 0)
 @Serializable data class TimerRoute(val bookId: Long)

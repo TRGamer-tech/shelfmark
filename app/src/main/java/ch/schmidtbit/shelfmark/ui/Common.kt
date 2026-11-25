@@ -13,10 +13,11 @@ import android.content.res.Resources
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Away
 import ch.schmidtbit.shelfmark.data.model.Book
-import ch.schmidtbit.shelfmark.data.model.away
 import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
+import ch.schmidtbit.shelfmark.data.model.away
+import ch.schmidtbit.shelfmark.data.repo.LoanBooks
 import ch.schmidtbit.shelfmark.data.repo.SortOrder
 import java.io.File
 
@@ -71,11 +72,14 @@ fun ReadingStatus.label(): String = stringResource(labelRes())
  * null for a book that is here. They stand next to the book where there is room, and a
  * screen reader hears them wherever the book is drawn see-through.
  */
-fun awayWords(resources: Resources, book: Book): String? = when (book.away) {
-    Away.LENT -> resources.getString(R.string.book_away_lent, book.lentTo)
-    // Borrowed through a loan from somebody who gave no name: the name is not known, the fact is.
-    Away.RETURNED -> resources.getString(R.string.book_away_returned, book.borrowedFrom.ifBlank { resources.getString(R.string.friends_someone) })
-    null -> null
+fun awayWords(resources: Resources, book: Book): String? {
+    // A book that names nobody, or a friend who never gave themselves a name (LoanBooks.NO_NAME), is "someone", as on the website.
+    fun name(who: String) = who.trim().takeIf { it.isNotEmpty() && it != LoanBooks.NO_NAME } ?: resources.getString(R.string.friends_someone)
+    return when (book.away) {
+        Away.LENT -> resources.getString(R.string.book_away_lent, name(book.lentTo))
+        Away.RETURNED -> resources.getString(R.string.book_away_returned, name(book.borrowedFrom))
+        null -> null
+    }
 }
 
 /** What Coil should load for a book: the user's own photo, where this phone has it, wins over the catalogue cover. */

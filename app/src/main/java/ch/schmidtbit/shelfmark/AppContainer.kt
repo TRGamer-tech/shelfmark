@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import ch.schmidtbit.shelfmark.data.cart.CartStore
+import ch.schmidtbit.shelfmark.data.cart.ShelfCheck
+import ch.schmidtbit.shelfmark.data.cart.shelvedBook
 import ch.schmidtbit.shelfmark.data.db.AppDatabase
 import ch.schmidtbit.shelfmark.data.remote.BookLookup
 import ch.schmidtbit.shelfmark.data.remote.CoverFinder
@@ -28,6 +31,7 @@ import ch.schmidtbit.shelfmark.data.server.ServerConfig
 import ch.schmidtbit.shelfmark.data.repo.SettingsRepository
 import ch.schmidtbit.shelfmark.data.repo.SocialRepository
 import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.util.Dates
 import ch.schmidtbit.shelfmark.work.Notifier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -46,6 +50,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -65,6 +71,8 @@ class AppContainer(
     serverPoster: HttpPoster? = null,
     /** Where the website is published, if the build knows. */
     websiteUrl: String = BuildConfig.WEBSITE_URL,
+    /** Where the book cart is kept. On a phone a file next to the database, in a test wherever it likes. */
+    cartFile: java.io.File? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -76,6 +84,9 @@ class AppContainer(
     val library = LibraryRepository(database, covers)
     val social = SocialRepository(database, settings)
     val backup = BackupManager(database, covers)
+
+    /** The book cart: books found and waiting to be shelved. Kept on this phone only. */
+    val cart = CartStore(cartFile ?: java.io.File(appContext.filesDir, "cart.json"))
 
     val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -237,11 +248,60 @@ class AppContainer(
     /** Looks for a cover for a freshly added book that came without one. Runs in the background. */
     fun findCoverLater(bookId: Long) {
         launch {
-            val book = library.getBook(bookId) ?: return@launch
-            if (book.coverUrl.isNotBlank() || book.coverPath.isNotBlank()) return@launch
-            val url = runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull() ?: return@launch
+            val url = coverFor(bookId) ?: return@launch
             library.modify(bookId) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it }
         }
+    }
+
+    /**
+     * The same for books that were added together. What is found is written in one go, so
+     * that it reaches the account with one sync and not with one for each book.
+     */
+    fun findCoversLater(bookIds: List<Long>) {
+        if (bookIds.isEmpty()) return
+        launch {
+            val found = bookIds.mapNotNull { id -> coverFor(id)?.let { id to it } }
+            if (found.isNotEmpty()) bulk {
+                found.forEach { (id, url) -> library.modify(id) { if (it.coverUrl.isBlank() && it.coverPath.isBlank()) it.copy(coverUrl = url) else it } }
+            }
+        }
+    }
+
+    /** The cover the catalogues offer for a book that has none, or null. */
+    private suspend fun coverFor(bookId: Long): String? {
+        val book = library.getBook(bookId) ?: return null
+        if (book.coverUrl.isNotBlank() || book.coverPath.isNotBlank()) return null
+        return runCatching { coverFinder.best(book.title, book.authors, book.isbn, Locale.getDefault().language.ifBlank { "en" }) }.getOrNull()
+    }
+
+    // One shelving at a time: a second tap must not shelve the same books twice.
+    private val shelving = Mutex()
+
+    /**
+     * Shelves the book cart: every book on it goes onto the shelf as adding it alone would
+     * put it there, with its own settings or those for all, except the books that stand on
+     * the shelf already and are not wanted twice. It is one job, so the account gets the new
+     * books with one sync. The books that were on the cart leave it, those left out as well.
+     * Returns how many books went onto the shelf.
+     */
+    suspend fun shelveCart(): Int = shelving.withLock {
+        val loaded = cart.cart.value
+        if (loaded.items.isEmpty()) return@withLock 0
+        val today = Dates.today()
+        val ids = bulk {
+            val check = ShelfCheck(library.allBooks())
+            library.addBooks(
+                check.toShelve(loaded).map { item ->
+                    val settings = loaded.settingsOf(item)
+                    shelvedBook(item.book, settings, today) to settings.listIds
+                },
+            )
+        }
+        // A book put on the cart while this ran stays there.
+        val shelved = loaded.items.mapTo(HashSet()) { it.key }
+        cart.change { now -> now.copy(items = now.items.filter { it.key !in shelved }) }
+        findCoversLater(ids)
+        ids.size
     }
 
     /** Goes through every book without a cover, e.g. after importing a list from another app. */

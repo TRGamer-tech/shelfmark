@@ -49,7 +49,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -59,10 +58,10 @@ import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
 import ch.schmidtbit.shelfmark.data.model.Shelf
+import ch.schmidtbit.shelfmark.data.model.away
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.SectionTitle
-import ch.schmidtbit.shelfmark.ui.awayWords
 import ch.schmidtbit.shelfmark.ui.coverModelOf
 import ch.schmidtbit.shelfmark.ui.labelRes
 import ch.schmidtbit.shelfmark.ui.library.LibraryFilter
@@ -205,7 +204,7 @@ private fun ListCard(
             // A peek at the first few books on the list.
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 books.take(4).forEach { book ->
-                    BookCover(book.title, book.authors, coverModelOf(coverDir, book), Modifier.width(30.dp), cornerRadius = 2.dp, elevation = 1.dp, away = awayWords(LocalResources.current, book))
+                    BookCover(book.title, book.authors, coverModelOf(coverDir, book), Modifier.width(30.dp), cornerRadius = 2.dp, elevation = 1.dp, away = book.away != null)
                 }
             }
             if (onRename != null && onDelete != null) {
