@@ -157,6 +157,31 @@ A book is `available` to friends when it is owned, may be lent (`lendable`), is 
 by hand (`lentTo` is empty), and no loan of it is `agreed`, `handed`, `on_loan` or
 `given_back`. A client publishes again when a loan changes that.
 
+## Books that are away
+
+A book that is not in the reader's hands is drawn **away**: see-through (about 45 percent)
+with a dashed outline, like the outline left where something used to stand. Both clients
+decide it the same way, from the book alone:
+
+- **Lent:** `lentTo` is not blank. That is a book lent by hand and a book whose loan is
+  `on_loan` or `given_back` (the rules above write `lentTo`). It is solid again once it is
+  back, that is once `lentTo` is empty.
+- **Given back, not finished:** `ownership` is `NOT_OWNED`, `loanId` or `borrowedFrom` is
+  not blank (it was borrowed, by a loan or by hand), and `status` is not `READ`. Marking it
+  read makes it solid; any other status keeps it away.
+
+Everything else is drawn as usual: a borrowed book while the reader has it (`BORROWED`), a
+wish or a library copy that was never borrowed (`NOT_OWNED` with neither `loanId` nor
+`borrowedFrom`), and a book given back that is `READ`.
+
+Away is drawn wherever the library stands on a shelf: spines, covers and list, the shelves
+of the reader's own lists, search and filters, the book that is being read on the shelf's
+first card, and the cover on the book page. Statistics, calendar, recaps and milestones tell
+what happened and draw every book as usual. The words are said as well, for a screen reader
+and next to the book where there is room: `book_away_lent` ("Lent to Bo") and
+`book_away_returned` ("Given back to Lena, not finished"). Text stays readable: in the list
+the cover is see-through, the title and author are not.
+
 ## Friends who join
 
 Whoever types in a friend code is connected at once, and the owner of the code is not

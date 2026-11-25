@@ -59,6 +59,8 @@
     <string name="add_scan_hint">Kamera auf den ISBN-Code richten</string>
     <string name="add_search">Online suchen</string>
     <string name="add_search_hint">Nach Titel, Autor oder ISBN</string>
+    <string name="book_away_lent">Verliehen an %1$s</string>
+    <string name="book_away_returned">An %1$s zurückgegeben, nicht fertig gelesen</string>
     <string name="book_borrowed_from">Ausgeliehen von</string>
     <string name="book_delete">Buch löschen</string>
     <string name="book_delete_loan">Dieses Buch gehört zu einer Ausleihe. Schliesse zuerst die Ausleihe ab, dann kann das Buch entfernt werden.</string>
@@ -98,6 +100,19 @@
     <string name="calendar_year">Das Jahr %1$d</string>
     <string name="camera_permission_grant">Kamera erlauben</string>
     <string name="camera_permission_text">Shelfmark braucht die Kamera, um Barcodes zu scannen und Zitate zu fotografieren.</string>
+    <string name="cart_already_here">Steht schon in deinem Regal</string>
+    <string name="cart_clear">Bücherwagen leeren</string>
+    <string name="cart_clear_title">Alle Bücher vom Wagen nehmen?</string>
+    <string name="cart_each_hint">Tipp auf ein Buch, um es anders einzustellen als die übrigen.</string>
+    <string name="cart_empty">Der Bücherwagen ist leer. Such, scann oder tipp Bücher ein, leg sie auf den Wagen und räum alle auf einmal ein.</string>
+    <string name="cart_for_all">Für alle Bücher auf dem Wagen</string>
+    <string name="cart_on">Auf dem Bücherwagen</string>
+    <string name="cart_open">Bücherwagen öffnen</string>
+    <string name="cart_put">Auf den Bücherwagen</string>
+    <string name="cart_scan_straight">Direkt auf den Bücherwagen</string>
+    <string name="cart_scan_straight_hint">Jedes gescannte Buch kommt auf den Wagen, und die Kamera bleibt bereit für das nächste.</string>
+    <string name="cart_take_off">Vom Bücherwagen nehmen</string>
+    <string name="cart_title">Bücherwagen</string>
     <string name="choose_account">Die auf meinem Konto</string>
     <string name="choose_device">Die auf diesem Gerät</string>
     <string name="choose_merge">Beide zusammenführen</string>
@@ -635,6 +650,18 @@
     <plurals name="book_count">
         <item quantity="one">%d Buch</item>
         <item quantity="other">%d Bücher</item>
+    </plurals>
+    <plurals name="cart_count">
+        <item quantity="one">%d Buch auf dem Bücherwagen</item>
+        <item quantity="other">%d Bücher auf dem Bücherwagen</item>
+    </plurals>
+    <plurals name="cart_shelve">
+        <item quantity="one">%d Buch einräumen</item>
+        <item quantity="other">Alle %d Bücher einräumen</item>
+    </plurals>
+    <plurals name="cart_shelved">
+        <item quantity="one">%d Buch eingeräumt</item>
+        <item quantity="other">%d Bücher eingeräumt</item>
     </plurals>
     <plurals name="days">
         <item quantity="one">%d Tag</item>

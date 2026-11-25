@@ -60,6 +60,8 @@
     <string name="add_search">Search online</string>
     <string name="add_search_hint">By title, author or ISBN</string>
     <string name="app_name" translatable="false">Shelfmark</string>
+    <string name="book_away_lent">Lent to %1$s</string>
+    <string name="book_away_returned">Given back to %1$s, not finished</string>
     <string name="book_borrowed_from">Borrowed from</string>
     <string name="book_delete">Delete book</string>
     <string name="book_delete_loan">This book is part of a loan. End the loan first, then the book can be removed.</string>
@@ -99,6 +101,19 @@
     <string name="calendar_year">The year %1$d</string>
     <string name="camera_permission_grant">Allow camera</string>
     <string name="camera_permission_text">Shelfmark needs the camera to scan barcodes and to photograph quotes.</string>
+    <string name="cart_already_here">Already on your shelf</string>
+    <string name="cart_clear">Empty the cart</string>
+    <string name="cart_clear_title">Take every book off the cart?</string>
+    <string name="cart_each_hint">Tap a book to set it apart from the rest.</string>
+    <string name="cart_empty">The cart is empty. Search, scan or type in books, put them on the cart, and shelve them all at once.</string>
+    <string name="cart_for_all">For every book on the cart</string>
+    <string name="cart_on">On the cart</string>
+    <string name="cart_open">Open the cart</string>
+    <string name="cart_put">Put on the cart</string>
+    <string name="cart_scan_straight">Straight onto the cart</string>
+    <string name="cart_scan_straight_hint">Every book you scan goes onto the cart, and the camera stays ready for the next one.</string>
+    <string name="cart_take_off">Take off the cart</string>
+    <string name="cart_title">Book cart</string>
     <string name="choose_account">The one on my account</string>
     <string name="choose_device">The one on this device</string>
     <string name="choose_merge">Put both together</string>
@@ -636,6 +651,18 @@
     <plurals name="book_count">
         <item quantity="one">%d book</item>
         <item quantity="other">%d books</item>
+    </plurals>
+    <plurals name="cart_count">
+        <item quantity="one">%d book on the cart</item>
+        <item quantity="other">%d books on the cart</item>
+    </plurals>
+    <plurals name="cart_shelve">
+        <item quantity="one">Shelve %d book</item>
+        <item quantity="other">Shelve all %d books</item>
+    </plurals>
+    <plurals name="cart_shelved">
+        <item quantity="one">%d book shelved</item>
+        <item quantity="other">%d books shelved</item>
     </plurals>
     <plurals name="days">
         <item quantity="one">%d day</item>
