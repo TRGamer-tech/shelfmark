@@ -52,8 +52,8 @@ const PATHS = {
   done: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z",
   warning: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z",
   paste: "M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
-  // A library's book cart: two posts, a shelf with three books on it, and wheels.
-  cart: "M3 3h2v13h14V3h2v15H3zM7 6h2.5v9H7zM10.5 4h3v11h-3zM14.5 7H17v8h-2.5zM6.5 19a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM17.5 19a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z",
+  // A library's book cart, from the side: a handle, books standing on its board with the last one leaning, and two wheels.
+  cart: "M1 2h5v2H4.5v11H22v2H2.5V4H1zM6.5 6h3v9h-3zM10.5 4h3v11h-3zM14.5 7.5H17V15h-2.5zM17.9 8.3l2.3-.6 1.9 7.3h-2.4zM7 18.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM18 18.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4z",
 } as const;
 
 export type IconName = keyof typeof PATHS;

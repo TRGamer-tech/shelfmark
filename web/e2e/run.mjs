@@ -3004,7 +3004,7 @@ async function main() {
     "every page can be used by keyboard and names its controls",
     async () => {
       const dracula = bookOf((await vaultOf(anna)).vault, "Dracula");
-      for (const path of ["/", `/book?id=${dracula.id}`, `/book/edit?id=${dracula.id}`, "/add", "/add/manual", "/lists", "/quotes", "/stats", "/stats/goals", "/stats/calendar", "/stats/recap", "/stats/milestones", "/friends", "/friends/loans", "/settings"]) {
+      for (const path of ["/", `/book?id=${dracula.id}`, `/book/edit?id=${dracula.id}`, "/add", "/add/manual", "/add/cart", "/lists", "/quotes", "/stats", "/stats/goals", "/stats/calendar", "/stats/recap", "/stats/milestones", "/friends", "/friends/loans", "/settings"]) {
         await page.goto(`${WEB}${path}`);
         await page.locator("main#content h1").first().waitFor();
         await page.waitForTimeout(250);
@@ -3569,7 +3569,7 @@ async function main() {
         ],
         "/privacy": [
           "<title>Privacy notice - Shelfmark</title>",
-          "As of 24 November 2026",
+          "As of 25 November 2026",
           'href="mailto:martin@schmidtbit.ch"',
           "Vercel (Vercel Inc., USA)",
           "Shelfmark itself sets no cookies.",
@@ -3584,7 +3584,7 @@ async function main() {
         "/de/impressum": ["<title>Impressum - Shelfmark</title>", "privates, nicht kommerzielles Projekt und Open Source unter der MIT-Lizenz", 'href="mailto:martin@schmidtbit.ch"', "Deutsche Nationalbibliothek", 'href="/de/datenschutz"'],
         "/de/datenschutz": [
           "<title>Datenschutzerklärung - Shelfmark</title>",
-          "Stand: 24. November 2026",
+          "Stand: 25. November 2026",
           "Shelfmark selbst setzt keine Cookies.",
           "an 7 Kataloge: Open Library, Google Books, Apple Books, lobid, Deutsche Nationalbibliothek, K10plus und swisscovery",
           "Laut Google sendet das ML Kit Nutzungs- und Diagnosezahlen über sich selbst an Google.",
@@ -3616,7 +3616,7 @@ async function main() {
       await page.goto(`${WEB}/privacy`);
       await page.getByTestId("legal-privacy").waitFor();
       equal(await page.locator("h1").innerText(), "Privacy notice", "the headline");
-      equal(await page.getByTestId("as-of").innerText(), "As of 24 November 2026", "the day the notice is from");
+      equal(await page.getByTestId("as-of").innerText(), "As of 25 November 2026", "the day the notice is from");
       equal(await page.getByTestId("operator").innerText(), "E-mail: martin@schmidtbit.ch", "who answers, as far as it is filled in");
       equal(await page.evaluate(() => document.documentElement.lang), "en", "the language the page says it is in");
       equal(await page.evaluate(() => document.documentElement.dataset.world), "front", "the look of the page");
@@ -3646,7 +3646,7 @@ async function main() {
       await page.getByTestId("legal-privacy").waitFor();
       equal(page.url(), `${WEB}/de/datenschutz`, "the address of the German notice");
       equal((await page.locator("h1").innerText()).replaceAll(String.fromCharCode(0xad), ""), "Datenschutzerklärung", "its headline");
-      equal(await page.getByTestId("as-of").innerText(), "Stand: 24. November 2026", "the day, in German");
+      equal(await page.getByTestId("as-of").innerText(), "Stand: 25. November 2026", "the day, in German");
       equal(await page.getByTestId("operator").innerText(), "E-Mail: martin@schmidtbit.ch", "who answers");
       equal(await page.evaluate(() => document.documentElement.lang), "de", "the language the page says it is in");
       equal(await page.evaluate(() => localStorage.getItem("shelfmark.lang")), "de", "the choice of language is remembered");
@@ -4908,6 +4908,542 @@ async function main() {
     },
     null,
   );
+
+  // ------------------------------------------------------------------------------
+  console.log("\nBooks that are away, and the book cart");
+  {
+    /**
+     * How a book on the page is drawn: whether it is away, what it says, whether its
+     * outline is dashed in the colour of the theme for it, and how much of its picture
+     * can be seen.
+     */
+    const drawn = (locator) =>
+      locator.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--away)";
+        document.body.append(probe);
+        const line = getComputedStyle(probe).color;
+        probe.remove();
+        const style = getComputedStyle(element);
+        const picture = element.querySelector(".spine-body, .cover");
+        return {
+          away: element.classList.contains("away"),
+          words: element.getAttribute("data-away"),
+          dashed: style.outlineStyle === "dashed" && style.outlineColor === line,
+          bare: style.outlineColor === "rgba(0, 0, 0, 0)",
+          seen: Number(getComputedStyle(picture).opacity),
+        };
+      });
+    /** Waits until a book is drawn away (45 percent of it seen, a dashed outline) or as usual, the fade included. */
+    const awayIs = (locator, away, what) =>
+      until(async () => {
+        const look = await drawn(locator);
+        return away ? look.away && look.dashed && Math.abs(look.seen - 0.45) < 0.001 : !look.away && look.bare && look.seen === 1;
+      }, `${what} ${away ? "is drawn away" : "is drawn as usual"}`);
+    /** Text that is exactly this, for finding a book by its title. */
+    const exactly = (text) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+
+    // Lou lends, Vera borrows. Both read in a browser, and act on the loan as their phones would.
+    const lou = account("Lou");
+    const vera = account("Vera");
+    let loan = null;
+    let louContext = null;
+    let lp = null;
+    const louSpine = (name) => lp.locator(`.bookcase [aria-label="${name}"]`);
+
+    await test(
+      "a book that is away stands see-through with a dashed outline: lent by a loan or by hand, or given back unfinished, wherever the shelf is drawn",
+      async () => {
+        await signUpByApi(lou);
+        await signUpByApi(vera);
+        await rpc(vera.session.token, "shelfmark_add_friend", { p_code: (await rpc(lou.session.token, "shelfmark_hello")).code });
+        await rpc(lou.session.token, "shelfmark_vault_push", {
+          p_payload: {
+            exportedAt: 1,
+            books: [
+              { id: 101, title: "Momo", authors: "Michael Ende", pageCount: 304, status: "READ", readCount: 1, currentPage: 304, startedOn: today - 12, finishedOn: today, addedAt: 1, updatedAt: 1 },
+              { id: 102, title: "Emma", authors: "Jane Austen", pageCount: 474, addedAt: 2, updatedAt: 2 },
+              { id: 103, title: "Dune", authors: "Frank Herbert", pageCount: 896, status: "READING", currentPage: 120, startedOn: today - 9, addedAt: 3, updatedAt: 3 },
+              { id: 104, title: "Heidi", authors: "Johanna Spyri", pageCount: 250, status: "READ", readCount: 1, currentPage: 250, finishedOn: today - 20, addedAt: 4, updatedAt: 4 },
+              { id: 105, title: "Krabat", authors: "Otfried Preussler", pageCount: 320, addedAt: 5, updatedAt: 5 },
+              // Borrowed from Lena by hand, and given back before Lou finished it. It is the book Lou read in last.
+              { id: 106, title: "The Hobbit", authors: "J. R. R. Tolkien", pageCount: 310, ownership: "NOT_OWNED", borrowedFrom: "Lena", status: "READING", currentPage: 90, startedOn: today - 30, addedAt: 6, updatedAt: 6 },
+            ],
+            shelves: [{ id: 31, name: "Classics", position: 0, createdAt: 1 }],
+            links: [
+              { bookId: 102, shelfId: 31 },
+              { bookId: 104, shelfId: 31 },
+            ],
+            quotes: [],
+            prefs: { viewMode: "SPINES", profileName: "Lou" },
+          },
+          p_expected: 0,
+        });
+        // Vera borrows Momo, and has it.
+        loan = await rpc(vera.session.token, "shelfmark_loan_ask", { p_friend: lou.session.id, p_book: 101, p_info: { title: "Momo", authors: "Michael Ende", pageCount: 304 } });
+        await act(lou, loan.id, "agree", { p_due: today + 14 });
+        await act(lou, loan.id, "hand");
+        await act(vera, loan.id, "receive");
+
+        louContext = await newContext();
+        lp = await louContext.newPage();
+        await signInOnPage(lp, lou);
+        await lp.getByTestId("spine-shelf").waitFor();
+        // The first look at the server writes the loan on Lou's book.
+        await untilVault(lou, (v) => bookOf(v, "Momo").lentTo === "Vera" && bookOf(v, "Momo").loanId === loan.id, "Momo lent to Vera by the loan");
+        await awayIs(louSpine("Momo, Lent to Vera"), true, "Momo, out on a loan");
+
+        // Emma is lent by hand, to somebody without Shelfmark. Her page says so under the title, and her cover steps back.
+        await openBook(lp, lou, "Emma");
+        await awayIs(lp.getByTestId("book-cover"), false, "Emma's cover while she is at home");
+        await lp.getByTestId("mark-lent").click();
+        await lp.getByTestId("name-field").fill("Bo");
+        await lp.getByTestId("name-save").click();
+        await awayIs(lp.getByTestId("book-cover"), true, "the cover on Emma's page");
+        equal(await lp.getByTestId("away-words").innerText(), "Lent to Bo", "what Emma's page says");
+        equal(await lp.getByTestId("book-cover").getAttribute("data-away"), "Lent to Bo", "what the cover says");
+        await untilVault(lou, (v) => bookOf(v, "Emma").lentTo === "Bo", "Emma lent to Bo");
+
+        // On the shelf: spines. Emma stands on the shelf of unread books and on Lou's own list, away on both.
+        await lp.goto(`${WEB}/`);
+        await lp.getByTestId("spine-shelf").waitFor();
+        equal(await louSpine("Emma, Lent to Bo").count(), 2, "Emma, away on the shelf of her status and on the list Classics");
+        for (let i = 0; i < 2; i++) await awayIs(louSpine("Emma, Lent to Bo").nth(i), true, `Emma on shelf ${i + 1}`);
+        await awayIs(louSpine("Momo, Lent to Vera"), true, "Momo");
+        await awayIs(louSpine("The Hobbit, Given back to Lena, not finished"), true, "The Hobbit, borrowed by hand and given back");
+        for (const title of ["Dune", "Heidi", "Krabat"]) await awayIs(louSpine(title).first(), false, title);
+        // The book Lou reads in is the first card of the shelf, and it is away too.
+        await awayIs(lp.getByTestId("continue-reading"), true, "the book being read");
+        equal(await lp.getByTestId("continue-reading").getByTestId("away-words").innerText(), "Given back to Lena, not finished", "what the card says");
+        // With motion on and no wish for less of it, the change fades.
+        assert((await lp.locator(".bookcase .spine-body").first().evaluate((element) => getComputedStyle(element).transitionProperty)).includes("opacity"), "the picture of a spine fades");
+
+        // Covers.
+        await lp.getByTestId("view-menu").click();
+        await lp.getByTestId("view-COVERS").click();
+        await lp.getByTestId("cover-shelf").waitFor();
+        await awayIs(louSpine("Momo, Lent to Vera"), true, "Momo's cover");
+        await awayIs(louSpine("The Hobbit, Given back to Lena, not finished"), true, "the cover of The Hobbit");
+        await awayIs(louSpine("Dune").first(), false, "Dune's cover");
+
+        // The list: the cover is see-through, the words keep their full contrast.
+        await lp.getByTestId("view-menu").click();
+        await lp.getByTestId("view-LIST").click();
+        await lp.getByTestId("book-list").waitFor();
+        const row = (title) => lp.getByTestId("book-row").filter({ has: lp.locator(".book-row-title", { hasText: exactly(title) }) });
+        for (const title of ["Momo", "Emma", "The Hobbit"]) await awayIs(row(title), true, `${title} in the list`);
+        for (const title of ["Dune", "Heidi", "Krabat"]) await awayIs(row(title), false, `${title} in the list`);
+        const words = await row("Momo").evaluate((element) => {
+          const full = (node) => {
+            for (let at = node; at && at !== element.parentElement; at = at.parentElement) if (Number(getComputedStyle(at).opacity) !== 1) return false;
+            return true;
+          };
+          return { title: full(element.querySelector(".book-row-title")), authors: full(element.querySelector(".book-row-authors")), said: full(element.querySelector(".away-words")), text: element.querySelector(".away-words").textContent };
+        });
+        assert(words.title && words.authors && words.said, `the words of an away row are not see-through: ${JSON.stringify(words)}`);
+        equal(words.text, "Lent to Vera", "the words in the row");
+
+        // Search and filters.
+        await lp.getByTestId("toggle-search").click();
+        await lp.getByTestId("library-search").fill("emma");
+        await awayIs(row("Emma"), true, "Emma found by the search");
+        equal(await lp.getByTestId("book-row").count(), 1, "rows the search found");
+        await lp.getByTestId("toggle-search").click();
+        await lp.getByTestId("filter-lent").click();
+        await lp.getByTestId("book-count").filter({ hasText: "2 books" }).waitFor();
+        for (const title of ["Momo", "Emma"]) await awayIs(row(title), true, `${title} among the books lent out`);
+        await lp.getByTestId("filter-list_31").click();
+        await awayIs(row("Emma"), true, "Emma on the list Classics");
+        await awayIs(row("Heidi"), false, "Heidi on the list Classics");
+
+        // Statistics, calendar, recap and milestones tell what happened, and draw every book as usual.
+        for (const path of ["/stats", "/stats/calendar", "/stats/recap", "/stats/milestones"]) {
+          await lp.goto(`${WEB}${path}`);
+          await lp.locator("main#content h1").first().waitFor();
+          await lp.waitForTimeout(250);
+          equal(await lp.locator(".away, [data-away]").count(), 0, `books drawn away on ${path}`);
+        }
+        // Momo, read this month and lent now, is in the recap like any book.
+        await lp.goto(`${WEB}/stats/recap`);
+        await lp.locator('a[aria-label="Momo"]').first().waitFor();
+        deepAudit(await audit(lp), "the recap");
+      },
+      () => lp,
+    );
+
+    await test(
+      "the shelf with books that are away, in spines, covers and list, in a light and a dark theme",
+      async () => {
+        const dark = await newContext({ colorScheme: "dark", reducedMotion: "reduce" });
+        const dp = await dark.newPage();
+        await signInOnPage(dp, lou);
+        await dp.getByTestId("greeting").waitFor();
+        // The library follows the system here: one look at the page says whether it is dark.
+        const ground = await dp.evaluate(() => getComputedStyle(document.body).backgroundColor);
+        const [r, g, b] = ground.match(/\d+/g).map(Number);
+        assert(r + g + b < 200, `the dark theme is on: ${ground}`);
+        for (const [page, theme] of [
+          [lp, "light"],
+          [dp, "dark"],
+        ]) {
+          for (const view of ["SPINES", "COVERS", "LIST"]) {
+            await page.goto(`${WEB}/`);
+            await page.getByTestId("greeting").waitFor();
+            await page.getByTestId("view-menu").click();
+            await page.getByTestId(`view-${view}`).click();
+            await page.getByTestId(view === "SPINES" ? "spine-shelf" : view === "COVERS" ? "cover-shelf" : "book-list").waitFor();
+            const momo = view === "LIST" ? page.getByTestId("book-row").filter({ has: page.locator(".book-row-title", { hasText: exactly("Momo") }) }) : page.locator('.bookcase [aria-label="Momo, Lent to Vera"]');
+            await awayIs(momo, true, `Momo in the ${view.toLowerCase()} of the ${theme} theme`);
+            await page.waitForTimeout(500);
+            await shot(page, `away-${view.toLowerCase()}-${theme}`);
+          }
+        }
+        // Less movement was asked for in the dark browser: the change between away and here does not fade there.
+        await dp.getByTestId("view-menu").click();
+        await dp.getByTestId("view-SPINES").click();
+        await dp.getByTestId("spine-shelf").waitFor();
+        equal(await dp.locator(".bookcase .spine-body").first().evaluate((element) => getComputedStyle(element).transitionDuration), "0s", "how long the change of a spine takes with less movement");
+        await dark.close();
+      },
+      () => lp,
+    );
+
+    await test(
+      "the borrower's copy given back unfinished is away in every status but read, and marking it read makes it solid",
+      async () => {
+        const veraContext = await newContext({ viewport: PHONE });
+        const vp = await veraContext.newPage();
+        await signInOnPage(vp, vera);
+        const copy = bookOf(await untilVault(vera, (v) => bookOf(v, "Momo")?.ownership === "BORROWED", "Vera's copy of Momo"), "Momo");
+        await vp.goto(`${WEB}/book?id=${copy.id}`);
+        await vp.getByTestId("book-page").waitFor();
+        // While Vera has it, it is hers to read: solid.
+        await awayIs(vp.getByTestId("book-cover"), false, "Vera's copy while she has it");
+
+        // Vera gives it back. Until Lou says she has it, it is still lent on Lou's shelf.
+        await act(vera, loan.id, "give_back");
+        await lp.goto(`${WEB}/`);
+        await lp.getByTestId("view-menu").click();
+        await lp.getByTestId("view-SPINES").click();
+        await lp.getByTestId("spine-shelf").waitFor();
+        await lookNow(lp);
+        await lp.waitForTimeout(700);
+        await awayIs(louSpine("Momo, Lent to Vera"), true, "Momo, given back but not yet taken back");
+        await act(lou, loan.id, "take_back");
+        await until(async () => {
+          await lookNow(lp);
+          return (await louSpine("Momo").count()) > 0;
+        }, "Momo home on Lou's shelf");
+        await awayIs(louSpine("Momo"), false, "Momo, back at home");
+
+        // Vera's copy stays in her library, not hers, with the name of whom she gave it back to.
+        await until(async () => {
+          await lookNow(vp);
+          return (await vp.getByTestId("away-words").count()) > 0;
+        }, "Vera's copy is given back");
+        await awayIs(vp.getByTestId("book-cover"), true, "Vera's copy, given back unread");
+        equal(await vp.getByTestId("away-words").innerText(), "Given back to Lou, not finished", "what Vera's copy says");
+        const back = bookOf((await vaultOf(vera)).vault, "Momo");
+        equal(back.ownership, "NOT_OWNED", "Vera's copy is not hers");
+        equal(back.loanId, loan.id, "and keeps the loan");
+        equal(back.borrowedFrom, "Lou", "and whom it came from");
+        // Away in every status but read.
+        for (const status of ["READING", "ABANDONED", "WISHLIST", "NONE"]) {
+          await vp.getByTestId(`status-${status}`).click();
+          await untilVault(vera, (v) => (bookOf(v, "Momo").status ?? "NONE") === status, `Vera's copy is ${status}`);
+          await awayIs(vp.getByTestId("book-cover"), true, `Vera's copy, ${status}`);
+        }
+        await shot(vp, "away-book-phone");
+        // Read: solid like every other book.
+        await vp.getByTestId("status-READ").click();
+        await awayIs(vp.getByTestId("book-cover"), false, "Vera's copy, read");
+        equal(await vp.getByTestId("away-words").count(), 0, "words about being away once it is read");
+        await untilVault(vera, (v) => bookOf(v, "Momo").status === "READ", "Vera's copy is read");
+        await vp.goto(`${WEB}/`);
+        await vp.getByTestId("greeting").waitFor();
+        await awayIs(vp.locator('.bookcase [aria-label="Momo"]'), false, "Momo on Vera's shelf, read");
+        // Picked up again, it is away again.
+        await vp.goto(`${WEB}/book?id=${copy.id}`);
+        await vp.getByTestId("status-READING").click();
+        await awayIs(vp.getByTestId("book-cover"), true, "Vera's copy, read again from the start");
+        await veraContext.close();
+        await louContext.close();
+      },
+      () => lp,
+    );
+
+    // Cora fills a book cart.
+    const cora = account("Cora");
+    let coraContext = null;
+    let cp = null;
+    /** What the browser keeps of Cora's cart, read back. */
+    const kept = async () => JSON.parse((await cp.evaluate((id) => window.localStorage.getItem(`shelfmark.cart.${id}`), cora.session.id)) ?? "null");
+    const cartItem = (title) => cp.getByTestId("cart-item").filter({ has: cp.locator('[data-testid="cart-item-title"]', { hasText: exactly(title) }) });
+
+    await test(
+      "the book cart: three books from the search onto the cart, one set apart, all shelved with one save, each with its status, ownership and lists",
+      async () => {
+        await signUpByApi(cora);
+        await rpc(cora.session.token, "shelfmark_vault_push", {
+          p_payload: {
+            exportedAt: 1,
+            books: [{ id: 201, title: "Altes Buch ohne Code", authors: "Erika Muster", addedAt: 1, updatedAt: 1 }],
+            shelves: [
+              { id: 41, name: "Holiday", position: 0, createdAt: 1 },
+              { id: 42, name: "Series", position: 1, createdAt: 2 },
+            ],
+            links: [],
+            quotes: [],
+          },
+          p_expected: 0,
+        });
+        coraContext = await newContext();
+        cp = await coraContext.newPage();
+        await signInOnPage(cp, cora);
+        await cp.getByTestId("greeting").waitFor();
+        await waitSaved(cp);
+        const saves = [];
+        cp.on("request", (r) => {
+          if (r.url().endsWith("/rest/v1/rpc/shelfmark_vault_push")) saves.push(r.postDataJSON());
+        });
+        equal(await cp.getByTestId("nav-cart-count").count(), 0, "a cart counted in the navigation while it is empty");
+        await cp.getByTestId("add-book").click();
+        await cp.getByTestId("add-page").waitFor();
+        equal(await cp.getByTestId("cart-bar").count(), 0, "the bar of the cart while it is empty");
+        await cp.getByTestId("search-field").fill("vorleser");
+        await cp.getByTestId("search-submit").click();
+        await cp.getByTestId("results-heading").filter({ hasText: "Results" }).waitFor();
+        const row = (title) => cp.getByTestId("result-row").filter({ has: cp.locator(".book-row-title", { hasText: exactly(title) }) });
+        const toggle = (title) => row(title).getByTestId("cart-toggle");
+        const said = () => cp.getByTestId("cart-said").textContent();
+
+        // Every result has the button, and it says what it does and to which book.
+        equal(await cp.getByTestId("cart-toggle").count(), await cp.getByTestId("result-row").count(), "results with a button for the cart");
+        equal(await toggle("Der Vorleser").innerText(), "Put on the cart", "the button");
+        equal(await toggle("Der Vorleser").getAttribute("aria-label"), "Put on the cart: Der Vorleser", "the button, as a screen reader hears it");
+        await toggle("Der Vorleser").click();
+        equal(await toggle("Der Vorleser").getAttribute("aria-pressed"), "true", "the button of a book on the cart");
+        equal(await toggle("Der Vorleser").innerText(), "On the cart", "what it says then");
+        equal(await said(), "1 book on the cart", "what a screen reader is told");
+        // The same button takes it off, and puts it back.
+        await toggle("Der Vorleser").click();
+        equal(await toggle("Der Vorleser").getAttribute("aria-pressed"), "false", "the button once the book is off the cart");
+        equal(await said(), "0 books on the cart", "what a screen reader is told then");
+        equal(await cp.getByTestId("cart-bar").count(), 0, "the bar of an empty cart");
+        await toggle("Der Vorleser").click();
+        // By keyboard.
+        await toggle("Der Vorleser von Bernhard Schlink").focus();
+        await cp.keyboard.press("Enter");
+        equal(await toggle("Der Vorleser von Bernhard Schlink").getAttribute("aria-pressed"), "true", "a book put on the cart by keyboard");
+        // A result that is opened still offers to add it straight away, and the cart beside that.
+        await row("Der Vorleser von Bernhard Schlink (Lektürehilfe)").getByTestId("search-result").click();
+        await cp.getByTestId("preview").waitFor();
+        equal(await cp.getByTestId("confirm-add").innerText(), "Add", "adding straight onto the shelf");
+        equal(await cp.getByTestId("preview-cart").innerText(), "Put on the cart", "the cart in the preview");
+        await cp.getByTestId("preview-cart").click();
+        await cp.getByTestId("preview").waitFor({ state: "detached" });
+        equal(await toggle("Der Vorleser von Bernhard Schlink (Lektürehilfe)").getAttribute("aria-pressed"), "true", "the book put on the cart from its preview");
+        // A book that is on the shelf already goes onto the cart as well.
+        await toggle("Altes Buch ohne Code").click();
+        equal(await said(), "4 books on the cart", "what a screen reader is told");
+        equal(await cp.getByTestId("cart-bar-count").innerText(), "4 books on the cart", "the bar");
+        equal(await cp.locator('.sidebar [data-testid="nav-cart-count"]').innerText(), "4", "the count in the navigation");
+        assert((await cp.locator('.sidebar [data-testid="nav-shelf"]').textContent()).includes("4 books on the cart"), "the count in the navigation, in words");
+        equal(saves.length, 0, "saves while books go onto the cart");
+        deepAudit(await audit(cp), "the search with books on the cart");
+        await shot(cp, "cart-search");
+
+        await cp.getByTestId("cart-open").click();
+        await cp.getByTestId("cart-page").waitFor();
+        equal(await cp.getByTestId("cart-item").count(), 4, "books on the cart");
+        equal(await cartItem("Altes Buch ohne Code").getByTestId("cart-already-here").innerText(), "Already on your shelf", "the book that is here already");
+        equal(await cp.getByTestId("cart-left-out").innerText(), "1 book is already on your shelf and is left out", "what is left out");
+        equal(await cp.getByTestId("cart-shelve").innerText(), "Shelve all 3 books", "the button that shelves");
+        // For every book: read, mine, on the list Holiday.
+        await cp.getByTestId("cart-all-status-READ").click();
+        await cp.getByTestId("cart-all-list-41").click();
+        equal(await cartItem("Der Vorleser").getByTestId("cart-item-settings").innerText(), "Read · I own it · Holiday", "how a book will be shelved");
+        // One book is set apart, by keyboard: borrowed, being read, on the list Series alone.
+        const apart = cartItem("Der Vorleser von Bernhard Schlink");
+        await apart.getByTestId("cart-item-open").focus();
+        await cp.keyboard.press("Enter");
+        equal(await apart.getByTestId("cart-item-open").getAttribute("aria-expanded"), "true", "the book that was opened");
+        equal(await apart.getByTestId("cart-one-status-READ").getAttribute("aria-pressed"), "true", "an opened book starts from the settings for all");
+        await apart.getByTestId("cart-one-status-READING").click();
+        await apart.getByTestId("cart-one-own-BORROWED").click();
+        await apart.getByTestId("cart-one-list-41").click();
+        await apart.getByTestId("cart-one-list-42").click();
+        equal(await apart.getByTestId("cart-item-own").innerText(), "Set apart", "the mark of a book with settings of its own");
+        equal(await apart.getByTestId("cart-item-settings").innerText(), "Reading · Borrowed · Series", "how it will be shelved");
+        // What is set for all afterwards reaches the others and leaves it as it is.
+        await cp.getByTestId("cart-all-list-42").click();
+        equal(await cartItem("Der Vorleser").getByTestId("cart-item-settings").innerText(), "Read · I own it · Holiday · Series", "a book that goes with the rest");
+        equal(await apart.getByTestId("cart-item-settings").innerText(), "Reading · Borrowed · Series", "the book set apart");
+        deepAudit(await audit(cp), "the book cart");
+        await cp.waitForTimeout(300);
+        await shot(cp, "cart", { fullPage: true });
+
+        // A reload: the cart is still full, set as it was.
+        await cp.reload();
+        await cp.getByTestId("cart-page").waitFor();
+        equal(await cp.getByTestId("cart-item").count(), 4, "books on the cart after a reload");
+        equal(await apart.getByTestId("cart-item-settings").innerText(), "Reading · Borrowed · Series", "the book set apart, after a reload");
+        equal(await apart.getByTestId("cart-item-own").count(), 1, "still set apart after a reload");
+        equal(await cartItem("Der Vorleser").getByTestId("cart-item-settings").innerText(), "Read · I own it · Holiday · Series", "the settings for all, after a reload");
+        equal(saves.length, 0, "saves before shelving");
+
+        await cp.getByTestId("cart-shelve").click();
+        await cp.getByTestId("greeting").waitFor();
+        await cp.locator(".toast").filter({ hasText: "3 books shelved" }).waitFor();
+        const shelved = await untilVault(cora, (v) => v.books.length === 4, "the three books on Cora's shelf");
+        await waitSaved(cp);
+        // Long enough for a second save to show, should there be one.
+        await cp.waitForTimeout(1200);
+        equal(saves.length, 1, "saves for shelving the whole cart");
+        equal(saves[0].p_payload.books.length, 4, "books in that one save");
+        const vorleser = bookOf(shelved, "Der Vorleser");
+        const apartBook = bookOf(shelved, "Der Vorleser von Bernhard Schlink");
+        const guide = bookOf(shelved, "Der Vorleser von Bernhard Schlink (Lektürehilfe)");
+        for (const b of [vorleser, guide]) {
+          equal(b.status, "READ", `${b.title}: status`);
+          assert(!("ownership" in b), `${b.title} is owned, which is left out as the default`);
+          equal(b.finishedOn, today, `${b.title}: finished today`);
+        }
+        equal(apartBook.status, "READING", "the book set apart: status");
+        equal(apartBook.ownership, "BORROWED", "the book set apart: ownership");
+        equal(apartBook.startedOn, today, "the book set apart: started today");
+        const listsOf = (b) =>
+          shelved.links
+            .filter((l) => l.bookId === b.id)
+            .map((l) => l.shelfId)
+            .sort()
+            .join(",");
+        equal(listsOf(vorleser), "41,42", "the lists of Der Vorleser");
+        equal(listsOf(guide), "41,42", "the lists of the guide");
+        equal(listsOf(apartBook), "42", "the lists of the book set apart");
+        equal(shelved.books.filter((b) => b.title === "Altes Buch ohne Code").length, 1, "the book that was here already is not here twice");
+        equal(vorleser.isbn, "9783257229530", "what the catalogue knew came along");
+        for (const b of [vorleser, apartBook, guide]) assert(b.id > 9e14 && Number.isSafeInteger(b.id) && /^https:\/\//.test(b.coverUrl), `${b.title} has a website id and its cover`);
+        equal(new Set([vorleser.id, apartBook.id, guide.id]).size, 3, "every book its own id");
+        // The cart is empty, and nothing counts it any more.
+        equal(await cp.getByTestId("nav-cart-count").count(), 0, "the count in the navigation once the cart is shelved");
+        equal(await cp.getByTestId("fab-cart-count").count(), 0, "the count on the add button once the cart is shelved");
+        // How the books were shelved is kept for the next pile, as on the phone.
+        equal(JSON.stringify(await kept()), JSON.stringify({ forAll: { status: "READ", ownership: "OWNED", listIds: [41, 42] }, items: [] }), "what the browser keeps of a shelved cart");
+        await cp.goto(`${WEB}/add/cart`);
+        const empty = await cp.getByTestId("cart-empty").innerText();
+        assert(empty.startsWith("The cart is empty. Search for books or type them in, put them on the cart, and shelve them all at once."), `the empty cart: ${empty}`);
+        equal(await cp.getByTestId("cart-empty").getByRole("link").innerText(), "Search online", "the way on from an empty cart");
+      },
+      () => cp,
+    );
+
+    await test(
+      "the book cart takes a book by ISBN and one typed in, counts them on the way to the add page, keeps them through a reload, and is emptied after a question",
+      async () => {
+        await cp.goto(`${WEB}/add`);
+        await cp.getByTestId("search-field").fill("978-3-257-22953-0");
+        await cp.getByTestId("search-submit").click();
+        await cp.getByTestId("search-result").first().waitFor();
+        // Der Vorleser is on Cora's shelf since the cart. The search says so, and the cart takes it all the same.
+        await cp.getByTestId("already-owned").waitFor();
+        await cp.getByTestId("cart-toggle").first().click();
+        equal(await cp.getByTestId("cart-bar-count").innerText(), "1 book on the cart", "the bar after the ISBN");
+        // Typed in by hand, with a list chosen where it is typed in. The search is emptied first, or its ISBN would be the new book's.
+        await cp.getByTestId("search-field").fill("");
+        await cp.getByTestId("manual-entry").click();
+        await cp.getByTestId("book-form").waitFor();
+        equal(await cp.getByTestId("cart-bar-count").innerText(), "1 book on the cart", "the bar on the page for typing a book in");
+        await cp.getByTestId("field-title").fill("Ferientagebuch");
+        await cp.getByTestId("field-authors").fill("Cora Example");
+        await cp.getByTestId("field-pages").fill("120");
+        await cp.getByTestId("pick-WISHLIST").click();
+        equal(await cp.getByTestId("manual-cart").innerText(), "Put on the cart", "the button of the form");
+        await cp.getByTestId("manual-cart").click();
+        // Back at the search, for the next book, and told where this one went.
+        await cp.getByTestId("add-page").waitFor();
+        await cp.locator(".toast").filter({ hasText: "On the cart: Ferientagebuch" }).waitFor();
+        equal(await cp.getByTestId("cart-bar-count").innerText(), "2 books on the cart", "the bar after typing a book in");
+        equal(await cp.getByTestId("cart-said").textContent(), "2 books on the cart", "what a screen reader is told");
+        equal((await vaultOf(cora)).vault.books.length, 4, "books on the shelf while two wait on the cart");
+
+        // On the way to the add page: the navigation and the add button on the shelf count the cart. A reload changes nothing.
+        await cp.goto(`${WEB}/`);
+        await cp.getByTestId("greeting").waitFor();
+        equal(await cp.getByTestId("fab-cart-count").innerText(), "2", "the count on the add button");
+        equal(await cp.locator('.sidebar [data-testid="nav-cart-count"]').innerText(), "2", "the count in the navigation");
+        await cp.reload();
+        await cp.getByTestId("greeting").waitFor();
+        equal(await cp.getByTestId("fab-cart-count").innerText(), "2", "the count on the add button after a reload");
+        assert((await cp.getByTestId("add-book").textContent()).includes("2 books on the cart"), "the add button says it in words");
+        await cp.getByTestId("add-book").click();
+        await cp.getByTestId("cart-open").click();
+        await cp.getByTestId("cart-page").waitFor();
+        equal(await cp.getByTestId("cart-item").count(), 2, "books on the cart");
+        // Its list is the one chosen in the form, the rest is as for all.
+        equal(await cartItem("Ferientagebuch").getByTestId("cart-item-settings").innerText(), "Wishlist · Not mine · Holiday · Series", "the book typed in, with the list chosen for it");
+        equal(await cartItem("Der Vorleser").getByTestId("cart-item-settings").innerText(), "Read · I own it · Holiday · Series", "the book by ISBN, as for all since the last pile");
+        equal(await cartItem("Ferientagebuch").getByTestId("cart-item-own").count(), 1, "set apart by what was chosen in the form");
+        equal(await cartItem("Der Vorleser").getByTestId("cart-already-here").count(), 1, "the book that is on the shelf already");
+        equal(await cp.getByTestId("cart-shelve").innerText(), "Shelve 1 book", "the button while it is left out");
+        // Wanted all the same.
+        await cartItem("Der Vorleser").getByTestId("cart-anyway").check();
+        equal(await cp.getByTestId("cart-shelve").innerText(), "Shelve all 2 books", "the button once it is wanted twice");
+        equal(await cp.getByTestId("cart-left-out").count(), 0, "books left out");
+        // A book set apart goes with the rest again.
+        await cartItem("Ferientagebuch").getByTestId("cart-item-open").click();
+        await cartItem("Ferientagebuch").getByTestId("cart-like-rest").click();
+        equal(await cartItem("Ferientagebuch").getByTestId("cart-item-own").count(), 0, "the book that goes with the rest again");
+        equal(await cartItem("Ferientagebuch").getByTestId("cart-item-settings").innerText(), "Read · I own it · Holiday · Series", "and how it will be shelved then");
+        // Taken off one by one, and the rest after a question.
+        await cartItem("Der Vorleser").getByTestId("cart-take-off").click();
+        equal(await cp.getByTestId("cart-item").count(), 1, "books on the cart after taking one off");
+        equal(await cp.getByTestId("cart-said").textContent(), "1 book on the cart", "what a screen reader is told");
+        await cp.getByTestId("cart-clear").click();
+        const question = cp.getByTestId("cart-clear-dialog");
+        await question.waitFor();
+        assert((await question.innerText()).includes("Take every book off the cart?"), "the question");
+        await question.getByRole("button", { name: "Cancel" }).click();
+        await question.waitFor({ state: "detached" });
+        equal(await cp.getByTestId("cart-item").count(), 1, "books on the cart after saying no");
+        await cp.getByTestId("cart-clear").click();
+        await question.getByTestId("confirm").click();
+        await cp.getByTestId("cart-empty").waitFor();
+        equal(await cp.getByTestId("nav-cart-count").count(), 0, "the count in the navigation of an empty cart");
+        equal((await kept()).items.length, 0, "books the browser keeps of an emptied cart");
+        equal((await vaultOf(cora)).vault.books.length, 4, "books on the shelf after emptying the cart");
+
+        // On a phone: the bar above the navigation at the foot, and the count on the shelf's tab.
+        const phone = await newContext({ viewport: PHONE });
+        const pp = await phone.newPage();
+        await signInOnPage(pp, cora);
+        await pp.getByTestId("greeting").waitFor();
+        await pp.goto(`${WEB}/add`);
+        await pp.getByTestId("search-field").fill("vorleser");
+        await pp.getByTestId("search-submit").click();
+        await pp.getByTestId("results-heading").filter({ hasText: "Results" }).waitFor();
+        for (const index of [1, 2, 4]) await pp.getByTestId("cart-toggle").nth(index).click();
+        equal(await pp.locator('.bottombar [data-testid="nav-cart-count"]').innerText(), "3", "the count on the tab of the shelf");
+        deepAudit(await audit(pp), "the search on a phone");
+        await pp.waitForTimeout(300);
+        await shot(pp, "cart-search-phone");
+        await pp.getByTestId("cart-open").click();
+        await pp.getByTestId("cart-page").waitFor();
+        await pp.getByTestId("cart-item-open").first().click();
+        deepAudit(await audit(pp), "the cart on a phone");
+        await pp.waitForTimeout(300);
+        await shot(pp, "cart-phone", { fullPage: true });
+        // Signing out takes the cart along.
+        await pp.goto(`${WEB}/settings`);
+        await pp.getByTestId("sign-out").click();
+        await pp.getByTestId("login-form").waitFor();
+        equal(await pp.evaluate((id) => window.localStorage.getItem(`shelfmark.cart.${id}`), cora.session.id), null, "the cart after signing out");
+        await phone.close();
+        await coraContext.close();
+      },
+      () => cp,
+    );
+  }
 
   await benContext.close();
   await annaContext.close();

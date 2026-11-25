@@ -395,8 +395,11 @@ export function parseImport(text: string, clock: ImportClock = { now: Date.now()
 
 // ---- into the library ----
 
-/** Two records describe the same book when the ISBN matches, or title and first author do. */
-export function sameBook(a: Book, b: Book): boolean {
+/**
+ * Two records describe the same book when the ISBN matches, or title and first author do.
+ * The book cart (cart.ts) asks the same question, so that both say "already here" alike.
+ */
+export function sameBook(a: Pick<Book, "title" | "authors" | "isbn">, b: Pick<Book, "title" | "authors" | "isbn">): boolean {
   if (!blank(a.isbn) && a.isbn === b.isbn) return true;
   const first = (authors: string) => normalise(authors.split(",", 1)[0] ?? "");
   return normalise(a.title) === normalise(b.title) && first(a.authors) === first(b.authors);

@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { waitingCount } from "@/lib/loans";
 import { serverProblemKey } from "@/lib/supabase/errors";
 import { useAuth } from "./auth";
+import { useCart } from "./cart";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { useI18n } from "./i18n";
@@ -89,9 +90,10 @@ function Welcome() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const { signOut } = useAuth();
   const { status, problem, retry, loans } = useLibrary();
+  const { count: carted } = useCart();
   const pathname = usePathname();
   const timed = useTimedBook() !== null;
 
@@ -126,16 +128,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   ];
   const settings: NavItem = { href: "/settings", icon: "settings", label: t("settings_title") };
 
-  const link = (item: NavItem, badge = 0) => {
+  const link = (item: NavItem) => {
     const active = isActive(item, pathname);
+    // Loans that wait are counted on the way to the friends. Books on the cart are counted
+    // on the way to the shelf, where the add page is, so that a full cart is not forgotten.
+    const waits = item.href === "/friends" ? waiting : 0;
+    const cart = item.href === "/" ? carted : 0;
     return (
       <Link key={item.href} href={item.href} className={`nav-link ${active ? "nav-on" : ""}`} aria-current={active ? "page" : undefined} data-testid={`nav-${item.href === "/" ? "shelf" : item.href.slice(1)}`}>
         <span className="nav-icon">
           <Icon name={item.icon} />
-          {badge > 0 ? <span className="nav-badge">{badge}</span> : null}
+          {waits > 0 ? <span className="nav-badge">{waits}</span> : null}
         </span>
         <span className="nav-label">{item.label}</span>
-        {badge > 0 ? <span className="sr-only">{t("loans_waiting")}</span> : null}
+        {cart > 0 ? (
+          <span className="nav-cart" data-testid="nav-cart-count" title={plural("cart_count", cart)} aria-hidden="true">
+            <Icon name="cart" size={14} />
+            {cart}
+          </span>
+        ) : null}
+        {waits > 0 ? <span className="sr-only">{t("loans_waiting")}</span> : null}
+        {cart > 0 ? <span className="sr-only">{plural("cart_count", cart)}</span> : null}
       </Link>
     );
   };
@@ -149,7 +162,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link href="/" className="brand">
           Shelfmark
         </Link>
-        <div className="sidebar-links">{items.map((item) => link(item, item.href === "/friends" ? waiting : 0))}</div>
+        <div className="sidebar-links">{items.map((item) => link(item))}</div>
         <div className="sidebar-foot">
           <TimerLine />
           {link(settings)}
@@ -167,7 +180,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <TimerLine />
       </div>
       <nav className="bottombar" aria-label={t("web_menu")}>
-        {items.map((item) => link(item, item.href === "/friends" ? waiting : 0))}
+        {items.map((item) => link(item))}
       </nav>
     </div>
   );

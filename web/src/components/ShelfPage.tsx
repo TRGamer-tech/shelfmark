@@ -9,6 +9,7 @@ import { BookCover } from "@/components/BookCover";
 import { Icon } from "@/components/icons";
 import { useI18n } from "@/components/i18n";
 import { sortKeyOf, statusKey, viewKey } from "@/components/labels";
+import { useCart } from "@/components/cart";
 import { useLibrary } from "@/components/library";
 import { OrnamentDialog } from "@/components/OrnamentDialog";
 import { OrnamentView } from "@/components/Ornaments";
@@ -122,6 +123,7 @@ function BookRow({ book }: { book: Book }) {
 export function ShelfPage() {
   const { t, plural } = useI18n();
   const { vault, prefs, mutate } = useLibrary();
+  const { count: carted } = useCart();
   const router = useRouter();
   const params = useSearchParams();
   const [query, setQuery] = useState("");
@@ -209,6 +211,7 @@ export function ShelfPage() {
 
   // The book that was last read in, to pick up where one left off.
   const current = vault.books.filter((b) => b.status === "READING").sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const currentAway = current ? awayText(current) : null;
   const name = prefs.profileName.trim();
   const time = hour >= 5 && hour <= 10 ? "morning" : hour >= 11 && hour <= 17 ? "day" : hour >= 18 && hour <= 22 ? "evening" : "night";
   const greeting = name === "" ? t(`greeting_${time}`) : t(`greeting_${time}_name`, name);
@@ -242,16 +245,16 @@ export function ShelfPage() {
         <p className="muted">{plural("greeting_books", vault.books.length)}</p>
       </div>
       {current ? (
-        <Link href={`/book?id=${current.id}`} className={awayText(current) ? "continue-card away" : "continue-card"} data-testid="continue-reading" data-away={awayText(current) ?? undefined}>
+        <Link href={`/book?id=${current.id}`} className={currentAway ? "continue-card away" : "continue-card"} data-testid="continue-reading" data-away={currentAway ?? undefined}>
           <BookCover title={current.title} authors={current.authors} url={coverAddressOf(current)} tiny />
           <span className="grow">
             <span className="continue-label">{t("continue_reading")}</span>
             <span className="continue-title" style={{ display: "block" }}>
               {current.title}
             </span>
-            {awayText(current) ? (
+            {currentAway ? (
               <span className="away-words" data-testid="away-words">
-                {awayText(current)}
+                {currentAway}
               </span>
             ) : null}
             {progressOf(current) !== null ? (
@@ -397,6 +400,16 @@ export function ShelfPage() {
       <Link href="/add" className="fab" data-testid="add-book">
         <Icon name="add" />
         <span>{t("add_book")}</span>
+        {/* Books that wait on the cart are counted on the way to it. */}
+        {carted > 0 ? (
+          <>
+            <span className="fab-cart" data-testid="fab-cart-count" title={plural("cart_count", carted)} aria-hidden="true">
+              <Icon name="cart" size={14} />
+              {carted}
+            </span>
+            <span className="sr-only">{plural("cart_count", carted)}</span>
+          </>
+        ) : null}
       </Link>
       {decorating ? <OrnamentDialog shelfKey={decorating.key} shelfName={decorating.title} bookCount={decorating.count} onClose={() => setDecorating(null)} /> : null}
     </div>

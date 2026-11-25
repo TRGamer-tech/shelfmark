@@ -158,14 +158,15 @@ export function AuthProvider({ config, children }: { config: ServerConfig; child
 
   const signOut = useCallback(async () => {
     // What the site kept in this browser for the account goes with the sign-in: the copy
-    // of what was last shared with friends, a timer that is running, and how the loans
-    // stood. The next reader at this computer should find nothing of it.
+    // of what was last shared with friends, a timer that is running, how the loans stood,
+    // and the books on the cart. The next reader at this computer should find nothing of it.
     const id = (await client.auth.getSession().catch(() => null))?.data.session?.user.id;
     if (id) {
       try {
         window.localStorage.removeItem(`shelfmark.published.${id}`);
         window.localStorage.removeItem(`shelfmark.timer.${id}`);
         window.localStorage.removeItem(`shelfmark.loans.${id}`);
+        window.localStorage.removeItem(`shelfmark.cart.${id}`);
       } catch {
         // A browser that keeps nothing has nothing to remove.
       }

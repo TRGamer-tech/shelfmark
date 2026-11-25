@@ -1,17 +1,21 @@
 "use client";
 
 // Adding a book: search with suggestions while typing, by ISBN, or entirely by hand
-// (ui/add/SearchScreen.kt and PreviewSheet.kt).
+// (ui/add/SearchScreen.kt and PreviewSheet.kt). Every book that is found can go straight
+// onto the shelf or onto the book cart, to be shelved later with the others.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { BookCover } from "@/components/BookCover";
 import { ListChoice } from "@/components/BookForm";
+import { CartBar, useCart } from "@/components/cart";
 import { useI18n } from "@/components/i18n";
+import { Icon } from "@/components/icons";
 import { formatKey } from "@/components/labels";
 import { useLibrary } from "@/components/library";
 import { Button, Dialog, PageHead } from "@/components/ui";
+import { chosenWhereFound } from "@/lib/cart";
 import type { RemoteBook } from "@/lib/catalogue/remoteBook";
 import { authorLine, fillFrom, normalise, remoteBook, toBook } from "@/lib/catalogue/remoteBook";
 import { today } from "@/lib/dates";
@@ -61,6 +65,32 @@ function existingId(record: RemoteBook, library: Book[]): number | null {
   return owned ? owned.id : null;
 }
 
+/**
+ * The one button of a search result that puts the book on the cart, and takes it off
+ * again. It says which of the two it is, and with the title of the book, for whoever
+ * hears the list button by button.
+ */
+function CartToggle({ record }: { record: RemoteBook }) {
+  const { t } = useI18n();
+  const { entryOf, toggle } = useCart();
+  const on = entryOf({ title: record.title, authors: authorLine(record), isbn: record.isbn }) !== undefined;
+  const label = t(on ? "cart_on" : "cart_put");
+  return (
+    <button
+      type="button"
+      className={`result-cart ${on ? "result-cart-on" : ""}`}
+      aria-pressed={on}
+      aria-label={`${label}: ${record.title}`}
+      title={on ? t("cart_take_off") : label}
+      onClick={() => toggle(toBook(record))}
+      data-testid="cart-toggle"
+    >
+      <Icon name={on ? "check" : "cart"} size={20} />
+      <span className="result-cart-label">{label}</span>
+    </button>
+  );
+}
+
 function useMetaLine(): (book: RemoteBook) => string {
   const { t } = useI18n();
   // "2014 · 320 p. · Paperback", leaving out what is unknown.
@@ -73,6 +103,7 @@ function useMetaLine(): (book: RemoteBook) => string {
 export default function AddPage() {
   const { t, lang } = useI18n();
   const { vault, mutate } = useLibrary();
+  const { entryOf, put, takeOff } = useCart();
   const router = useRouter();
   const metaLine = useMetaLine();
   const [query, setQuery] = useState("");
@@ -183,12 +214,19 @@ export default function AddPage() {
     router.push(`/book?id=${id}`);
   };
 
+  // What was chosen in the preview is the book's own on the cart. Left alone, it goes with the rest.
+  const toCart = (record: RemoteBook) => {
+    put(toBook(record), chosenWhereFound(status, listIds));
+    setPreview(null);
+  };
+
   const manual = (book: Book) => {
     setDraft(book);
     router.push("/add/manual");
   };
 
   const previewExisting = preview ? existingId(preview, vault.books) : null;
+  const previewCarted = preview ? entryOf({ title: preview.title, authors: authorLine(preview), isbn: preview.isbn }) : undefined;
 
   return (
     <div className="page" data-testid="add-page">
@@ -218,20 +256,23 @@ export default function AddPage() {
           </div>
         ) : null}
         {results.map((book, index) => (
-          <button key={`${index}-${book.title}-${book.isbn}`} type="button" className="result" onClick={() => open(book)} data-testid="search-result">
-            {/* Result lists load the medium sized cover, the large one is kept for the library. */}
-            <BookCover title={book.title} authors={authorLine(book)} url={book.coverUrl !== "" ? book.coverUrl.replace("-L.jpg", "-M.jpg") : null} tiny />
-            <span className="grow">
-              <span className="book-row-title">{book.title}</span>
-              {book.authors.length > 0 ? <span className="book-row-authors">{authorLine(book)}</span> : null}
-              {metaLine(book) !== "" ? <span className="small muted book-row-authors">{metaLine(book)}</span> : null}
-              {existingId(book, vault.books) !== null ? (
-                <span className="status-word" data-testid="already-owned">
-                  {t("add_already_in_library")}
-                </span>
-              ) : null}
-            </span>
-          </button>
+          <div key={`${index}-${book.title}-${book.isbn}`} className="result-row" data-testid="result-row">
+            <button type="button" className="result" onClick={() => open(book)} data-testid="search-result">
+              {/* Result lists load the medium sized cover, the large one is kept for the library. */}
+              <BookCover title={book.title} authors={authorLine(book)} url={book.coverUrl !== "" ? book.coverUrl.replace("-L.jpg", "-M.jpg") : null} tiny />
+              <span className="grow">
+                <span className="book-row-title">{book.title}</span>
+                {book.authors.length > 0 ? <span className="book-row-authors">{authorLine(book)}</span> : null}
+                {metaLine(book) !== "" ? <span className="small muted book-row-authors">{metaLine(book)}</span> : null}
+                {existingId(book, vault.books) !== null ? (
+                  <span className="status-word" data-testid="already-owned">
+                    {t("add_already_in_library")}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+            <CartToggle record={book} />
+          </div>
         ))}
       </div>
 
@@ -255,6 +296,8 @@ export default function AddPage() {
         </Button>
       </div>
 
+      <CartBar />
+
       {preview ? (
         <Dialog
           title={t(previewExisting !== null ? "add_already_in_library" : "add_book")}
@@ -271,6 +314,23 @@ export default function AddPage() {
                 <Button variant="outline" onClick={() => manual(toBook(preview))} data-testid="edit-first">
                   {t("add_edit_first")}
                 </Button>
+                {previewCarted ? (
+                  <Button
+                    variant="outline"
+                    icon="check"
+                    onClick={() => {
+                      takeOff(previewCarted.key);
+                      setPreview(null);
+                    }}
+                    data-testid="preview-cart"
+                  >
+                    {t("cart_take_off")}
+                  </Button>
+                ) : (
+                  <Button variant="tonal" icon="cart" onClick={() => toCart(preview)} data-testid="preview-cart">
+                    {t("cart_put")}
+                  </Button>
+                )}
                 <Button onClick={() => add(preview)} data-testid="confirm-add">
                   {t("add_confirm")}
                 </Button>

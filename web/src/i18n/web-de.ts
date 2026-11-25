@@ -4,6 +4,8 @@ export const strings: Record<string, string> = {
   account_delete_text: "Dein Konto, deine Bibliothek auf dem Server (Bücher, Listen, Zitate, Notizen, Lesesitzungen und Ziele), was du mit Freunden teilst, deine Ausleihen mit ihnen und deine Verbindungen zu ihnen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen. Eine Kopie auf einem Handy bleibt auf diesem Handy.",
   account_everywhere: "Deine Bibliothek wird mit deinem Konto abgeglichen. Mit derselben Anmeldung ist sie auf deinem Handy dieselbe, in der Shelfmark-App.",
   book_delete_text: "«%1$s» wird mit allen Zitaten, Notizen, Käufen und Lesesitzungen entfernt.",
+  cart_each_hint: "Öffne ein Buch, um es anders einzustellen als die übrigen.",
+  cart_empty: "Der Bücherwagen ist leer. Such Bücher oder tipp sie ein, leg sie auf den Wagen und räum alle auf einmal ein.",
   friends_empty: "Noch keine Freunde. Gib jemandem deinen Code, oder gib einen Code ein, den du bekommen hast.",
   library_empty_text: "Suche nach Titel oder Autor, schlage ein Buch über die ISBN nach oder erfasse es von Hand.",
   quote_empty: "Noch keine Zitate. Tippe eine Textstelle ein oder füge eine aus einem E-Book ein.",
@@ -22,6 +24,7 @@ export const strings: Record<string, string> = {
   web_add_search: "Suchen",
   web_backup_restore: "Aus einer Datei wiederherstellen",
   web_book_missing: "Dieses Buch ist nicht in deiner Bibliothek.",
+  web_cart_anyway_hint: "Dann steht es zweimal in deinem Regal.",
   web_close_menu: "Schliessen",
   web_confirm_resend: "Mail nochmals senden",
   web_confirm_resent: "Die Mail wurde nochmals gesendet.",
@@ -129,6 +132,7 @@ export const strings: Record<string, string> = {
 };
 
 export const plurals: Record<string, { one: string; other: string }> = {
+  web_cart_left_out: { one: "%d Buch steht schon in deinem Regal und wird ausgelassen", other: "%d Bücher stehen schon in deinem Regal und werden ausgelassen" },
   web_covers_found: { one: "%d Cover gefunden", other: "%d Cover gefunden" },
   web_friend_books: { one: "%d Buch", other: "%d Bücher" },
   web_import_found: { one: "%d Buch in der Datei gefunden", other: "%d Bücher in der Datei gefunden" },

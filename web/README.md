@@ -44,7 +44,8 @@ It is a Next.js app (App Router, React, TypeScript, plain CSS). Runtime dependen
   revision with the conflict path (`sync.ts`), what friends get (`share.ts`, `social.ts`),
   loans between friends (`loans.ts`), what is news and how the reader is told (`news.ts`,
   `notices.ts`, `browserNotices.ts`), the earlier versions the server keeps (`history.ts`),
-  statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), themes (`theme.ts`),
+  statistics (`stats.ts`, `insights.ts`), the shelf (`shelf.ts`), which books are away
+  (`away.ts`), the book cart (`cart.ts`), themes (`theme.ts`),
   the seven book catalogues (`catalogue/`), lists of books from other apps
   (`csvImport.ts`) and the reading timer (`timer.ts`). Most of it is a port of the Kotlin
   code of the app, file by file, and says so at the top.
@@ -145,7 +146,11 @@ stand-in for the browser), earlier versions of the library, what the address say
 each kind leads, the script that decides between front page and shelf, picking the newest
 release of the app, the words, numbers and colours of the front page, the imprint and the
 privacy notice (who is named on them, and what they say about the code), the reading
-timer, and the texts. The
+timer, which books are away (every case of the contract, the loans that move a book in
+and out of it, and that its outline can be seen in every theme), the book cart (putting
+books on it and off, the settings for all and for one, books that stand on the shelf
+already, shelving as one change, and what the browser keeps of it, also when it is
+damaged), and the texts. The
 importer of lists from other apps is tested with the cases of
 the app's Kotlin test on the same two files (`test/fixtures/goodreads_export.csv` and
 `storygraph_export.csv`, copies of the app's test fixtures that are compared with the
@@ -234,6 +239,32 @@ The website does what the app does, with these exceptions:
   closed tab, and a line in the frame of the site leads back to it. It is not part of
   the library, a stopwatch on one screen means nothing on another. "Stop and log" opens
   the form for a reading session with the minutes filled in.
+- Books that are away (`../supabase/README.md`, "Books that are away"; `src/lib/away.ts`).
+  A book that is lent, by a loan or by hand, and a borrowed book that was given back
+  before it was finished stand see-through with a dashed outline in the colour `--away`,
+  which every theme works out so that it can be seen on the page, on a card and on the
+  shelf. Spines, covers, the list, the shelves of the reader's own lists, search and
+  filters, the card of the book being read and the cover on the book page draw it so;
+  statistics, calendar, recap and milestones do not. Only the picture is see-through: in
+  the list the title and the author keep their contrast. The words ("Lent to Bo") are
+  part of the name of a spine or a cover, and written next to the book where there is
+  room. The change between away and here fades, unless the reader turned the lively
+  shelf off or the system asks for less movement.
+- The book cart (`/add/cart`, `src/lib/cart.ts`, `src/components/cart.tsx`). Every
+  search result, a book found by its ISBN and a book typed in by hand can go onto the
+  cart instead of straight onto the shelf. On the cart, status, ownership and the
+  reader's own lists are set for all books at once, and a book that is opened and
+  changed keeps its own settings from then on (a list chosen where the book was found or
+  typed in counts as such a change). A book that stands on the shelf already, by the
+  rule of the import below, is marked and left out unless it is wanted all the same.
+  Shelving is one change to the library and so one save. The covers that are missing
+  are looked for afterwards and saved together. Shelving or emptying the cart takes the
+  books off it and leaves the settings for all as they were, for the next pile, as the
+  app does. The cart is kept in the storage of the browser, one per account
+  (`shelfmark.cart.<user id>`), never on the server, and goes when the reader signs out. While it holds books, the add pages show a bar that leads
+  to it, and the shelf's entry in the navigation and the button that adds a book count
+  them. A picture uploaded for a book typed in by hand goes onto the cart with it, and
+  is taken off the server when the book leaves the cart without being shelved.
 - Lists from other apps are imported in the settings ("Import from other apps"): a
   Goodreads or StoryGraph export, or any CSV with a title column. The file is read in
   the browser. A preview says how many books were found, which are new, which are here

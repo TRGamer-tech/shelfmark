@@ -6,6 +6,9 @@ export const strings: Record<string, string> = {
   account_delete_text: "Your account, your library on the server (books, lists, quotes, notes, reading sessions and goals), what you share with friends, your loans with them and your connections to them are deleted for good. This cannot be undone. A copy on a phone stays on that phone.",
   account_everywhere: "Your library is kept in step with your account. With the same sign-in it is the same on your phone, in the Shelfmark app.",
   book_delete_text: "“%1$s” will be removed together with its quotes, notes, purchases and reading sessions.",
+  // The website has no camera, and nothing is tapped on it.
+  cart_each_hint: "Open a book to set it apart from the rest.",
+  cart_empty: "The cart is empty. Search for books or type them in, put them on the cart, and shelve them all at once.",
   friends_empty: "No friends yet. Give your code to someone, or enter theirs.",
   library_empty_text: "Search by title or author, look a book up by its ISBN, or type it in by hand.",
   quote_empty: "No quotes yet. Type a passage in or paste one from an e-book.",
@@ -24,6 +27,7 @@ export const strings: Record<string, string> = {
   web_add_search: "Search",
   web_backup_restore: "Restore from a file",
   web_book_missing: "This book is not in your library.",
+  web_cart_anyway_hint: "It will then stand on your shelf twice.",
   web_close_menu: "Close",
   web_confirm_resend: "Send the mail again",
   web_confirm_resent: "The mail was sent again.",
@@ -131,6 +135,7 @@ export const strings: Record<string, string> = {
 };
 
 export const plurals: Record<string, { one: string; other: string }> = {
+  web_cart_left_out: { one: "%d book is already on your shelf and is left out", other: "%d books are already on your shelf and are left out" },
   web_covers_found: { one: "%d cover found", other: "%d covers found" },
   web_friend_books: { one: "%d book", other: "%d books" },
   web_import_found: { one: "%d book found in the file", other: "%d books found in the file" },

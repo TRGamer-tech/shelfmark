@@ -5,6 +5,7 @@
 // makes of it. The cart is kept in the browser and does not go to the account.
 
 import { normalise } from "./catalogue/remoteBook.ts";
+import { sameBook } from "./csvImport.ts";
 import type { Book, Ownership, ReadingStatus } from "./model.ts";
 import { OWNERSHIPS, READING_STATUSES, bookCodec } from "./model.ts";
 import type { Change } from "./mutations.ts";
@@ -44,18 +45,40 @@ export function emptyCart(): Cart {
   return { forAll: { ...USUAL_SETTINGS, listIds: [] }, items: [] };
 }
 
+/**
+ * Every book off the cart. How books are shelved stays as the reader set it, for the next
+ * pile, as on the phone.
+ */
+export function emptied(cart: Cart): Cart {
+  return cart.items.length === 0 ? cart : { ...cart, items: [] };
+}
+
+/** Whether there is anything to keep of a cart: a book on it, or settings that are not the usual ones. */
+export function worthKeeping(cart: Cart): boolean {
+  const usual = cart.forAll.status === USUAL_SETTINGS.status && cart.forAll.ownership === USUAL_SETTINGS.ownership && cart.forAll.listIds.length === 0;
+  return cart.items.length > 0 || !usual;
+}
+
+/**
+ * What a book found or typed in takes onto the cart as its own: the list chosen where it
+ * was found or typed in, and the reader's own lists chosen there. Null when both were left
+ * alone: then it goes with the rest. What was not chosen comes from the settings for all.
+ */
+export function chosenWhereFound(status: ReadingStatus, listIds: readonly number[]): Partial<CartSettings> | null {
+  const chosen: Partial<CartSettings> = {};
+  if (status !== "NONE") chosen.status = status;
+  if (listIds.length > 0) chosen.listIds = [...listIds];
+  return Object.keys(chosen).length > 0 ? chosen : null;
+}
+
 type Named = Pick<Book, "title" | "authors" | "isbn">;
 
 const firstAuthor = (authors: string) => normalise(authors.split(",", 1)[0] ?? "");
 
-/**
- * The same book: the same ISBN, or the same title and first author. It is the rule the
- * search uses to say "already in your library", and the one the import of lists uses.
- */
-export function sameBook(a: Named, b: Named): boolean {
-  if (a.isbn.trim() !== "" && a.isbn.trim() === b.isbn.trim()) return true;
-  return normalise(a.title) === normalise(b.title) && firstAuthor(a.authors) === firstAuthor(b.authors);
-}
+// The same book is the same ISBN, or the same title and first author: what the import of
+// lists from other apps decides (csvImport.ts), so that the cart and the import never
+// disagree about what stands on the shelf already.
+export { sameBook };
 
 /** What a book goes by on the cart. Two records of the same edition have the same key. */
 export function cartKeyOf(book: Named): string {
@@ -70,11 +93,12 @@ export function onCart(cart: Cart, book: Named): CartItem | undefined {
 /**
  * Puts a book on the cart, at the end. A book that is on it already is not put there a
  * second time. [own] sets it apart at once, for a book whose list was chosen where it
- * was typed in.
+ * was found or typed in: what it names counts for this book, the rest comes from the
+ * settings for all as they are now.
  */
-export function putOnCart(cart: Cart, book: Book, own: CartSettings | null = null): Cart {
+export function putOnCart(cart: Cart, book: Book, own: Partial<CartSettings> | null = null): Cart {
   if (book.title.trim() === "" || onCart(cart, book)) return cart;
-  return { ...cart, items: [...cart.items, { key: cartKeyOf(book), book: { ...book, id: 0 }, own: own ? tidy(own) : null, anyway: false }] };
+  return { ...cart, items: [...cart.items, { key: cartKeyOf(book), book: { ...book, id: 0 }, own: own ? changed(cart.forAll, own) : null, anyway: false }] };
 }
 
 export function takeOffCart(cart: Cart, key: string): Cart {
@@ -119,6 +143,11 @@ export function settingsOf(cart: Cart, item: CartItem): CartSettings {
  */
 export function setOwn(cart: Cart, key: string, patch: Partial<CartSettings>): Cart {
   return { ...cart, items: cart.items.map((item) => (item.key === key ? { ...item, own: changed(settingsOf(cart, item), patch) } : item)) };
+}
+
+/** Lets a book that was set apart go with the rest again: from here on the settings for all count for it. */
+export function followForAll(cart: Cart, key: string): Cart {
+  return cart.items.some((item) => item.key === key && item.own !== null) ? { ...cart, items: cart.items.map((item) => (item.key === key ? { ...item, own: null } : item)) } : cart;
 }
 
 /** Whether the same book stands on the shelf already. */

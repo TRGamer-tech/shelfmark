@@ -9,6 +9,7 @@ import { serverConfig } from "@/lib/supabase/config";
 import { getVisitor, isHome, setVisitor, setWorld, subscribeVisitor } from "@/lib/visitor";
 import { AppShell } from "./AppShell";
 import { AuthProvider, useAuth } from "./auth";
+import { CartProvider } from "./cart";
 import { CoverJobProvider } from "./coverJob";
 import { FrontDesk } from "./FrontDesk";
 import { I18nProvider, useI18n } from "./i18n";
@@ -79,6 +80,7 @@ function useDailyPing() {
 // or does not exist, and "does not exist" is said to anybody, signed in or not.
 const LIBRARY_PATHS = new Set([
   "/add",
+  "/add/cart",
   "/add/manual",
   "/book",
   "/book/edit",
@@ -172,7 +174,9 @@ function Gate({ home, children }: { home: boolean; children: ReactNode }) {
     <LibraryProvider key={user.id}>
       <TimerProvider userId={user.id}>
         <CoverJobProvider>
-          <AppShell>{children}</AppShell>
+          <CartProvider userId={user.id}>
+            <AppShell>{children}</AppShell>
+          </CartProvider>
         </CoverJobProvider>
       </TimerProvider>
     </LibraryProvider>

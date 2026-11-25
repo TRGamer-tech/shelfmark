@@ -129,7 +129,7 @@ test("the privacy notice keeps to what was asked of it", () => {
     assert.ok(text.includes(lang === "de" ? "DSGVO" : "GDPR"));
   }
   assert.ok(textOf(LEGAL.en.privacy).includes("According to Google, ML Kit sends usage and diagnostic figures about itself to Google."));
-  assert.equal(PRIVACY_AS_OF, "2026-11-24");
+  assert.equal(PRIVACY_AS_OF, "2026-11-25");
 });
 
 test("the notice says what a loan between friends keeps, and nothing of the borrow requests that are gone", () => {
@@ -208,28 +208,33 @@ test("the notice says what the server keeps of earlier versions and of who joine
   }
   // No company is named for notifications: there is none between the browser and the reader.
   assert.ok(!/Firebase|FCM|APNs|Web Push|OneSignal/i.test(textOf(LEGAL.en.privacy) + textOf(LEGAL.de.privacy)));
-  assert.equal(PRIVACY_AS_OF, "2026-11-24");
+  assert.equal(PRIVACY_AS_OF, "2026-11-25");
 });
 
 test("what the notice says about the browser is what the code keeps there", () => {
   // Every key the website writes into the storage of the browser, found in its own code.
-  const sources = ["../src/lib/supabase/api.ts", "../src/components/i18n.tsx", "../src/components/Providers.tsx", "../src/components/theme.tsx", "../src/components/timer.tsx", "../src/components/library.tsx", "../src/components/telling.tsx", "../src/components/auth.tsx", "../src/app/login/page.tsx", "../src/app/settings/page.tsx"];
+  const sources = ["../src/lib/supabase/api.ts", "../src/components/i18n.tsx", "../src/components/Providers.tsx", "../src/components/theme.tsx", "../src/components/timer.tsx", "../src/components/cart.tsx", "../src/components/library.tsx", "../src/components/telling.tsx", "../src/components/auth.tsx", "../src/app/login/page.tsx", "../src/app/settings/page.tsx"];
   const keys = new Set<string>();
   for (const path of sources) for (const match of read(path).matchAll(/["`](shelfmark\.[a-z]+)/g)) keys.add(match[1]);
   // One entry of the notice for each of them. A new key means a new sentence there.
-  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.lang", "shelfmark.loans", "shelfmark.name", "shelfmark.notice", "shelfmark.notify", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
+  assert.deepEqual([...keys].sort(), ["shelfmark.auth", "shelfmark.cart", "shelfmark.lang", "shelfmark.loans", "shelfmark.name", "shelfmark.notice", "shelfmark.notify", "shelfmark.palette", "shelfmark.ping", "shelfmark.published", "shelfmark.theme", "shelfmark.timer"]);
   const section = LEGAL.en.privacy.sections.find((s) => s.id === "browser");
   const list = section?.blocks.find((block): block is { list: string[] } => "list" in block);
-  // Language, daily check, sign-in, theme (two keys), timer, news told (loans, friends, due books), shared copy, name,
-  // the card about notifications: nine entries, and the note for the next page as a sentence.
-  assert.equal(list?.list.length, 9);
+  // Language, daily check, sign-in, theme (two keys), timer, book cart, news told (loans, friends, due books), shared copy,
+  // name, the card about notifications: ten entries, and the note for the next page as a sentence.
+  assert.equal(list?.list.length, 10);
   // What is remembered of the news is one entry of the browser (lib/news.ts, NewsMemory), and the notice names its three parts.
   const told = list?.list.find((entry) => entry.includes("loans stood")) ?? "";
   for (const part of ["which friends it has seen", "that they are due"]) assert.ok(told.includes(part), part);
   // What goes with the sign-in when the reader signs out is what the notice says goes.
   const signOut = /const signOut = [\s\S]*?\}, \[client\]\);/.exec(read("../src/components/auth.tsx"))?.[0] ?? "";
-  for (const key of ["shelfmark.published", "shelfmark.timer", "shelfmark.loans"]) assert.ok(signOut.includes(key), `signing out removes ${key}`);
-  assert.equal(list?.list.filter((entry) => entry.includes("Signing out removes")).length, 4);
+  for (const key of ["shelfmark.published", "shelfmark.timer", "shelfmark.loans", "shelfmark.cart"]) assert.ok(signOut.includes(key), `signing out removes ${key}`);
+  assert.equal(list?.list.filter((entry) => entry.includes("Signing out removes")).length, 5);
+  // The book cart stays in the browser (components/cart.tsx), and the notice says so in both languages.
+  const cart = list?.list.find((entry) => entry.includes("book cart")) ?? "";
+  assert.ok(cart.includes("None of it goes to your account."), cart);
+  const german = LEGAL.de.privacy.sections.find((s) => s.id === "browser")?.blocks.find((block): block is { list: string[] } => "list" in block);
+  assert.ok(german?.list.some((entry) => entry.includes("Bücherwagen") && entry.includes("Nichts davon geht an dein Konto.")));
   // No cookie is set anywhere in the code of the website.
   for (const path of [...sources, "../src/lib/visitor.ts", "../src/app/layout.tsx", "../src/app/download/route.ts", "../src/app/api/keepalive/route.ts", "../src/app/api/books/search/route.ts"]) {
     assert.ok(!/cookie/i.test(read(path)), `${path} speaks of cookies`);

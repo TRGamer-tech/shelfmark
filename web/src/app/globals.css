@@ -2066,6 +2066,276 @@ img {
   width: 52px;
 }
 
+/* Title, authors, what is known of the edition, and whether it is here: a line each. */
+.result .grow > span {
+  display: block;
+}
+
+/* A result and, beside it, the button that puts it on the book cart. */
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.result-row .result {
+  flex: 1;
+  min-width: 0;
+  border-top: 0;
+}
+
+.result-cart {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 14px;
+  border: 1px solid var(--outline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.result-cart:hover {
+  background: var(--surface-low);
+}
+
+.result-cart-on {
+  border-color: transparent;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.result-cart-on:hover {
+  background: var(--primary-container);
+  filter: brightness(0.96);
+}
+
+/* On a phone the words make room for the book: the picture says it, and the button
+   still names itself to a screen reader. */
+@media (max-width: 599.98px) {
+  .result-cart {
+    padding: 8px;
+  }
+
+  .result-cart-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* ---- the book cart ---- */
+
+/* The bar of the add pages while books wait on the cart. It stays in sight at the foot
+   of the window, above the bar of the navigation, as the basket of a shop does. */
+.cart-bar {
+  position: sticky;
+  bottom: calc(var(--nav-height) + 12px + env(safe-area-inset-bottom));
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 10px 10px 10px 18px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 18px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.shell-timer .cart-bar {
+  bottom: calc(var(--nav-height) + var(--timer-line-height) + 12px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 900px) {
+  .cart-bar,
+  .shell-timer .cart-bar {
+    bottom: 16px;
+  }
+}
+
+.cart-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.cart-empty p {
+  max-width: 28rem;
+}
+
+.cart-hint {
+  margin: 20px 4px 6px;
+}
+
+.cart-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cart-row {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.cart-row:last-child {
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.cart-row-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cart-row-button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 4px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+}
+
+.cart-row-button:hover {
+  background: var(--surface-low);
+}
+
+.cart-row-button .cover {
+  flex: none;
+  width: 52px;
+}
+
+.cart-row-button .grow > span {
+  display: block;
+}
+
+.cart-row-settings {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.cart-here {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+/* A book that stays off the shelf because it is there already: its picture steps back,
+   its words do not. */
+.cart-row-out .cart-row-button .cover {
+  opacity: 0.5;
+}
+
+.cart-row-chevron {
+  flex: none;
+  color: var(--muted);
+  transition: rotate 0.15s ease-out;
+}
+
+.cart-row-button[aria-expanded="true"] .cart-row-chevron {
+  rotate: 90deg;
+}
+
+.cart-row-anyway {
+  padding: 0 4px 10px 72px;
+}
+
+.cart-row-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px 72px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--surface-low);
+}
+
+@media (max-width: 599.98px) {
+  .cart-row-anyway,
+  .cart-row-panel {
+    margin-left: 0;
+    padding-left: 4px;
+  }
+
+  .cart-row-panel {
+    padding-left: 12px;
+  }
+}
+
+.cart-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* How many books wait on the cart, on the way to the add page: in the navigation and on
+   the button that adds a book. A cart and a number, not the red of something to answer. */
+.nav-cart {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.75rem;
+  line-height: 18px;
+}
+
+/* In the bar at the foot of a phone it sits on the corner of the icon, as the count of
+   loans does. In the sidebar it stands at the end of the line. */
+.bottombar .nav-link {
+  position: relative;
+}
+
+.bottombar .nav-cart {
+  position: absolute;
+  top: 6px;
+  left: calc(50% + 10px);
+}
+
+.sidebar .nav-cart {
+  margin-left: auto;
+}
+
+.fab-cart {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: -4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.8rem;
+}
+
 .preview-head {
   display: flex;
   gap: 16px;
@@ -2746,7 +3016,8 @@ input[type="range"] {
   .spine,
   .cover-link,
   .switch::after,
-  .save-state {
+  .save-state,
+  .cart-row-chevron {
     transition: none;
   }
 }

@@ -5,6 +5,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { chosenWhereFound } from "@/lib/cart";
 import type { RemoteBook } from "@/lib/catalogue/remoteBook";
 import { today } from "@/lib/dates";
 import { findCovers } from "@/lib/findCovers";
@@ -19,6 +20,7 @@ import { coverAddressOf } from "@/lib/shelf";
 import { ownCoverFile, removeCover, uploadCover } from "@/lib/supabase/covers";
 import { useAuth } from "./auth";
 import { BookCover } from "./BookCover";
+import { CartBar, useCart } from "./cart";
 import { useI18n } from "./i18n";
 import { formatKey, statusKey } from "./labels";
 import { useLibrary } from "./library";
@@ -117,12 +119,15 @@ interface Props {
   isNew: boolean;
   backHref: string;
   onSaved: (id: number) => void;
+  /** A new book can go onto the book cart instead of the shelf. Called once it is there. */
+  onCarted?: () => void;
 }
 
-export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
+export function BookForm({ initial, isNew, backHref, onSaved, onCarted }: Props) {
   const { t, lang } = useI18n();
   const { config, client, user } = useAuth();
-  const { mutate } = useLibrary();
+  const { mutate, notify } = useLibrary();
+  const { entryOf, put } = useCart();
   const [book, setBook] = useState<Book>(initial);
   const [seriesPosition, setSeriesPosition] = useState(initial.seriesPosition > 0 ? String(initial.seriesPosition) : "");
   const [status, setStatus] = useState<ReadingStatus>(isNew ? "NONE" : initial.status);
@@ -191,11 +196,10 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
     }
   };
 
-  const save = (event: FormEvent) => {
-    event.preventDefault();
-    if (book.title.trim() === "") return;
+  /** What was typed in, tidied up as it is saved. */
+  const fieldsOf = (): BookFields => {
     const position = Number(seriesPosition.replace(",", "."));
-    const fields: BookFields = {
+    return {
       title: book.title.trim(),
       subtitle: book.subtitle.trim(),
       authors: book.authors.trim(),
@@ -211,6 +215,12 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       series: book.series.trim(),
       seriesPosition: Number.isFinite(position) && position > 0 ? position : 0,
     };
+  };
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    if (book.title.trim() === "") return;
+    const fields = fieldsOf();
     const coverUrl = book.coverUrl.trim();
     const now = Date.now();
     // What was uploaded here is saved with the book now, and goes with it from here on.
@@ -232,6 +242,20 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
       void mutate(editBook(book.id, fields, coverTouched ? coverUrl : null, now));
       onSaved(book.id);
     }
+  };
+
+  // The same book on the cart already, by ISBN or by title and first author.
+  const carted = isNew ? entryOf({ title: book.title.trim(), authors: book.authors.trim(), isbn: Isbn.to13(book.isbn) ?? Isbn.clean(book.isbn) }) : undefined;
+  const toCart = () => {
+    if (book.title.trim() === "" || carted) return;
+    // A picture uploaded here goes with the book onto the cart. The cart takes it off the
+    // server again if the book leaves the cart without being shelved (components/cart.tsx).
+    unsaved.current = null;
+    // The list chosen here is the book's own on the cart. Left alone, it goes with the rest.
+    put(withCover({ ...book, ...fieldsOf() }, book.coverUrl.trim()), chosenWhereFound(status, listIds));
+    // The form closes, so it is said where the book went, as the app says it.
+    notify(t("cart_put_done", book.title.trim()));
+    onCarted?.();
   };
 
   return (
@@ -331,10 +355,17 @@ export function BookForm({ initial, isNew, backHref, onSaved }: Props) {
         <Link href={backHref} className="btn btn-text">
           {t("action_cancel")}
         </Link>
+        {isNew && onCarted ? (
+          <Button variant="tonal" icon={carted ? "check" : "cart"} disabled={book.title.trim() === "" || uploading || carted !== undefined} onClick={toCart} data-testid="manual-cart">
+            {t(carted ? "cart_on" : "cart_put")}
+          </Button>
+        ) : null}
         <Button type="submit" disabled={book.title.trim() === "" || uploading}>
           {t("action_save")}
         </Button>
       </div>
+
+      {isNew ? <CartBar /> : null}
 
       {picking ? (
         <CoverPicker

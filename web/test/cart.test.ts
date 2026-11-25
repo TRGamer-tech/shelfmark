@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Cart, CartSettings } from "../src/lib/cart.ts";
-import { USUAL_SETTINGS, alreadyHere, cartKeyOf, emptyCart, onCart, putOnCart, readCart, sameBook, setForAll, setOwn, settingsOf, shelveCart, shelvedBook, takeOffCart, toShelve, toggleOnCart, wantAnyway, writeCart } from "../src/lib/cart.ts";
+import { USUAL_SETTINGS, alreadyHere, cartKeyOf, chosenWhereFound, emptied, emptyCart, followForAll, onCart, worthKeeping, putOnCart, readCart, sameBook, setForAll, setOwn, settingsOf, shelveCart, shelvedBook, takeOffCart, toShelve, toggleOnCart, wantAnyway, writeCart } from "../src/lib/cart.ts";
+import { sameBook as sameForTheImport } from "../src/lib/csvImport.ts";
 import type { Book, Vault } from "../src/lib/model.ts";
 import { emptyVault, writeVault } from "../src/lib/model.ts";
 import { createShelf } from "../src/lib/mutations.ts";
@@ -74,6 +75,78 @@ test("what is set for all counts for every book that was not set apart", () => {
   assert.deepEqual(settingsOf(cart, onCart(cart, chamber)!), { status: "ABANDONED", ownership: "BORROWED", listIds: [6] });
   // A list is on the list of lists once.
   assert.deepEqual(setForAll(cart, { listIds: [5, 5, 6] }).forAll.listIds, [5, 6]);
+});
+
+test("a book that was set apart can go with the rest again", () => {
+  let cart = setOwn(setForAll(three(), { status: "READ" }), cartKeyOf(chamber), { ownership: "BORROWED", listIds: [6] });
+  cart = followForAll(cart, cartKeyOf(chamber));
+  assert.equal(onCart(cart, chamber)!.own, null);
+  assert.deepEqual(settingsOf(cart, onCart(cart, chamber)!), cart.forAll);
+  // From here on what is set for all reaches it again.
+  cart = setForAll(cart, { status: "WISHLIST" });
+  assert.equal(settingsOf(cart, onCart(cart, chamber)!).status, "WISHLIST");
+  // A book that goes with the rest already, or one that is not there, changes nothing.
+  assert.equal(followForAll(cart, cartKeyOf(chamber)), cart);
+  assert.equal(followForAll(cart, "isbn:0000000000000"), cart);
+});
+
+test("a book whose list was chosen where it was found takes that choice onto the cart, and the rest from the settings for all", () => {
+  let cart = setForAll(three(), { ownership: "BORROWED", listIds: [5] });
+  // Chosen in the preview of a search result, or in the form for typing a book in: a status and the lists.
+  const goblet = book("Harry Potter and the Goblet of Fire", { isbn: "9780747546245" });
+  cart = putOnCart(cart, goblet, { status: "READING", listIds: [6] });
+  assert.deepEqual(onCart(cart, goblet)!.own, { status: "READING", ownership: "BORROWED", listIds: [6] });
+  // Set apart: what is set for all afterwards does not reach it.
+  cart = setForAll(cart, { ownership: "OWNED", listIds: [] });
+  assert.deepEqual(settingsOf(cart, onCart(cart, goblet)!), { status: "READING", ownership: "BORROWED", listIds: [6] });
+  // The wishlist proposes "not mine" there as well, as adding a single book to it does.
+  const phoenix = book("Harry Potter and the Order of the Phoenix");
+  cart = putOnCart(cart, phoenix, { status: "WISHLIST", listIds: [] });
+  assert.deepEqual(onCart(cart, phoenix)!.own, { status: "WISHLIST", ownership: "NOT_OWNED", listIds: [] });
+  // Nothing chosen: it goes with the rest.
+  const prince = book("Harry Potter and the Half-Blood Prince");
+  assert.equal(onCart(putOnCart(cart, prince), prince)!.own, null);
+});
+
+test("what counts as chosen where a book was found or typed in is what the phone counts, and the lists", () => {
+  // The list left at "unread" and no list of one's own: nothing was chosen.
+  assert.equal(chosenWhereFound("NONE", []), null);
+  // A list: that list, and the reader's own lists and the ownership as for all at this moment.
+  assert.deepEqual(chosenWhereFound("READ", []), { status: "READ" });
+  const cart = setForAll(three(), { ownership: "BORROWED", listIds: [5] });
+  const deathly = book("Harry Potter and the Deathly Hallows");
+  assert.deepEqual(onCart(putOnCart(cart, deathly, chosenWhereFound("READ", [])), deathly)!.own, { status: "READ", ownership: "BORROWED", listIds: [5] });
+  // Lists of one's own: those lists, and the status as for all.
+  assert.deepEqual(chosenWhereFound("NONE", [6]), { listIds: [6] });
+  assert.deepEqual(onCart(putOnCart(cart, deathly, chosenWhereFound("NONE", [6])), deathly)!.own, { status: "NONE", ownership: "BORROWED", listIds: [6] });
+  assert.deepEqual(chosenWhereFound("WISHLIST", [5, 6]), { status: "WISHLIST", listIds: [5, 6] });
+});
+
+test("an emptied cart keeps how the reader shelves, and is kept only while it holds something", () => {
+  let cart = setForAll(three(), { status: "READ", listIds: [6] });
+  cart = setOwn(cart, cartKeyOf(chamber), { ownership: "BORROWED" });
+  const empty = emptied(cart);
+  assert.deepEqual(empty, { forAll: { status: "READ", ownership: "OWNED", listIds: [6] }, items: [] });
+  assert.equal(emptied(empty), empty);
+  // Kept in the browser: books, or settings of one's own. An empty cart as it came is not.
+  assert.equal(worthKeeping(cart), true);
+  assert.equal(worthKeeping(empty), true);
+  assert.equal(worthKeeping(emptyCart()), false);
+  assert.equal(worthKeeping(setForAll(emptyCart(), { ownership: "NOT_OWNED" })), true);
+  assert.deepEqual(readCart(writeCart(empty)), empty);
+});
+
+test("the cart and the import of lists from other apps agree on what is the same book", () => {
+  // One rule in one place (csvImport.ts): what the cart calls "already on your shelf" the import calls "already here".
+  assert.equal(sameBook, sameForTheImport);
+  const pairs: [Book, Book][] = [
+    [stone, book("Der Stein der Weisen", { isbn: "9780747532699", authors: "Somebody" })],
+    [prisoner, book("harry potter AND the prisoner of azkaban", { authors: "J.K. Rowling, Jim Kay" })],
+    [prisoner, book("Harry Potter and the Prisoner of Azkaban", { authors: "Stephen Fry" })],
+    [stone, chamber],
+  ];
+  for (const [a, b] of pairs) assert.equal(alreadyHere({ key: cartKeyOf(a), book: a, own: null, anyway: false }, [b]), sameForTheImport(a, b), `${a.title} / ${b.title}`);
+  assert.deepEqual(pairs.map(([a, b]) => sameBook(a, b)), [true, true, false, false]);
 });
 
 test("choosing the wishlist proposes that the book is not one's own, and the reader has the last word", () => {
