@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.scaleIn
@@ -70,6 +72,8 @@ import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -173,6 +177,7 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
     val waitingLoans by container.social.waitingLoans.collectAsStateWithLifecycle(initialValue = 0)
     var adding by rememberSaveable { mutableStateOf(false) }
     val back: () -> Unit = { nav.popBackStack() }
+    val swipe = remember { BackSwipe() }
 
     fun openTab(route: Any) = nav.navigate(route) {
         popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -219,11 +224,16 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
             // A new page rises into place, the old one sinks back. A book comes forward
             // out of the shelf (see its route below).
             enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) slideInVertically(tween(TRANSITION_MS)) { it / 36 } else EnterTransition.None },
-            exitTransition = { fadeOut(tween(TRANSITION_MS)) },
-            popEnterTransition = { fadeIn(tween(TRANSITION_MS)) },
+            // Every ordinary change of page asks for one of these two, so this is where a swipe that came before is forgotten.
+            exitTransition = { swipe.revealing = false; fadeOut(tween(TRANSITION_MS)) },
+            popEnterTransition = { swipe.revealing = false; fadeIn(tween(TRANSITION_MS)) },
             popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) slideOutVertically(tween(TRANSITION_MS)) { it / 36 } else ExitTransition.None },
+            // Going back with a swipe from the edge (see BackSwipe.kt). The back button of the
+            // three-button bar is no swipe: it takes the two pop transitions above.
+            predictivePopEnterTransition = { _ -> swipe.revealing = motion; backSwipeEnter() },
+            predictivePopExitTransition = { edge -> backSwipeExit(motion, edge) },
         ) {
-            composable<LibraryRoute> {
+            page<LibraryRoute>(swipe) {
                 LibraryScreen(
                     libraryViewModel,
                     onOpenBook = { nav.navigate(BookRoute(it)) },
@@ -233,13 +243,13 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                     onSignIn = { openTab(FriendsRoute) },
                 )
             }
-            composable<ListsRoute> {
+            page<ListsRoute>(swipe) {
                 ListsScreen(libraryViewModel) { filter ->
                     libraryViewModel.setFilter(filter)
                     openTab(LibraryRoute)
                 }
             }
-            composable<StatsRoute> {
+            page<StatsRoute>(swipe) {
                 StatsScreen(
                     onGoals = { nav.navigate(GoalsRoute) },
                     onCalendar = { nav.navigate(CalendarRoute) },
@@ -247,14 +257,15 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                     onMilestones = { nav.navigate(MilestonesRoute) },
                 )
             }
-            composable<CalendarRoute> { CalendarScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
-            composable<RecapRoute> { RecapScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
-            composable<MilestonesRoute> { MilestonesScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
-            composable<QuotesRoute> { QuotesScreen(onAdd = { nav.navigate(QuoteRoute()) }, onEdit = { nav.navigate(QuoteRoute(quoteId = it)) }) }
-            composable<FriendsRoute> {
+            page<CalendarRoute>(swipe) { CalendarScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            page<RecapRoute>(swipe) { RecapScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            page<MilestonesRoute>(swipe) { MilestonesScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            page<QuotesRoute>(swipe) { QuotesScreen(onAdd = { nav.navigate(QuoteRoute()) }, onEdit = { nav.navigate(QuoteRoute(quoteId = it)) }) }
+            page<FriendsRoute>(swipe) {
                 FriendsScreen(onOpenFriend = { nav.navigate(FriendRoute(it)) }, onLoans = { nav.navigate(LoansRoute) }, onOpenBook = { nav.navigate(BookRoute(it)) })
             }
-            composable<BookRoute>(
+            page<BookRoute>(
+                swipe,
                 enterTransition = { fadeIn(tween(TRANSITION_MS)) + if (motion) scaleIn(tween(TRANSITION_MS), initialScale = 0.93f) else EnterTransition.None },
                 popExitTransition = { fadeOut(tween(TRANSITION_MS)) + if (motion) scaleOut(tween(TRANSITION_MS), targetScale = 0.93f) else ExitTransition.None },
             ) { stackEntry ->
@@ -268,23 +279,23 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
                     onTimer = { nav.navigate(TimerRoute(route.id)) },
                 )
             }
-            composable<EditRoute> { stackEntry ->
+            page<EditRoute>(swipe) { stackEntry ->
                 val route = stackEntry.toRoute<EditRoute>()
                 EditScreen(route.id, onBack = back, onSaved = { id -> if (route.id == 0L) openNewBook(id) else nav.popBackStack() })
             }
-            composable<ScanRoute> { ScanScreen(onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor) }
-            composable<SearchRoute> { stackEntry ->
+            page<ScanRoute>(swipe) { ScanScreen(onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor) }
+            page<SearchRoute>(swipe) { stackEntry ->
                 SearchScreen(stackEntry.toRoute<SearchRoute>().query, onBack = back, onOpenBook = ::openNewBook, onManual = ::openEditor, onScan = { nav.navigate(ScanRoute) })
             }
-            composable<QuoteRoute> { stackEntry ->
+            page<QuoteRoute>(swipe) { stackEntry ->
                 val route = stackEntry.toRoute<QuoteRoute>()
                 QuoteEditScreen(route.quoteId, route.bookId, onBack = back)
             }
-            composable<TimerRoute> { stackEntry -> TimerScreen(stackEntry.toRoute<TimerRoute>().bookId, onBack = back) }
-            composable<GoalsRoute> { GoalsScreen(onBack = back) }
-            composable<FriendRoute> { stackEntry -> FriendLibraryScreen(stackEntry.toRoute<FriendRoute>().id, onBack = back) }
-            composable<LoansRoute> { LoansScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
-            composable<SettingsRoute> { SettingsScreen(onBack = back) }
+            page<TimerRoute>(swipe) { stackEntry -> TimerScreen(stackEntry.toRoute<TimerRoute>().bookId, onBack = back) }
+            page<GoalsRoute>(swipe) { GoalsScreen(onBack = back) }
+            page<FriendRoute>(swipe) { stackEntry -> FriendLibraryScreen(stackEntry.toRoute<FriendRoute>().id, onBack = back) }
+            page<LoansRoute>(swipe) { LoansScreen(onBack = back, onOpenBook = { nav.navigate(BookRoute(it)) }) }
+            page<SettingsRoute>(swipe) { SettingsScreen(onBack = back) }
         }
     }
 
@@ -351,6 +362,17 @@ private fun MainNav(incoming: MutableStateFlow<Intent?>) {
         }
     }
 }
+
+/**
+ * A destination of the app. Like NavHost's own `composable`, with the one thing every page
+ * shares: what it looks like while a swipe uncovers it.
+ */
+private inline fun <reified T : Any> NavGraphBuilder.page(
+    swipe: BackSwipe,
+    noinline enterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition?)? = null,
+    noinline popExitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition?)? = null,
+    noinline content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
+) = composable<T>(enterTransition = enterTransition, popExitTransition = popExitTransition) { entry -> Revealed(swipe) { content(entry) } }
 
 /** The three ways to add a book. */
 @Composable

@@ -72,6 +72,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigationevent.NavigationEventTransitionState
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import ch.schmidtbit.shelfmark.ui.components.AnimatedProgress
 import ch.schmidtbit.shelfmark.R
 import ch.schmidtbit.shelfmark.data.model.Book
@@ -163,6 +165,13 @@ fun BookScreen(
                 if (answer == SnackbarResult.ActionPerformed) container.launch { library.modify(bookId) { it.withStatusOf(before) } }
             }
         }
+    }
+
+    // The offer belongs to this page. When a swipe from the edge starts to take the page away,
+    // it is put away: it must not stay behind where the page was.
+    val backEvents = LocalNavigationEventDispatcherOwner.current?.navigationEventDispatcher
+    LaunchedEffect(backEvents) {
+        backEvents?.transitionState?.collect { if (it is NavigationEventTransitionState.InProgress) snackbar.currentSnackbarData?.dismiss() }
     }
 
     Scaffold(
