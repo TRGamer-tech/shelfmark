@@ -4319,7 +4319,8 @@ async function main() {
       assert((await text("greeting")).includes("7 books on your shelves"), `the greeting: ${await text("greeting")}`);
       for (const shelf of ["READING", "NONE", "READ", "WISHLIST", "ABANDONED", "list_21", `list_${third.shelves.find((s) => s.name === "favorites").id}`]) await gp.getByTestId(`shelf-${shelf}`).waitFor();
       for (const title of ["Dune", "Der Vorleser", "Momo", "The Hobbit", "Project Hail Mary", "Piranesi", "Babel"]) {
-        assert((await gp.locator(`.bookcase [aria-label="${title}"]`).count()) >= 1, `${title} stands on a shelf`);
+        // A wish is not the reader's, so it stands there away, and its name says so after the title.
+        assert((await gp.locator(`.bookcase [aria-label="${title}"], .bookcase [aria-label^="${title}, "]`).count()) >= 1, `${title} stands on a shelf`);
       }
       await gp.waitForTimeout(600);
       await shot(gp, "shelf-imported", { fullPage: true });

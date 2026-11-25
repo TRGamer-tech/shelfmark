@@ -67,24 +67,33 @@ enum class Away {
 
     /** It was borrowed and went back to its owner before the reader finished it. */
     RETURNED,
+
+    /** It is not the reader's and never was: a wish, a copy from the library. */
+    NOT_MINE,
 }
 
 /**
- * Whether this book is away, and why (see "Books that are away" in supabase/README.md).
- * The website decides it the same way, from the book alone:
+ * Whether this book is away, and why (see "Books that are away" in supabase/README.md,
+ * and samples/away-cases.json there for every combination). The website decides it the
+ * same way, from the book alone, in this order:
  *
- *  - lent: [Book.lentTo] says to whom. A loan that is out writes that name, a loan that
- *    is over takes it away again, and so does "got it back" for a book lent by hand.
- *  - given back, not finished: the book is not the reader's, it was borrowed (through a
- *    loan or by hand) and it is not read. Marking it read makes it a book like any other.
+ *  - lent: [Book.lentTo] says to whom, in every list. A loan that is out writes that name,
+ *    a loan that is over takes it away again, and so does "got it back" for a book lent by hand.
+ *  - read: a book that is read and not lent is solid, whoever owns it.
+ *  - given back, not finished: the book is not the reader's and was borrowed, through a loan
+ *    or by hand.
+ *  - not mine: the book is not the reader's and never was, or it is on the wishlist while it
+ *    says it is owned (a move to the wishlist leaves the ownership as it was).
  *
- * Everything else is here: a borrowed book while the reader has it, a wish, a copy from
- * the library that was never borrowed from anybody, and a book given back that is read.
+ * Everything else is here: an owned book in every list but the wishlist, and a borrowed book
+ * in every list, since the reader has it.
  */
 val Book.away: Away?
     get() = when {
         lentTo.isNotBlank() -> Away.LENT
-        ownership == Ownership.NOT_OWNED && (loanId.isNotBlank() || borrowedFrom.isNotBlank()) && status != ReadingStatus.READ -> Away.RETURNED
+        status == ReadingStatus.READ -> null
+        ownership == Ownership.NOT_OWNED -> if (loanId.isNotBlank() || borrowedFrom.isNotBlank()) Away.RETURNED else Away.NOT_MINE
+        ownership == Ownership.OWNED && status == ReadingStatus.WISHLIST -> Away.NOT_MINE
         else -> null
     }
 

@@ -1,0 +1,741 @@
+{
+  "about": "Every combination of list, ownership, lending and past borrowing, and whether the book is away (see \"Books that are away\" in supabase/README.md). The app and the website both test their rule against this table. away is null for a book that is drawn as usual, otherwise lent, returned or notMine.",
+  "cases": [
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "notMine"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "notMine"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "notMine"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "notMine"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "notMine"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "WISHLIST",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "notMine"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READING",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "READ",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": null
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "BORROWED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "notMine"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "returned"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "3f2a9c1e-7b4d-4e8a-9c0d-112233445566",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "ABANDONED",
+      "ownership": "NOT_OWNED",
+      "lentTo": "Bo",
+      "loanId": "",
+      "borrowedFrom": "Lena",
+      "away": "lent"
+    },
+    {
+      "status": "NONE",
+      "ownership": "OWNED",
+      "lentTo": "   ",
+      "loanId": "",
+      "borrowedFrom": "",
+      "away": null
+    },
+    {
+      "status": "NONE",
+      "ownership": "NOT_OWNED",
+      "lentTo": "",
+      "loanId": "",
+      "borrowedFrom": "  ",
+      "away": "notMine"
+    }
+  ]
+}

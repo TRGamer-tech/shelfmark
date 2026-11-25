@@ -80,10 +80,51 @@ class AwayTest {
         assertEquals(Away.RETURNED, givenBack.withStatus(ReadingStatus.READ, 20_100).withStatus(ReadingStatus.READING, 20_200).away)
     }
 
-    @Test fun aWishOrALibraryCopyThatWasNeverBorrowedIsHere() {
-        listOf(ReadingStatus.WISHLIST, ReadingStatus.NONE, ReadingStatus.READING).forEach { status ->
-            assertNull(status.name, mine.copy(ownership = Ownership.NOT_OWNED, status = status).away)
-            assertNull(status.name, mine.copy(ownership = Ownership.NOT_OWNED, borrowedFrom = "  ", status = status).away)
+    @Test fun aWishOrALibraryCopyThatWasNeverBorrowedIsNotMine() {
+        listOf(ReadingStatus.WISHLIST, ReadingStatus.NONE, ReadingStatus.READING, ReadingStatus.ABANDONED).forEach { status ->
+            assertEquals(status.name, Away.NOT_MINE, mine.copy(ownership = Ownership.NOT_OWNED, status = status).away)
+            assertEquals(status.name, Away.NOT_MINE, mine.copy(ownership = Ownership.NOT_OWNED, borrowedFrom = "  ", status = status).away)
+        }
+        // Read somewhere else, from a library say: it was read, it belongs to the shelf.
+        assertNull(mine.copy(ownership = Ownership.NOT_OWNED, status = ReadingStatus.READ).away)
+    }
+
+    @Test fun aMoveToTheWishlistTakesAnOwnedBookAwayAndABorrowedOneStays() {
+        // The chips leave the ownership as it was: an owned book moved to the wishlist still says owned.
+        assertEquals(Away.NOT_MINE, mine.withStatus(ReadingStatus.WISHLIST, 20_100).away)
+        assertNull(mine.withStatus(ReadingStatus.WISHLIST, 20_100).withStatus(ReadingStatus.NONE, 20_200).away)
+        // The reader has a borrowed book in hand, whatever list it is on.
+        assertNull(mine.copy(ownership = Ownership.BORROWED, borrowedFrom = "Anna").withStatus(ReadingStatus.WISHLIST, 20_100).away)
+    }
+
+    @Test fun aWishIsNotOfferedToFriendsEvenWhenItSaysItIsOwned() {
+        assertEquals(true, mine.availableToLend)
+        assertEquals(false, mine.copy(status = ReadingStatus.WISHLIST).availableToLend)
+    }
+
+    @Test fun everyCombinationIsDecidedAsTheTableOfTheContractSays() {
+        val table = kotlinx.serialization.json.Json.parseToJsonElement(java.io.File("../supabase/samples/away-cases.json").readText())
+        val cases = (table as kotlinx.serialization.json.JsonObject)["cases"] as kotlinx.serialization.json.JsonArray
+        assertEquals(92, cases.size)
+        cases.forEach { element ->
+            val case = element as kotlinx.serialization.json.JsonObject
+            fun text(key: String) = (case[key] as kotlinx.serialization.json.JsonPrimitive).content
+            val book = mine.copy(
+                status = ReadingStatus.valueOf(text("status")),
+                ownership = Ownership.valueOf(text("ownership")),
+                lentTo = text("lentTo"),
+                loanId = text("loanId"),
+                borrowedFrom = text("borrowedFrom"),
+            )
+            val expected = (case["away"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content?.let {
+                when (it) {
+                    "lent" -> Away.LENT
+                    "returned" -> Away.RETURNED
+                    "notMine" -> Away.NOT_MINE
+                    else -> error("an answer the table should not have: $it")
+                }
+            }
+            assertEquals(case.toString(), expected, book.away)
         }
     }
 

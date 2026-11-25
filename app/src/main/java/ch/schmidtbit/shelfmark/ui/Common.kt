@@ -68,7 +68,7 @@ fun SortOrder.labelRes(): Int = when (this) {
 fun ReadingStatus.label(): String = stringResource(labelRes())
 
 /**
- * The words for a book that is away ("Lent to Bo", "Given back to Lena, not finished"), or
+ * The words for a book that is away ("Lent to Bo", "Given back to Lena, not finished", "Not mine"), or
  * null for a book that is here. They stand next to the book where there is room, and a
  * screen reader hears them wherever the book is drawn see-through.
  */
@@ -78,6 +78,7 @@ fun awayWords(resources: Resources, book: Book): String? {
     return when (book.away) {
         Away.LENT -> resources.getString(R.string.book_away_lent, name(book.lentTo))
         Away.RETURNED -> resources.getString(R.string.book_away_returned, name(book.borrowedFrom))
+        Away.NOT_MINE -> resources.getString(R.string.ownership_not_owned)
         null -> null
     }
 }

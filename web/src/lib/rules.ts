@@ -35,9 +35,9 @@ export function withDefaultsFor(book: Book, newStatus: ReadingStatus, today: num
   return withStatus({ ...book, ownership, lendable: physical }, newStatus, today);
 }
 
-/** A friend can ask for this book right now. */
+/** A friend can ask for this book right now. A wish that says it is owned is not on the shelf, so nobody can borrow it. */
 export function availableToLend(book: Book): boolean {
-  return book.ownership === "OWNED" && book.lendable && book.lentTo.trim() === "";
+  return book.ownership === "OWNED" && book.lendable && book.lentTo.trim() === "" && book.status !== "WISHLIST";
 }
 
 export function isAudio(book: { format: string }): boolean {

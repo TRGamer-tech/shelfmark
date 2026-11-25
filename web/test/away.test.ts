@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import type { Away } from "../src/lib/away.ts";
 import { awayOf, awayWords } from "../src/lib/away.ts";
 import { followLoans, readLoan } from "../src/lib/loans.ts";
-import type { Book, Ownership, ReadingStatus } from "../src/lib/model.ts";
+import { availableToLend } from "../src/lib/rules.ts";
+import type { Book, ReadingStatus } from "../src/lib/model.ts";
 import { emptyVault } from "../src/lib/model.ts";
 import { utcZone } from "../src/lib/dates.ts";
 import { THEME_PRESETS, contrast, mix, paletteOf, rgbOfCss } from "../src/lib/theme.ts";
@@ -19,7 +20,6 @@ const book = (fields: Partial<Book> = {}): Book => bookOf({ title: "Emma", ...fi
 
 const L1 = "3f2a9c1e-7b4d-4e8a-9c0d-112233445566";
 const STATUSES: ReadingStatus[] = ["NONE", "WISHLIST", "READING", "READ", "ABANDONED"];
-const OWNERSHIPS: Ownership[] = ["OWNED", "BORROWED", "NOT_OWNED"];
 
 test("a book that is lent is away, by hand or by a loan, until it is back", () => {
   // Lent by hand, to somebody without Shelfmark.
@@ -57,36 +57,43 @@ test("everything else is drawn as usual", () => {
     assert.equal(awayOf(book({ ownership: "BORROWED", borrowedFrom: "Lena", loanId: L1, status })), null, `borrowed, ${status}`);
     assert.equal(awayOf(book({ ownership: "BORROWED", borrowedFrom: "Lena", status })), null, `borrowed by hand, ${status}`);
   }
-  // A wish, or a copy from the public library, that was never borrowed from anybody.
-  for (const status of STATUSES) assert.equal(awayOf(book({ ownership: "NOT_OWNED", status })), null, `never borrowed, ${status}`);
-  // An own book at home, also one that carries the mark of a loan that is over or the name of somebody it once came from.
-  for (const status of STATUSES) {
+  // An own book at home in every list but the wishlist, also one that carries the mark of a loan that is over.
+  for (const status of STATUSES.filter((s) => s !== "WISHLIST")) {
     assert.equal(awayOf(book({ ownership: "OWNED", status })), null, `own, ${status}`);
     assert.equal(awayOf(book({ ownership: "OWNED", borrowedFrom: "Lena", loanId: L1, status })), null, `own with old marks, ${status}`);
   }
+  // Read somewhere else, from a library say: it was read, it belongs to the shelf.
+  assert.equal(awayOf(book({ ownership: "NOT_OWNED", status: "READ" })), null);
   // Blank is not a name.
-  assert.equal(awayOf(book({ ownership: "NOT_OWNED", borrowedFrom: "  ", loanId: " " })), null);
+  assert.equal(awayOf(book({ lentTo: "   " })), null);
 });
 
-test("every combination is decided, and lent comes first", () => {
-  let away = 0;
-  for (const ownership of OWNERSHIPS) {
-    for (const status of STATUSES) {
-      for (const lentTo of ["", "Bo"]) {
-        for (const borrowedFrom of ["", "Lena"]) {
-          for (const loanId of ["", L1]) {
-            const found = awayOf(book({ ownership, status, lentTo, borrowedFrom, loanId }));
-            const expected: Away | null =
-              lentTo !== "" ? { kind: "lent", who: "Bo" } : ownership === "NOT_OWNED" && (borrowedFrom !== "" || loanId !== "") && status !== "READ" ? { kind: "returned", who: borrowedFrom } : null;
-            assert.deepEqual(found, expected, `${ownership} ${status} lent:${lentTo} from:${borrowedFrom} loan:${loanId}`);
-            if (found) away++;
-          }
-        }
-      }
-    }
+test("a wish, a library copy and a wish that says it is owned are not mine", () => {
+  for (const status of STATUSES.filter((s) => s !== "READ")) {
+    assert.deepEqual(awayOf(book({ ownership: "NOT_OWNED", status })), { kind: "notMine", who: "" }, `never borrowed, ${status}`);
+    assert.deepEqual(awayOf(book({ ownership: "NOT_OWNED", borrowedFrom: "  ", loanId: " ", status })), { kind: "notMine", who: "" }, `blank marks, ${status}`);
   }
-  // 60 lent (every ownership, status, name and loan), and 12 given back unfinished.
-  assert.equal(away, 72);
+  // The chips leave the ownership as it was: an owned book moved to the wishlist still says owned.
+  assert.deepEqual(awayOf(book({ ownership: "OWNED", status: "WISHLIST" })), { kind: "notMine", who: "" });
+  // A borrowed book on the wishlist is in the reader's hands all the same.
+  assert.equal(awayOf(book({ ownership: "BORROWED", borrowedFrom: "Lena", status: "WISHLIST" })), null);
+  assert.deepEqual(awayWords({ kind: "notMine", who: "" }, "Someone"), { key: "ownership_not_owned", who: "" });
+});
+
+test("every combination is decided as the table of the contract says", () => {
+  const table = JSON.parse(readFileSync(fileURLToPath(new URL("../../supabase/samples/away-cases.json", import.meta.url)), "utf8")) as {
+    cases: { status: ReadingStatus; ownership: Book["ownership"]; lentTo: string; loanId: string; borrowedFrom: string; away: Away["kind"] | null }[];
+  };
+  assert.equal(table.cases.length, 92);
+  for (const c of table.cases) {
+    const found = awayOf(book({ status: c.status, ownership: c.ownership, lentTo: c.lentTo, loanId: c.loanId, borrowedFrom: c.borrowedFrom }));
+    assert.equal(found?.kind ?? null, c.away, JSON.stringify(c));
+  }
+});
+
+test("a wish is not offered to friends, even when it says it is owned", () => {
+  assert.equal(availableToLend(book({ ownership: "OWNED", lendable: true })), true);
+  assert.equal(availableToLend(book({ ownership: "OWNED", lendable: true, status: "WISHLIST" })), false);
 });
 
 test("the books follow the loans into and out of being away", () => {

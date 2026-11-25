@@ -51,7 +51,8 @@ available in English and German.
 - Built-in lists: Wishlist, Unread, Reading, Read, Abandoned. Moving a book between them keeps
   the start and finish dates up to date.
 - A book that is not in your hands stands see-through with a dashed outline: one you lent out,
-  and one you borrowed and gave back before you finished it. Marked as read, it is solid again.
+  one you borrowed and gave back before you finished it, and one that is not yours (a wish,
+  a library copy). Marked as read, it is solid; lent out, it stays see-through until it is back.
 - As many lists of your own as you like. Each one is a shelf of its own below the built-in
   ones, also while it is still empty.
 - Book spines on wooden boards, covers, or a plain list. Books without a cover picture get a

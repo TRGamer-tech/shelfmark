@@ -2625,9 +2625,10 @@ class AppFlowTest {
             container.library.addBook(givenBack("Der Prozess", ReadingStatus.WISHLIST, "11111111-0000-4000-8000-000000000003"))
             container.library.addBook(givenBack("Die Wand", ReadingStatus.ABANDONED, "11111111-0000-4000-8000-000000000004"))
             container.library.addBook(givenBack("Stiller", ReadingStatus.READ, "11111111-0000-4000-8000-000000000005"))
-            // Borrowed and still with the reader, and a wish that was never borrowed: both here.
+            // Borrowed and still with the reader: here. A wish that was never borrowed, and one that says it is owned: not mine.
             container.library.addBook(Book(title = "Effi Briest", authors = "Theodor Fontane", ownership = Ownership.BORROWED, borrowedFrom = "Lena", loanId = "11111111-0000-4000-8000-000000000006"))
             container.library.addBook(Book(title = "Siddhartha", authors = "Hermann Hesse", status = ReadingStatus.WISHLIST, ownership = Ownership.NOT_OWNED))
+            container.library.addBook(Book(title = "Homo faber", authors = "Max Frisch", status = ReadingStatus.WISHLIST, ownership = Ownership.OWNED))
             // Scrolling in a test waits until everything stands still. Without movement a book that changes jumps instead of fading.
             container.settings.setMotion(false)
         }
@@ -2637,7 +2638,8 @@ class AppFlowTest {
         // Cover by cover, what a screen reader hears.
         assertEquals("Verliehen an Ben", awaySaid("coverShelf", "Dune"))
         listOf("Momo", "Faust", "Der Prozess", "Die Wand").forEach { assertEquals(it, unfinished, awaySaid("coverShelf", it)) }
-        listOf("Stiller", "Effi Briest", "Siddhartha", "Emma").forEach { assertNull(it, awaySaid("coverShelf", it)) }
+        listOf("Siddhartha", "Homo faber").forEach { assertEquals(it, "Nicht im Besitz", awaySaid("coverShelf", it)) }
+        listOf("Stiller", "Effi Briest", "Emma").forEach { assertNull(it, awaySaid("coverShelf", it)) }
         // The book being read is one of them, and its card says so.
         scrollListTo("coverShelf", "continueReading")
         waitFor { textOf("awayWords") == unfinished }

@@ -102,7 +102,8 @@ data class Book(
 ) {
     /** Mine, meant to be lent, and not lent out by hand. Whether a loan between friends holds it is not known here. */
     val availableToLend: Boolean
-        get() = ownership == Ownership.OWNED && lendable && lentTo.isBlank()
+        // A wish that says it is owned is not on the shelf, so nobody can borrow it.
+        get() = ownership == Ownership.OWNED && lendable && lentTo.isBlank() && status != ReadingStatus.WISHLIST
 }
 
 /** A custom list ("shelf") the user created in addition to the built-in status lists. */
