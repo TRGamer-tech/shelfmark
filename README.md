@@ -34,6 +34,10 @@ available in English and German.
 - Seven catalogues are asked at once (see [Book data](#book-data)), so a book missing from one
   is usually found in another.
 - Enter a book completely by hand when no catalogue knows it.
+- Many books at once: put them on the **book cart** from the search, the scanner or by hand
+  (the scanner can put every book it finds straight onto the cart), set list, ownership and
+  your own lists for all of them or for each one, and shelve them all with one tap. Seven
+  Harry Potter volumes are one search and seven taps, not seven searches.
 - Per book: title, author, pages, format (hardcover, paperback, e-book, audiobook), blurb,
   publisher, year, language, series, genres, tags and a cover.
 - Covers: a book that arrives without one gets a search in the background. **Search cover
@@ -46,6 +50,8 @@ available in English and German.
 
 - Built-in lists: Wishlist, Unread, Reading, Read, Abandoned. Moving a book between them keeps
   the start and finish dates up to date.
+- A book that is not in your hands stands see-through with a dashed outline: one you lent out,
+  and one you borrowed and gave back before you finished it. Marked as read, it is solid again.
 - As many lists of your own as you like. Each one is a shelf of its own below the built-in
   ones, also while it is still empty.
 - Book spines on wooden boards, covers, or a plain list. Books without a cover picture get a
