@@ -91,6 +91,7 @@ import ch.schmidtbit.shelfmark.data.model.withStatus
 import ch.schmidtbit.shelfmark.data.model.withStatusOf
 import ch.schmidtbit.shelfmark.ui.LocalContainer
 import ch.schmidtbit.shelfmark.ui.components.BackButton
+import ch.schmidtbit.shelfmark.ui.awayWords
 import ch.schmidtbit.shelfmark.ui.components.BookCover
 import ch.schmidtbit.shelfmark.ui.components.ConfirmDelete
 import ch.schmidtbit.shelfmark.ui.components.DayPickerDialog
@@ -277,8 +278,10 @@ private fun countSuffix(count: Int) = if (count > 0) " ($count)" else ""
 
 @Composable
 private fun Header(book: Book) {
+    // On its own page a book that is away looks as it does on the shelf, and says why.
+    val away = awayWords(LocalContext.current.resources, book)
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), verticalAlignment = Alignment.Bottom) {
-        BookCover(book.title, book.authors, book.coverModel(), Modifier.width(104.dp), elevation = 6.dp)
+        BookCover(book.title, book.authors, book.coverModel(), Modifier.width(104.dp).testTag("bookCover"), elevation = 6.dp, away = away)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(book.title, style = MaterialTheme.typography.headlineSmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
@@ -292,6 +295,10 @@ private fun Header(book: Book) {
             if (book.series.isNotBlank()) {
                 val position = if (book.seriesPosition.finite() > 0f) " #" + formatRating(book.seriesPosition) else ""
                 Text(book.series + position, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (away != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(away, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("bookAway"))
             }
         }
     }

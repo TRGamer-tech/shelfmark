@@ -66,6 +66,8 @@ data class ShelfItem(
     val format: BookFormat = BookFormat.UNKNOWN,
     /** Small coloured ribbon, e.g. for "currently reading" or "available to borrow". */
     val ribbon: Color? = null,
+    /** Why the book is away, in words ("Lent to Bo"), or null for a book that is here. */
+    val away: String? = null,
 )
 
 /** The wooden board a row of books stands on, with the shadow it throws on the wall below. */
@@ -257,6 +259,7 @@ fun CoverShelf(
                                         .fillMaxWidth()
                                         .bookPress { onClick(item) }
                                         .semantics { contentDescription = item.title },
+                                    away = item.away,
                                 )
                                 item.ribbon?.let { Ribbon(it, Modifier.align(Alignment.TopEnd).padding(end = 8.dp)) }
                             }
@@ -399,11 +402,13 @@ private fun Spine(item: ShelfItem, modifier: Modifier = Modifier) {
     val ink = remember(base) { contentColorOn(base) }
     val width = spineWidth(item.pageCount).dp
     val height = spineHeight(item.title, item.format).dp
+    val shape = RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
     Box(
         modifier
+            .away(item.away, shape)
             .width(width)
             .height(height)
-            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+            .clip(shape)
             // Lighter in the middle, darker at the edges: the spine is rounded.
             .background(Brush.horizontalGradient(listOf(lerpDark(base, 0.28f), lerpLight(base, 0.10f), lerpDark(base, 0.22f))))
             .semantics { contentDescription = item.title },

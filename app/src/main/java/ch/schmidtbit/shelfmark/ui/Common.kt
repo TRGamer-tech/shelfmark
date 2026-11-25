@@ -9,8 +9,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import ch.schmidtbit.shelfmark.AppContainer
+import android.content.res.Resources
 import ch.schmidtbit.shelfmark.R
+import ch.schmidtbit.shelfmark.data.model.Away
 import ch.schmidtbit.shelfmark.data.model.Book
+import ch.schmidtbit.shelfmark.data.model.away
 import ch.schmidtbit.shelfmark.data.model.BookFormat
 import ch.schmidtbit.shelfmark.data.model.Ownership
 import ch.schmidtbit.shelfmark.data.model.ReadingStatus
@@ -62,6 +65,18 @@ fun SortOrder.labelRes(): Int = when (this) {
 
 @Composable
 fun ReadingStatus.label(): String = stringResource(labelRes())
+
+/**
+ * The words for a book that is away ("Lent to Bo", "Given back to Lena, not finished"), or
+ * null for a book that is here. They stand next to the book where there is room, and a
+ * screen reader hears them wherever the book is drawn see-through.
+ */
+fun awayWords(resources: Resources, book: Book): String? = when (book.away) {
+    Away.LENT -> resources.getString(R.string.book_away_lent, book.lentTo)
+    // Borrowed through a loan from somebody who gave no name: the name is not known, the fact is.
+    Away.RETURNED -> resources.getString(R.string.book_away_returned, book.borrowedFrom.ifBlank { resources.getString(R.string.friends_someone) })
+    null -> null
+}
 
 /** What Coil should load for a book: the user's own photo, where this phone has it, wins over the catalogue cover. */
 @Composable

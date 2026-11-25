@@ -17,6 +17,7 @@ import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyHint, Field, IconButton
 import { formatDay, formatMoment, fromIsoDate, toIsoDate, today } from "@/lib/dates";
 import { newId } from "@/lib/ids";
 import { formatPrice, formatRating } from "@/lib/libraryLogic";
+import { awayOf, awayWords } from "@/lib/away";
 import { backByHand, isOut, lentByHand, loanOf, loansAbout, ownedByHand, tyingLoan } from "@/lib/loans";
 import type { Book, Note, Purchase, Quote, ReadingSession, ReadingStatus } from "@/lib/model";
 import { OWNERSHIPS } from "@/lib/model";
@@ -411,6 +412,9 @@ export default function BookPage() {
   const favourite = book.favorite;
   // The loan that ties this book down, if there is one. It has to end before the book can go.
   const tied = tyingLoan(book, loans);
+  const gone = awayOf(book);
+  const awaySaid = gone ? awayWords(gone, t("friends_someone")) : null;
+  const away = awaySaid ? t(awaySaid.key, awaySaid.who) : null;
 
   return (
     <div className="page" data-testid="book-page">
@@ -430,11 +434,19 @@ export default function BookPage() {
       </header>
 
       <div className="book-head">
-        <BookCover title={book.title} authors={book.authors} url={coverAddressOf(book)} />
+        {/* A book that is away is see-through here as on the shelf, and the page says why. */}
+        <span className={away ? "cover-frame away" : "cover-frame"} data-testid="book-cover" data-away={away ?? undefined}>
+          <BookCover title={book.title} authors={book.authors} url={coverAddressOf(book)} />
+        </span>
         <div className="grow">
           <h1 data-testid="book-title">{book.title}</h1>
           {book.subtitle.trim() !== "" ? <p className="muted">{book.subtitle}</p> : null}
           {book.authors.trim() !== "" ? <p className="book-author">{book.authors}</p> : null}
+          {away ? (
+            <p className="away-words" data-testid="away-words">
+              {away}
+            </p>
+          ) : null}
           {book.series.trim() !== "" ? <p className="small muted">{book.series + (book.seriesPosition > 0 ? ` #${formatRating(book.seriesPosition, locale)}` : "")}</p> : null}
         </div>
       </div>

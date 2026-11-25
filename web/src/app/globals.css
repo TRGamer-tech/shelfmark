@@ -64,6 +64,9 @@
   --wood: #bf9264;
   --wood-dark: #94683f;
   --shelf-back: #e7e3dc;
+  --away: #68645f;
+  /* How much of a book that is away can still be seen: it is about 45 percent see-through. */
+  --away-opacity: 0.45;
   --star: #be8c14;
   --star-text: #be8c14;
   --spice: #ce3c36;
@@ -108,6 +111,7 @@
     --wood: #9a6a48;
     --wood-dark: #6b4630;
     --shelf-back: #171411;
+    --away: #b1aca7;
     --star: #e8ba4a;
     --star-text: #e8ba4a;
     --spice: #ff6b5e;
@@ -1543,6 +1547,14 @@ img {
   translate: 0 -7px;
 }
 
+/* The book itself, apart from the place it stands in. */
+.spine-body {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
 .spine-band {
   position: absolute;
   left: 0;
@@ -1722,6 +1734,85 @@ img {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* ---- books that are away (lib/away.ts) ----
+   A book that is lent, or was given back unfinished, leaves its outline where it stood:
+   dashed, in the shape of the thing, and the book inside it see-through. The outline is
+   there on every book and simply has no colour while the book is here, so that the
+   change between away and here can fade. */
+.spine,
+.cover-link,
+.book-row,
+.continue-card,
+.cover-frame {
+  outline: 2px dashed transparent;
+}
+
+.spine {
+  outline-offset: -2px;
+}
+
+.cover-link,
+.cover-frame {
+  outline-offset: 3px;
+  border-radius: 3px 5px 5px 3px;
+}
+
+.book-row {
+  outline-offset: -4px;
+  border-radius: 12px;
+}
+
+.continue-card {
+  outline-offset: -4px;
+}
+
+.cover-frame {
+  display: block;
+  flex: none;
+}
+
+.spine.away,
+.cover-link.away,
+.book-row.away,
+.continue-card.away,
+.cover-frame.away {
+  outline-color: var(--away);
+}
+
+/* The dashes of a spine run inside its place, the book stands a little smaller within
+   them: they are drawn on the wall behind, where they can be seen whatever the colour
+   of the book. */
+.spine.away .spine-body {
+  inset: 3px;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Only the picture is see-through. Titles, authors and the words that say where the
+   book is keep their full contrast. */
+.spine.away .spine-body,
+.cover-link.away .cover,
+.book-row.away .cover,
+.continue-card.away .cover,
+.cover-frame.away .cover {
+  opacity: var(--away-opacity);
+}
+
+.away-words {
+  display: block;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* The ring of the keyboard comes before the outline of a book that is away. */
+.spine:focus-visible,
+.cover-link:focus-visible,
+.book-row:focus-visible,
+.continue-card:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
 }
 
 .book-row {
@@ -2575,6 +2666,27 @@ input[type="range"] {
   html[data-motion="on"] .settle {
     animation: settle 0.34s cubic-bezier(0.4, 0, 0.2, 1) both;
     animation-delay: calc(var(--i, 0) * 30ms);
+  }
+
+  /* A book that goes away, or comes back, fades into its new look. */
+  html[data-motion="on"] .spine-body,
+  html[data-motion="on"] .cover {
+    transition:
+      opacity 0.4s ease,
+      inset 0.4s ease;
+  }
+
+  html[data-motion="on"] .spine,
+  html[data-motion="on"] .cover-link {
+    transition:
+      translate 0.15s ease-out,
+      outline-color 0.4s ease;
+  }
+
+  html[data-motion="on"] .book-row,
+  html[data-motion="on"] .continue-card,
+  html[data-motion="on"] .cover-frame {
+    transition: outline-color 0.4s ease;
   }
 
   html[data-motion="on"] .flame {

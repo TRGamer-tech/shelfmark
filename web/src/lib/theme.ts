@@ -159,6 +159,13 @@ export function paletteOf(p: ThemePreset): Record<string, string> {
   const star: Rgb = dark ? [232, 186, 74] : [190, 140, 20];
   const spice: Rgb = dark ? [255, 107, 94] : [206, 60, 54];
   const good: Rgb = dark ? [139, 200, 120] : [58, 150, 74];
+  const shelfBack = dark ? mix(p.background, BLACK, 0.25) : mix(p.background, p.text, 0.07);
+  const surfaceLow = mix(p.background, p.card, 0.6);
+  // The dashed outline of a book that is away (lib/away.ts). It is drawn on the page, on a
+  // card, on a row under the pointer and on a shelf, down to the foot of the row, which
+  // lies in the shadow of the board. It has to be seen on all of them, as a line and not
+  // as print: softer than the text, and three to one at the least.
+  const away = [p.background, p.card, surfaceLow, shelfBack, mix(shelfBack, BLACK, 0.16)].reduce((line, ground) => readable(line, ground, 3), mix(p.text, p.background, 0.3));
   const primaryContainer = mix(p.card, p.accent, dark ? 0.3 : 0.22);
   const secondaryContainer = mix(p.card, p.accent, dark ? 0.18 : 0.14);
   const colors: Record<string, Rgb> = {
@@ -183,14 +190,15 @@ export function paletteOf(p: ThemePreset): Record<string, string> {
     // The edge of a field has to be seen on a card as well as on the page.
     "--outline": readable(readable(mix(p.card, p.text, 0.38), p.card, 3), p.background, 3),
     "--outline-variant": mix(p.card, p.text, 0.14),
-    "--surface-low": mix(p.background, p.card, 0.6),
+    "--surface-low": surfaceLow,
     "--surface-high": mix(p.card, p.text, 0.05),
     "--tile": tile,
     "--surface-dim": mix(p.background, BLACK, 0.08),
     "--wood-light": wood.light,
     "--wood": wood.mid,
     "--wood-dark": wood.dark,
-    "--shelf-back": dark ? mix(p.background, BLACK, 0.25) : mix(p.background, p.text, 0.07),
+    "--shelf-back": shelfBack,
+    "--away": away,
     "--star": star,
     // Stars are pictures, not print: they have to be seen, which asks for less than reading does.
     "--star-text": readable(readable(star, p.card, 3), p.background, 3),

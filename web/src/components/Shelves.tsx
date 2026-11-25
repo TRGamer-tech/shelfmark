@@ -31,6 +31,11 @@ export interface ShelfItem {
   label?: string;
   /** For a book that works as a switch: whether it is the one taken off the shelf. */
   pressed?: boolean;
+  /**
+   * For a book that is away (lib/away.ts): the words for it, "Lent to Bo". The book is
+   * then drawn see-through with a dashed outline, and the words are said with its title.
+   */
+  away?: string | null;
 }
 
 /** A run of books under one heading, e.g. everything on the "Reading" list. */
@@ -129,9 +134,12 @@ function EmptyShelf({ hint, sectionKey }: { hint: string; sectionKey: string }) 
 
 /** What a book on the shelf is: a link to its page, a button that opens something, or simply a book. */
 function Clickable({ item, onClick, className, style, children, testId }: { item: ShelfItem; onClick?: (item: ShelfItem) => void; className: string; style?: React.CSSProperties; children: ReactNode; testId?: string }) {
+  // A book that is away says so, to whoever hears the page and to whoever rests the pointer on it.
+  const name = item.away ? `${item.title}, ${item.away}` : item.title;
+  const look = item.away ? `${className} away` : className;
   if (item.href) {
     return (
-      <Link href={item.href} className={className} style={style} aria-label={item.title} title={item.title} data-testid={testId}>
+      <Link href={item.href} className={look} style={style} aria-label={name} title={name} data-testid={testId} data-away={item.away ?? undefined}>
         {children}
       </Link>
     );
@@ -139,13 +147,13 @@ function Clickable({ item, onClick, className, style, children, testId }: { item
   if (!onClick) {
     // Nothing happens on a click, so it must not look or behave as if something did.
     return (
-      <span className={`${className} still`} style={style} role="img" aria-label={item.title} title={item.title} data-testid={testId}>
+      <span className={`${look} still`} style={style} role="img" aria-label={name} title={name} data-testid={testId} data-away={item.away ?? undefined}>
         {children}
       </span>
     );
   }
   return (
-    <button type="button" className={className} style={style} aria-label={item.title} title={item.title} aria-pressed={item.pressed} onClick={() => onClick(item)} data-testid={testId}>
+    <button type="button" className={look} style={style} aria-label={name} title={name} aria-pressed={item.pressed} onClick={() => onClick(item)} data-testid={testId} data-away={item.away ?? undefined}>
       {children}
     </button>
   );
@@ -157,7 +165,6 @@ function Spine({ item, onClick, order, lean }: { item: ShelfItem; onClick?: (ite
   const style: React.CSSProperties & Record<string, string | number> = {
     width,
     height,
-    background: spineGradient(item.title),
     color: inkOn(bookColor(item.title)),
     "--i": Math.min(order, 14),
   };
@@ -168,17 +175,20 @@ function Spine({ item, onClick, order, lean }: { item: ShelfItem; onClick?: (ite
   }
   return (
     <Clickable item={item} onClick={onClick} className={`spine settle ${width >= 44 ? "spine-wide" : ""} ${item.pressed ? "spine-out" : ""} ${item.label ? "spine-marked" : ""}`} style={style} testId={lean ? "leaning" : "spine"}>
-      <span className="spine-band" style={{ top: 9 }} />
-      <span className="spine-band spine-band-thin" style={{ top: 13 }} />
-      {item.label ? null : <span className="spine-band" style={{ bottom: 10 }} />}
-      <span className="spine-title" aria-hidden="true">
-        <span>{item.title}</span>
-      </span>
-      {item.label ? (
-        <span className="spine-label" aria-hidden="true">
-          {item.label}
+      {/* The book itself, apart from the place it stands in: of a book that is away the place keeps its outline and the book is see-through. */}
+      <span className="spine-body" style={{ background: spineGradient(item.title) }}>
+        <span className="spine-band" style={{ top: 9 }} />
+        <span className="spine-band spine-band-thin" style={{ top: 13 }} />
+        {item.label ? null : <span className="spine-band" style={{ bottom: 10 }} />}
+        <span className="spine-title" aria-hidden="true">
+          <span>{item.title}</span>
         </span>
-      ) : null}
+        {item.label ? (
+          <span className="spine-label" aria-hidden="true">
+            {item.label}
+          </span>
+        ) : null}
+      </span>
       {item.ribbon ? <span className="ribbon" style={{ background: item.ribbon }} /> : null}
     </Clickable>
   );

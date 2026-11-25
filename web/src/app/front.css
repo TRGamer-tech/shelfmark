@@ -65,6 +65,7 @@ html:not([data-visitor="in"]) .splash-home {
   --wood: #9a6a48;
   --wood-dark: #6b4630;
   --shelf-back: #201611;
+  --away: #b9ada2;
   --star: #e8ba4a;
   --star-text: #e8ba4a;
   --spice: #ff6b5e;
@@ -109,6 +110,7 @@ html:not([data-visitor="in"]) .splash-home {
   --wood: #bf9264;
   --wood-dark: #94683f;
   --shelf-back: #e7e3dc;
+  --away: #68645f;
   --star: #be8c14;
   --star-text: #ab7e12;
   --spice: #ce3c36;

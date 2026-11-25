@@ -76,7 +76,14 @@ import ch.schmidtbit.shelfmark.data.model.progress
 import ch.schmidtbit.shelfmark.data.repo.SortOrder
 import ch.schmidtbit.shelfmark.data.repo.ViewMode
 import ch.schmidtbit.shelfmark.ui.LocalContainer
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalResources
+import ch.schmidtbit.shelfmark.ui.awayWords
 import ch.schmidtbit.shelfmark.ui.components.BookCover
+import ch.schmidtbit.shelfmark.ui.components.awayAmount
+import ch.schmidtbit.shelfmark.ui.components.awayLine
+import ch.schmidtbit.shelfmark.ui.components.dashedOutline
+import ch.schmidtbit.shelfmark.ui.components.seeThrough
 import ch.schmidtbit.shelfmark.ui.components.CoverShelf
 import ch.schmidtbit.shelfmark.ui.components.RatingBar
 import ch.schmidtbit.shelfmark.ui.components.ShelfItem
@@ -291,6 +298,7 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
     val coverDir = LocalContainer.current.covers.dir
     val reading = MaterialTheme.colorScheme.secondary
     val lent = LocalShelfColors.current.spice
+    val resources = LocalResources.current
     fun item(book: Book) = ShelfItem(
         key = book.id,
         title = book.title,
@@ -303,13 +311,15 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
             book.status == ReadingStatus.READING -> reading
             else -> null
         },
+        // A book that is lent, or was given back unfinished, stands on its shelf as an outline of itself.
+        away = awayWords(resources, book),
     )
     // With no filter the bookcase has a shelf per list, like sorting books by where they stand in life.
     val grouped = state.filter == LibraryFilter.All && state.query.isBlank()
     val labels = StatusOrder.associateWith { stringResource(it.labelRes()) }
     var decorating by remember { mutableStateOf<Triple<String, String, Int>?>(null) }
     val emptyList = stringResource(R.string.list_empty_shelf)
-    val sections = remember(state.visible, state.ornaments, state.filter, state.shelves, state.links, coverDir, grouped, labels, emptyList) {
+    val sections = remember(state.visible, state.ornaments, state.filter, state.shelves, state.links, coverDir, grouped, labels, emptyList, resources) {
         fun section(key: String, title: String, books: List<Book>, emptyHint: String? = null, onOpen: (() -> Unit)?) = ShelfSection(
             key = key,
             items = books.map(::item),
@@ -370,19 +380,28 @@ private fun Shelves(state: LibraryState, onOpenBook: (Long) -> Unit, onFilter: (
 
 @Composable
 fun BookRow(book: Book, cover: Any?, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    // In the list a book that is away keeps its words at full strength: the dashed line goes
+    // around the whole row, and only the cover is see-through.
+    val words = awayWords(LocalResources.current, book)
+    val amount = awayAmount(words != null)
     Row(
         modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .dashedOutline({ amount.value }, RoundedCornerShape(12.dp), awayLine())
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BookCover(book.title, book.authors, cover, Modifier.width(52.dp), elevation = 2.dp)
+        BookCover(book.title, book.authors, cover, Modifier.width(52.dp).seeThrough { amount.value }, elevation = 2.dp)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (book.authors.isNotBlank()) {
                 Text(book.authors, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (words != null) {
+                Text(words, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("awayWords"))
             }
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -428,12 +447,15 @@ private fun ContinueCard(book: Book, cover: Any?, onOpen: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("continueReading"),
     ) {
+        // The book being read can be one that is not here: lent on, or given back before the end.
+        val words = awayWords(LocalResources.current, book)
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            BookCover(book.title, book.authors, cover, Modifier.width(44.dp), elevation = 2.dp, tiny = true)
+            BookCover(book.title, book.authors, cover, Modifier.width(44.dp), elevation = 2.dp, tiny = true, away = words)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.continue_reading), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (words != null) Text(words, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 book.progress?.let { progress ->
                     Spacer(Modifier.height(6.dp))
                     AnimatedProgress(progress, Modifier.fillMaxWidth().height(6.dp))

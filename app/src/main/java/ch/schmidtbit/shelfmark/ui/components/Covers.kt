@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import ch.schmidtbit.shelfmark.ui.theme.Serif
@@ -61,10 +62,13 @@ fun BookCover(
     elevation: Dp = 3.dp,
     /** For covers the size of a thumbnail: a drawn cover then shows one letter instead of small print. */
     tiny: Boolean = false,
+    /** Why the book is away, in words, or null for a book that is here (see Away.kt). */
+    away: String? = null,
 ) {
-    val shape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = cornerRadius, bottomEnd = cornerRadius)
+    val shape = coverShape(cornerRadius)
     Box(
         modifier
+            .away(away, shape)
             .aspectRatio(2f / 3f)
             .shadow(elevation, shape)
             .clip(shape),
@@ -87,6 +91,9 @@ fun BookCover(
         )
     }
 }
+
+/** The outline of a cover: nearly square at the spine, rounder at the fore-edge. */
+fun coverShape(cornerRadius: Dp = 4.dp): Shape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = cornerRadius, bottomEnd = cornerRadius)
 
 @Composable
 fun GeneratedCover(title: String, authors: String, modifier: Modifier = Modifier, tiny: Boolean = false) {

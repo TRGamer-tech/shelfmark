@@ -19,6 +19,7 @@ import { Chip, IconButton, IconLink, ProgressBar } from "@/components/ui";
 import type { LibraryFilter } from "@/lib/libraryLogic";
 import { STATUS_ORDER, applyFilter } from "@/lib/libraryLogic";
 import type { Book, ReadingStatus, SortOrder, ViewMode } from "@/lib/model";
+import { awayOf, awayWords } from "@/lib/away";
 import { READING_STATUSES, SORT_ORDERS, VIEW_MODES } from "@/lib/model";
 import { setPrefs } from "@/lib/mutations";
 import { progressOf } from "@/lib/rules";
@@ -77,15 +78,33 @@ function DustMotes() {
   );
 }
 
+/** The words for a book that is away, "Lent to Bo", or null for a book that is here. */
+function useAwayWords(): (book: Book) => string | null {
+  const { t } = useI18n();
+  return (book) => {
+    const away = awayOf(book);
+    if (!away) return null;
+    const words = awayWords(away, t("friends_someone"));
+    return t(words.key, words.who);
+  };
+}
+
 function BookRow({ book }: { book: Book }) {
   const { t } = useI18n();
+  const away = useAwayWords()(book);
   const progress = book.status === "READING" ? progressOf(book) : null;
   return (
-    <Link href={`/book?id=${book.id}`} className="book-row" data-testid="book-row">
+    <Link href={`/book?id=${book.id}`} className={away ? "book-row away" : "book-row"} data-testid="book-row" data-away={away ?? undefined}>
       <BookCover title={book.title} authors={book.authors} url={coverAddressOf(book)} tiny />
       <span className="book-row-text">
         <span className="book-row-title">{book.title}</span>
         {book.authors.trim() !== "" ? <span className="book-row-authors">{book.authors}</span> : null}
+        {/* Only the cover is see-through. What is written stays as readable as on any other row. */}
+        {away ? (
+          <span className="away-words" data-testid="away-words">
+            {away}
+          </span>
+        ) : null}
         <span className="row" style={{ marginTop: 4 }}>
           <span className="status-word">{t(statusKey(book.status))}</span>
           {book.rating > 0 ? <RatingBar rating={book.rating} size={14} /> : null}
@@ -134,8 +153,10 @@ export function ShelfPage() {
     };
   }, [menuOpen]);
 
+  const awayText = useAwayWords();
   const item = (book: Book): ShelfItem => ({
     key: book.id,
+    away: awayText(book),
     title: book.title,
     authors: book.authors,
     cover: coverAddressOf(book),
@@ -221,13 +242,18 @@ export function ShelfPage() {
         <p className="muted">{plural("greeting_books", vault.books.length)}</p>
       </div>
       {current ? (
-        <Link href={`/book?id=${current.id}`} className="continue-card" data-testid="continue-reading">
+        <Link href={`/book?id=${current.id}`} className={awayText(current) ? "continue-card away" : "continue-card"} data-testid="continue-reading" data-away={awayText(current) ?? undefined}>
           <BookCover title={current.title} authors={current.authors} url={coverAddressOf(current)} tiny />
           <span className="grow">
             <span className="continue-label">{t("continue_reading")}</span>
             <span className="continue-title" style={{ display: "block" }}>
               {current.title}
             </span>
+            {awayText(current) ? (
+              <span className="away-words" data-testid="away-words">
+                {awayText(current)}
+              </span>
+            ) : null}
             {progressOf(current) !== null ? (
               <>
                 <span style={{ display: "block", margin: "6px 0 4px" }}>

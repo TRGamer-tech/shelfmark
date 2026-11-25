@@ -60,6 +60,34 @@ fun Book.withFormOf(opened: Book, form: Book): Book {
     )
 }
 
+/** Why a book is on the shelf without being in the reader's hands. */
+enum class Away {
+    /** Somebody else has it: lent by hand, or through a loan that is out. */
+    LENT,
+
+    /** It was borrowed and went back to its owner before the reader finished it. */
+    RETURNED,
+}
+
+/**
+ * Whether this book is away, and why (see "Books that are away" in supabase/README.md).
+ * The website decides it the same way, from the book alone:
+ *
+ *  - lent: [Book.lentTo] says to whom. A loan that is out writes that name, a loan that
+ *    is over takes it away again, and so does "got it back" for a book lent by hand.
+ *  - given back, not finished: the book is not the reader's, it was borrowed (through a
+ *    loan or by hand) and it is not read. Marking it read makes it a book like any other.
+ *
+ * Everything else is here: a borrowed book while the reader has it, a wish, a copy from
+ * the library that was never borrowed from anybody, and a book given back that is read.
+ */
+val Book.away: Away?
+    get() = when {
+        lentTo.isNotBlank() -> Away.LENT
+        ownership == Ownership.NOT_OWNED && (loanId.isNotBlank() || borrowedFrom.isNotBlank()) && status != ReadingStatus.READ -> Away.RETURNED
+        else -> null
+    }
+
 /** Sensible defaults for a book that is being added to the given list. */
 fun Book.withDefaultsFor(newStatus: ReadingStatus, today: Long): Book {
     val owned = if (newStatus == ReadingStatus.WISHLIST) Ownership.NOT_OWNED else ownership
